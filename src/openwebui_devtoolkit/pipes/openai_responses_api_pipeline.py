@@ -51,8 +51,9 @@ Read more about OpenAI Responses API:
 🛠️ CHANGELOG
 -----------------------------------------------------------------------------------------
 • 1.6.10 (2025-05-16)
-   - Switched from the OpenAI SDK to raw HTTP streaming with `httpx` for faster event handling.
-   - Fixed log crash when `tool_ids` metadata is missing.
+    - Switched streaming implementation to use plain HTTP via httpx
+    - Dropped the OpenAI SDK dependency
+    - Added lightweight SSE parser for Responses API events
 • 1.6.9 (2025-05-12)
     - Updated requirements to "openai>=1.78.0" (library will automatically install when pipe in initialized).
     - Added UserValves class to allow users to override system valve settings.
