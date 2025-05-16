@@ -13,7 +13,7 @@ jobs:
 # ───────────────────────────────────────────
   deploy-staging:
     runs-on: ubuntu-latest
-    environment: staging-glc               # needs WEBUI_URL + WEBUI_KEY secrets
+    environment: staging-glc
 
     steps:
       - uses: actions/checkout@v4          # pull two commits so diff works
@@ -29,8 +29,6 @@ jobs:
         with:
           files: |
             src/openwebui_devtoolkit/pipes/**/*.py
-            src/openwebui_devtoolkit/filters/**/*.py
-            src/openwebui_devtoolkit/tools/**/*.py
 
       # ➋ publish each changed file
       - name: Publish to GLC
@@ -65,9 +63,7 @@ jobs:
         with:
           files: |
             src/openwebui_devtoolkit/pipes/**/*.py
-            src/openwebui_devtoolkit/filters/**/*.py
-            src/openwebui_devtoolkit/tools/**/*.py
-
+            
       - name: Publish to CLAC
         if: steps.changed.outputs.any_changed == 'true'
         env:
