@@ -8,7 +8,7 @@ version: 1.6.9
 license: MIT
 requirements: openai>=1.78.0
 
-This is a JK test
+This is a JK test3
 
 ------------------------------------------------------------------------------------------------------------------------
 📌 OVERVIEW
