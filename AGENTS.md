@@ -6,7 +6,7 @@ instance.
 
 ---
 
-## 1 Repository Map (👀 greppable names)
+## Repository Map (👀 greppable names)
 
 | Path | What lives here | Agent-safe actions |
 |------|-----------------|--------------------|
@@ -20,9 +20,9 @@ instance.
 
 ---
 
-## 2 Dev Environment in 30 seconds
+## Upstream reference (read-only)
+Open WebUI source is included as a shallow submodule in
+`external/open-webui/`.  
+**Codex:** use it for reference only—do **not** edit or commit changes
+inside that path.
 
-```bash
-python3 -m venv .venv          # one-off
-source .venv/bin/activate
-pip install -e '.[dev]'        # Ruff, Black, pytest, watchdog
