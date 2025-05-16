@@ -795,11 +795,11 @@ class Pipe:
                 return self._client
 
             self.log.debug("Creating new httpx.AsyncClient.")
-            self._client = httpx.AsyncClient(http2=False, timeout=30)
+            timeout = httpx.Timeout(900.0, connect=30.0)
+            self._client = httpx.AsyncClient(http2=True, timeout=timeout)
 
             self.log.debug("HTTP client initialized and cached.")
             return self._client
-
 
 ###############################################################################
 # Module-level Helper Functions (Outside Pipe Class)
