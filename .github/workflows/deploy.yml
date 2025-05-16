@@ -1,0 +1,63 @@
+name: Deploy OpenWebUI Extensions
+
+on:
+  push:
+    branches: [ main ]                       # only main triggers
+    paths:
+      - "src/openwebui_devtoolkit/**.py"     # run only if a plugin changed
+      - "scripts/publish_to_webui.py"
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging-glc                 # <- uses staging secrets
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests python-dotenv
+
+      - name: Publish changed plugins to GLC
+        env:
+          WEBUI_URL: ${{ secrets.WEBUI_URL }}
+          WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.sha }}^ ${{ github.sha }} | \
+              grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No plugin files changed."
+            exit 0
+          fi
+          for file in $CHANGED; do
+            echo "Publishing $file"
+            python scripts/publish_to_webui.py "$file"
+          done
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production-clac            # waits for manual approve
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests python-dotenv
+      - name: Publish to CLAC
+        env:
+          WEBUI_URL: ${{ secrets.WEBUI_URL }}
+          WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.sha }}^ ${{ github.sha }} | \
+              grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No plugin files changed."
+            exit 0
+          fi
+          for file in $CHANGED; do
+            echo "Publishing $file"
+            python scripts/publish_to_webui.py "$file"
+          done
