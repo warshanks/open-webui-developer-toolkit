@@ -92,12 +92,26 @@ def main() -> None:
     if not plugin_id:
         sys.exit("❌  'id:' line not found at top of file — aborting")
 
+    # Extract optional `description:` from header
+    plugin_description = next(
+        (
+            ln.split(":", 1)[1].strip()
+            for ln in code.splitlines()
+            if ln.lower().startswith("description:")
+        ),
+        "",
+    )
+    if not plugin_description:
+        print(
+            "WARNING: 'description:' line not found - using empty description",
+            file=sys.stderr,
+        )
     payload = {
         "id": plugin_id,
         "name": plugin_id,
         "type": plugin_type,
         "content": code,
-        "meta": {"description": "", "manifest": {}},
+        "meta": {"description": plugin_description, "manifest": {}},
         "is_active": True,
     }
 
