@@ -39,7 +39,7 @@ jobs:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          for file in ${{ steps.changed.outputs.changed_files }}; do
+          for file in ${{ steps.changed.outputs.all_changed_files }}; do
             echo "Publishing $file to GLC …"
             python scripts/publish_to_webui.py "$file" --type pipe
           done
@@ -76,7 +76,7 @@ jobs:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          for file in ${{ steps.changed.outputs.changed_files }}; do
+          for file in ${{ steps.changed.outputs.all_changed_files }}; do
             echo "Publishing $file to CLAC …"
             python scripts/publish_to_webui.py "$file" --type pipe
           done
