@@ -7,10 +7,10 @@ Quick CLI:
     WEBUI_URL=https://localhost:8080 \
     WEBUI_KEY=sk_... \
     python scripts/publish_to_webui.py \
-        --type pipe \
         src/openwebui_devtoolkit/pipes/openai_responses_api_pipeline.py
 
-Flags override env-vars if given.
+Flags override env-vars if given. The plugin type is auto-detected from the
+file path unless --type is provided.
 
 Plugin file **must** contain a front-matter line:
     id: my_plugin_id
@@ -54,10 +54,22 @@ def _post(base_url: str, api_key: str, path: str, payload: dict) -> int:
 def main() -> None:
     p = argparse.ArgumentParser(description="Publish one plugin to Open WebUI")
     p.add_argument("file_path", help="Path to the .py plugin file")
-    p.add_argument("--type", choices=("pipe", "filter", "tool"), default="pipe")
+    p.add_argument("--type", choices=("pipe", "filter", "tool"))
     p.add_argument("--url", default=os.getenv("WEBUI_URL", "http://localhost:8080"))
     p.add_argument("--key", default=os.getenv("WEBUI_KEY", ""))
     args = p.parse_args()
+
+    plugin_type = args.type
+    if plugin_type is None:
+        parts = {part.lower() for part in pathlib.Path(args.file_path).parts}
+        if "pipes" in parts:
+            plugin_type = "pipe"
+        elif "filters" in parts:
+            plugin_type = "filter"
+        elif "tools" in parts:
+            plugin_type = "tool"
+        else:
+            plugin_type = "pipe"
 
     if not args.key:
         sys.exit("❌  WEBUI_KEY not set (flag --key or env var)")
@@ -83,7 +95,7 @@ def main() -> None:
     payload = {
         "id": plugin_id,
         "name": plugin_id,
-        "type": args.type,
+        "type": plugin_type,
         "content": code,
         "meta": {"description": "", "manifest": {}},
         "is_active": True,

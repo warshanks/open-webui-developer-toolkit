@@ -29,6 +29,8 @@ jobs:
         with:
           files: |
             src/openwebui_devtoolkit/pipes/**/*.py
+            src/openwebui_devtoolkit/filters/**/*.py
+            src/openwebui_devtoolkit/tools/**/*.py
 
       # ➋ publish each changed file
       - name: Publish to GLC
@@ -39,7 +41,16 @@ jobs:
         run: |
           for file in ${{ steps.changed.outputs.all_changed_files }}; do
             echo "Publishing $file to GLC …"
-            python scripts/publish_to_webui.py "$file" --type pipe
+            if [[ "$file" == src/openwebui_devtoolkit/pipes/* ]]; then
+              type=pipe
+            elif [[ "$file" == src/openwebui_devtoolkit/filters/* ]]; then
+              type=filter
+            elif [[ "$file" == src/openwebui_devtoolkit/tools/* ]]; then
+              type=tool
+            else
+              type=pipe
+            fi
+            python scripts/publish_to_webui.py "$file" --type "$type"
           done
 
 # ───────────────────────────────────────────
@@ -63,7 +74,9 @@ jobs:
         with:
           files: |
             src/openwebui_devtoolkit/pipes/**/*.py
-            
+            src/openwebui_devtoolkit/filters/**/*.py
+            src/openwebui_devtoolkit/tools/**/*.py
+
       - name: Publish to CLAC
         if: steps.changed.outputs.any_changed == 'true'
         env:
@@ -72,5 +85,14 @@ jobs:
         run: |
           for file in ${{ steps.changed.outputs.all_changed_files }}; do
             echo "Publishing $file to CLAC …"
-            python scripts/publish_to_webui.py "$file" --type pipe
+            if [[ "$file" == src/openwebui_devtoolkit/pipes/* ]]; then
+              type=pipe
+            elif [[ "$file" == src/openwebui_devtoolkit/filters/* ]]; then
+              type=filter
+            elif [[ "$file" == src/openwebui_devtoolkit/tools/* ]]; then
+              type=tool
+            else
+              type=pipe
+            fi
+            python scripts/publish_to_webui.py "$file" --type "$type"
           done
