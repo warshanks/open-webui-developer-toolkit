@@ -2,29 +2,27 @@ name: Deploy OpenWebUI Extensions
 
 on:
   push:
-    branches: [ main ]                            # 🚀 only main auto-deploys
+    branches: [ main ]                      # 🚀 deploy pipeline only on main
     paths:
-      - 'src/openwebui_devtoolkit/**.py'          # run only if a plugin changed
+      - 'src/openwebui_devtoolkit/**.py'    # run when a plugin changes
       - 'scripts/publish_to_webui.py'
 
-# ─────────────────────────────────────────────────────────────────────
-# 1.  STAGING  (GLC)  — automatic
-# ─────────────────────────────────────────────────────────────────────
 jobs:
+# ───────────────────────────────────────────
+# 1.  STAGING  — GLC (auto)
+# ───────────────────────────────────────────
   deploy-staging:
     runs-on: ubuntu-latest
-    environment: staging-glc                      # uses staging-glc secrets
+    environment: staging-glc               # needs WEBUI_URL + WEBUI_KEY secrets
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4          # pull two commits so diff works
+        with: { fetch-depth: 2 }
 
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        with: { python-version: '3.11' }
 
-      - run: pip install requests python-dotenv
-
-      # ← list all changed plugin files (works for merge commits too)
+      # ➊ get list of changed plugin files (works for merges)
       - name: Get changed plugin files
         id: changed
         uses: tj-actions/changed-files@v43
@@ -34,6 +32,7 @@ jobs:
             src/openwebui_devtoolkit/filters/**/*.py
             src/openwebui_devtoolkit/tools/**/*.py
 
+      # ➋ publish each changed file
       - name: Publish to GLC
         if: steps.changed.outputs.any_changed == 'true'
         env:
@@ -42,26 +41,25 @@ jobs:
         run: |
           for file in ${{ steps.changed.outputs.changed_files }}; do
             echo "Publishing $file to GLC …"
-            python scripts/publish_to_webui.py "$file"
+            python scripts/publish_to_webui.py "$file" --type pipe
           done
 
-# ─────────────────────────────────────────────────────────────────────
-# 2.  PRODUCTION  (CLAC)  — manual approval gate
-# ─────────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────
+# 2.  PRODUCTION — CLAC (manual gate)
+# ───────────────────────────────────────────
   deploy-production:
     needs: deploy-staging
     runs-on: ubuntu-latest
-    environment:                                   # ⏸ waits for approval
-      name: production-clac
+    environment:                           # waits for *Approve & deploy*
+      name: production-clac               # add yourself as required reviewer
       url:  https://ai.clac.ca
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        with: { fetch-depth: 2 }
 
-      - run: pip install requests python-dotenv
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
 
       - name: Get changed plugin files
         id: changed
@@ -80,5 +78,5 @@ jobs:
         run: |
           for file in ${{ steps.changed.outputs.changed_files }}; do
             echo "Publishing $file to CLAC …"
-            python scripts/publish_to_webui.py "$file"
+            python scripts/publish_to_webui.py "$file" --type pipe
           done
