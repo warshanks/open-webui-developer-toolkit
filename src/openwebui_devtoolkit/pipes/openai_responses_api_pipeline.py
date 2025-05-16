@@ -300,6 +300,11 @@ class Pipe:
             return
 
         # ─────────────────── Main Pipeline Loop ──────────────────────────
+        tool_ids = __metadata__.get("tool_ids") or []
+        if not isinstance(tool_ids, (list, tuple)):
+            tool_ids = [str(tool_ids)] if tool_ids else []
+        tool_ids_str = ",".join(tool_ids) if tool_ids else "-"
+
         self.log.info(
             'CHAT_MSG pipe="%s" m=%s u=%s ip=%s chat=%s sess=%s msg=%s msgs=%d tools=%s',
             self.name,
@@ -310,7 +315,7 @@ class Pipe:
             __metadata__["session_id"],
             __metadata__["message_id"],
             len(body["messages"]),
-            ",".join(__metadata__.get("tool_ids", [])) or "-",
+            tool_ids_str,
         )
 
         # STEP 1: Establish HTTP client (if one doesn't already exist)
@@ -808,7 +813,6 @@ async def stream_responses(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Accept": "text/event-stream",
-        "Content-Type": "application/json",
     }
 
     async with client.stream("POST", url, headers=headers, json=params) as resp:
