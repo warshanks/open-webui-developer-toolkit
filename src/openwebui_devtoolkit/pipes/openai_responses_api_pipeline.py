@@ -795,7 +795,7 @@ class Pipe:
                 return self._client
 
             self.log.debug("Creating new httpx.AsyncClient.")
-            self._client = httpx.AsyncClient(http2=True, timeout=900)
+            self._client = httpx.AsyncClient(http2=False, timeout=30)
 
             self.log.debug("HTTP client initialized and cached.")
             return self._client
