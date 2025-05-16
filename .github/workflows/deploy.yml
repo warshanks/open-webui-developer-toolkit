@@ -2,21 +2,23 @@ name: Deploy OpenWebUI Extensions
 
 on:
   push:
-    branches: [ main ]                       # only main triggers
+    branches: [ main ]                     # 🚀 only main auto-deploys
     paths:
-      - "src/openwebui_devtoolkit/**.py"     # run only if a plugin changed
-      - "scripts/publish_to_webui.py"
+      - 'src/openwebui_devtoolkit/**.py'   # run only if a plugin changed
+      - 'scripts/publish_to_webui.py'
 
 jobs:
+  # ------------------------------------------------------------------
+  # 1.  STAGING  ─────────────────────────────────────────────────────
+  # ------------------------------------------------------------------
   deploy-staging:
     runs-on: ubuntu-latest
-    environment: staging-glc                 # <- uses staging secrets
+    environment: staging-glc              # uses staging-glc secrets
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+        with: { python-version: '3.11' }
 
       - run: pip install requests python-dotenv
 
@@ -25,39 +27,50 @@ jobs:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          CHANGED=$(git diff --name-only ${{ github.sha }}^ ${{ github.sha }} | \
-              grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
+          # list files changed in THIS commit (handles merge commits too)
+          CHANGED=$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | \
+            grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
+
           if [ -z "$CHANGED" ]; then
             echo "No plugin files changed."
             exit 0
           fi
+
           for file in $CHANGED; do
-            echo "Publishing $file"
+            echo "Publishing $file …"
             python scripts/publish_to_webui.py "$file"
           done
 
+  # ------------------------------------------------------------------
+  # 2.  PRODUCTION (manual gate)  ─────────────────────────────────────
+  # ------------------------------------------------------------------
   deploy-production:
     needs: deploy-staging
     runs-on: ubuntu-latest
-    environment: production-clac            # waits for manual approve
+    environment:                          # ⏸ waits for approval
+      name: production-clac
+      url: https://ai.clac.ca             # shows in the UI
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+        with: { python-version: '3.11' }
+
       - run: pip install requests python-dotenv
+
       - name: Publish to CLAC
         env:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          CHANGED=$(git diff --name-only ${{ github.sha }}^ ${{ github.sha }} | \
-              grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
+          CHANGED=$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | \
+            grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
+
           if [ -z "$CHANGED" ]; then
             echo "No plugin files changed."
             exit 0
           fi
+
           for file in $CHANGED; do
-            echo "Publishing $file"
+            echo "Publishing $file …"
             python scripts/publish_to_webui.py "$file"
           done
