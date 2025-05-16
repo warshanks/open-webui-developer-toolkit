@@ -1,102 +1,108 @@
 #!/usr/bin/env python3
 """
-publish_to_webui.py · Upload or update a Pipe / Filter / Tool in Open WebUI.
+publish_to_webui.py — Upload or update a single Pipe / Filter / Tool file
+to an Open WebUI instance, using only the Python standard library.
 
-Quick use:
-    ENV_PATH=env/.env.local python scripts/publish_to_webui.py path/to/pipe.py
+Quick CLI:
+    WEBUI_URL=https://localhost:8080 \
+    WEBUI_KEY=sk_... \
+    python scripts/publish_to_webui.py \
+        --type pipe \
+        src/openwebui_devtoolkit/pipes/openai_responses_api_pipeline.py
 
-or let VS Code tasks inject ENV_PATH for you.
+Flags override env-vars if given.
 
-Needs:
-    pip install requests python-dotenv
+Plugin file **must** contain a front-matter line:
+    id: my_plugin_id
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import sys
+import urllib.error
+import urllib.request
 from typing import Final
 
-import requests
-from dotenv import load_dotenv
-load_dotenv()
-
-CREATE: Final[str] = "/api/v1/functions/create"
-UPDATE: Final[str] = "/api/v1/functions/id/{id}/update"
+CREATE: Final = "/api/v1/functions/create"
+UPDATE: Final = "/api/v1/functions/id/{id}/update"
 
 
-def _post(base_url: str, api_key: str, payload: dict, path: str) -> requests.Response:
-    """POST helper with auth header & timeout."""
-    return requests.post(
-        base_url.rstrip("/") + path,
-        json=payload,
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=30,
+def _post(base_url: str, api_key: str, path: str, payload: dict) -> int:
+    """POST JSON with Bearer auth; return HTTP status code (or raise)."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url=base_url.rstrip("/") + path,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Content-Length": str(len(data)),
+        },
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            return resp.getcode()
+    except urllib.error.HTTPError as e:
+        return e.code
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Publish a plugin to Open WebUI")
-    parser.add_argument("file_path", help="Python plugin file to upload")
-    # Defaults come from the environment variables we just loaded
-    parser.add_argument(
-        "--url",
-        default=os.getenv("WEBUI_URL", "http://localhost:8080"),
-        help="WebUI base URL (env var: WEBUI_URL)",
-    )
-    parser.add_argument(
-        "--key",
-        default=os.getenv("WEBUI_KEY", ""),
-        help="WebUI API key (env var: WEBUI_KEY)",
-    )
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Publish one plugin to Open WebUI")
+    p.add_argument("file_path", help="Path to the .py plugin file")
+    p.add_argument("--type", choices=("pipe", "filter", "tool"), default="pipe")
+    p.add_argument("--url", default=os.getenv("WEBUI_URL", "http://localhost:8080"))
+    p.add_argument("--key", default=os.getenv("WEBUI_KEY", ""))
+    args = p.parse_args()
 
     if not args.key:
-        sys.exit("❌  No API key provided (flag or WEBUI_KEY env)")
+        sys.exit("❌  WEBUI_KEY not set (flag --key or env var)")
 
-    code_path = pathlib.Path(args.file_path)
-    if not code_path.is_file():
-        sys.exit(f"❌  File not found: {code_path}")
+    path = pathlib.Path(args.file_path)
+    if not path.is_file():
+        sys.exit(f"❌  File not found: {path}")
 
-    code = code_path.read_text(encoding="utf-8")
+    code = path.read_text(encoding="utf-8")
 
-    # ── 1. Extract front-matter `id:` -------------------------------------------------
+    # Extract `id:` from header
     plugin_id = next(
         (
-            line.split(":", 1)[1].strip()
-            for line in code.splitlines()
-            if line.lower().startswith("id:")
+            ln.split(":", 1)[1].strip()
+            for ln in code.splitlines()
+            if ln.lower().startswith("id:")
         ),
         None,
     )
     if not plugin_id:
-        sys.exit("❌  No 'id:' line found at top of the file – aborting")
+        sys.exit("❌  'id:' line not found at top of file — aborting")
 
     payload = {
         "id": plugin_id,
         "name": plugin_id,
-        "type": "pipe",  # change to 'filter' or 'tool' if needed
+        "type": args.type,
         "content": code,
         "meta": {"description": "", "manifest": {}},
         "is_active": True,
     }
 
-    # ── 2. Try CREATE, then UPDATE if it already exists ------------------------------
-    resp = _post(args.url, args.key, payload, CREATE)
-    if resp.ok:
-        print(f"✅  Created  {plugin_id}")
+    # Try to create first
+    status = _post(args.url, args.key, CREATE, payload)
+    if status == 200:
+        print(f"✅  Created '{plugin_id}' on {args.url}")
         return
 
-    if resp.status_code == 400:  # duplicate ID
-        resp = _post(args.url, args.key, payload, UPDATE.format(id=plugin_id))
-        if resp.ok:
-            print(f"🔄  Updated  {plugin_id}")
+    # If duplicate ID → update
+    if status == 400:
+        status = _post(args.url, args.key, UPDATE.format(id=plugin_id), payload)
+        if status == 200:
+            print(f"🔄  Updated '{plugin_id}' on {args.url}")
             return
 
-    # ── 3. Any other error -----------------------------------------------------------
-    sys.exit(f"❌  WebUI error {resp.status_code}:\n{resp.text}")
+    sys.exit(f"❌  WebUI returned HTTP {status}")
 
 
 if __name__ == "__main__":
