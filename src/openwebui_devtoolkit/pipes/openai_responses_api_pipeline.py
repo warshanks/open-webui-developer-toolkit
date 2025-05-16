@@ -4,9 +4,9 @@ id: openai_responses_api_pipeline
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.10
+version: 1.6.9
 license: MIT
-requirements: httpx
+requirements: openai>=1.78.0
 
 ------------------------------------------------------------------------------------------------------------------------
 📌 OVERVIEW
@@ -50,8 +50,6 @@ Read more about OpenAI Responses API:
 -----------------------------------------------------------------------------------------
 🛠️ CHANGELOG
 -----------------------------------------------------------------------------------------
-• 1.6.10 (2025-05-16)
-    - Removed OpenAI SDK dependency. Uses httpx for streaming.
 • 1.6.9 (2025-05-12)
     - Updated requirements to "openai>=1.78.0" (library will automatically install when pipe in initialized).
     - Added UserValves class to allow users to override system valve settings.
@@ -106,12 +104,14 @@ Read more about OpenAI Responses API:
 from __future__ import annotations
 
 # Core & third-party imports
-import os, re, json, time, asyncio, traceback, sys, logging
+import os, re, json, uuid, time, asyncio, traceback, sys, logging
 from datetime import datetime
-from typing import Any, Dict, Callable, Awaitable, Literal, AsyncIterator
+from typing import Any, Dict, List, Optional, Callable, Awaitable, Literal, ClassVar
 
 import httpx
-from types import SimpleNamespace
+import time
+from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 from fastapi import Request
 
 # Internal imports
@@ -218,8 +218,9 @@ class Pipe:
         self.valves = self.Valves()
         self.name = f"OpenAI: {self.valves.MODEL_ID}"  # TODO fix this as MODEL_ID value can't be accessed from within __init__.
 
-        # HTTP Client
-        self._client: httpx.AsyncClient | None = None
+        # OpenAI Client
+        self._transport: httpx.AsyncClient | None = None
+        self._client: AsyncOpenAI | None = None
         self._client_lock = asyncio.Lock()
 
         # Set up logging
@@ -250,10 +251,11 @@ class Pipe:
         pass
 
     async def on_shutdown(self):
-        # Clean up HTTP client
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        # Clean up OpenAI Client
+        if self._client and not self._client._closed:
+            await self._transport.aclose()
             self._client = None
+            self._transport = None
         pass
 
     async def on_valves_updated(self):
@@ -311,8 +313,8 @@ class Pipe:
             ",".join(__metadata__.get("tool_ids", [])) or "-",
         )
 
-        # STEP 1: Establish HTTP client (if one doesn't already exist)
-        client = await self.get_http_client()
+        # STEP 1: Establish OpenAI Client (if one doesn't already exist)
+        client = await self.get_openai_client()
 
         # STEP 2: Transform the user’s messages into the format the Responses API expects
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
@@ -388,12 +390,7 @@ class Pipe:
             try:
                 # ── C. Create the streaming request and process events ───────────────
                 pending_function_calls = []
-                response_stream = stream_responses(
-                    client,
-                    self.valves.BASE_URL,
-                    self.valves.API_KEY,
-                    request_params,
-                )
+                response_stream = await client.responses.create(**request_params)
                 self.log.debug("response_stream created for loop #%d", loop_count)
 
                 async for event in response_stream:
@@ -771,73 +768,43 @@ class Pipe:
             usage_total.get("total_tokens", 0),
         )
 
-    async def get_http_client(self) -> httpx.AsyncClient:
-        self.log.debug("Checking cached httpx client...")
+    async def get_openai_client(self) -> AsyncOpenAI:
+        self.log.debug("Checking cached OpenAI client...")
 
-        if self._client and not self._client.is_closed:
-            self.log.debug("Reusing existing httpx client.")
+        if self._client and self._transport and not self._transport.is_closed:
+            self.log.debug("Reusing existing OpenAI client and transport.")
             return self._client
 
         async with self._client_lock:
             self.log.debug("Acquired client lock.")
 
-            if self._client and not self._client.is_closed:
-                self.log.debug("Client initialized while waiting for lock. Reusing existing.")
+            if self._client and self._transport and not self._transport.is_closed:
+                self.log.debug(
+                    "Client initialized while waiting for lock. Reusing existing."
+                )
                 return self._client
 
-            self.log.debug("Creating new httpx.AsyncClient.")
-            self._client = httpx.AsyncClient(http2=True, timeout=900)
+            if self._transport and not self._transport.is_closed:
+                self.log.debug("Closing existing transport before reinitializing.")
+                await self._transport.aclose()
 
-            self.log.debug("HTTP client initialized and cached.")
+            self.log.debug("Creating new httpx.AsyncClient transport.")
+            self._transport = httpx.AsyncClient(http2=True, timeout=900)
+
+            self.log.debug("Initializing AsyncOpenAI client.")
+            self._client = AsyncOpenAI(
+                api_key=self.valves.API_KEY,
+                base_url=self.valves.BASE_URL,
+                http_client=self._transport,
+            )
+
+            self.log.debug("OpenAI client initialized and cached.")
             return self._client
 
 
 ###############################################################################
 # Module-level Helper Functions (Outside Pipe Class)
 ###############################################################################
-async def stream_responses(
-    client: httpx.AsyncClient,
-    base_url: str,
-    api_key: str,
-    params: dict,
-) -> AsyncIterator[SimpleNamespace]:
-    """Stream responses API events via plain HTTP."""
-    url = base_url.rstrip("/") + "/responses"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "text/event-stream",
-    }
-
-    async with client.stream("POST", url, headers=headers, json=params) as resp:
-        event_type = None
-        data_lines: list[str] = []
-        async for line in resp.aiter_lines():
-            if line == "":
-                if event_type and data_lines:
-                    data_str = "\n".join(data_lines)
-                    if data_str.strip() == "[DONE]":
-                        return
-                    data = json.loads(data_str)
-                    yield _to_obj({"type": event_type, **data})
-                event_type = None
-                data_lines = []
-                continue
-
-            if line.startswith("event:"):
-                event_type = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                data_lines.append(line[len("data:"):].strip())
-
-
-def _to_obj(data: Any) -> Any:
-    """Recursively convert dictionaries to SimpleNamespace for dot access."""
-    if isinstance(data, dict):
-        return SimpleNamespace(**{k: _to_obj(v) for k, v in data.items()})
-    if isinstance(data, list):
-        return [_to_obj(v) for v in data]
-    return data
-
-
 def prepare_tools(registry: dict | None) -> list[dict]:
     """
     Convert OpenWebUI's tool registry to the OpenAI Responses `tools=` payload.
