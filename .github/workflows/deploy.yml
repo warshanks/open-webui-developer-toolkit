@@ -50,9 +50,7 @@ jobs:
   deploy-production:
     needs: deploy-staging
     runs-on: ubuntu-latest
-    environment:                           # waits for *Approve & deploy*
-      name: production-clac               # add yourself as required reviewer
-      url:  https://ai.clac.ca
+    environment: production-clac
 
     steps:
       - uses: actions/checkout@v4
