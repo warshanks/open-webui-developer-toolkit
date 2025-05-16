@@ -28,7 +28,7 @@ jobs:
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
           # list files changed in THIS commit (handles merge commits too)
-          CHANGED=$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | \
+          CHANGED=$(git diff-tree -m --no-commit-id --name-only -r "$GITHUB_SHA" | \
             grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
 
           if [ -z "$CHANGED" ]; then
@@ -62,7 +62,7 @@ jobs:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          CHANGED=$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | \
+          CHANGED=$(git diff-tree -m --no-commit-id --name-only -r "$GITHUB_SHA" | \
             grep -E '^src/openwebui_devtoolkit/(pipes|filters|tools)/.*\.py$' || true)
 
           if [ -z "$CHANGED" ]; then
