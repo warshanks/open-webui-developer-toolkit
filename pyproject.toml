@@ -1,0 +1,19 @@
+[project]
+name = "openwebui-developer-toolkit"
+version = "0.1.0"
+description = "Self-contained Pipes, Filters & Tools for Open WebUI"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+  "ruff",
+  "black",
+  "pytest",
+  "pytest-asyncio",
+  "pre-commit",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
