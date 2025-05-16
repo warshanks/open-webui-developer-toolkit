@@ -403,7 +403,9 @@ class Pipe:
                 )
                 self.log.debug("response_stream created for loop #%d", loop_count)
 
+
                 async for event in response_stream:
+                    self.log.debug("Event received: %s", event)
                     event_type = event.type
                     self.log.debug("Event received: %s", event_type)
 
@@ -559,7 +561,7 @@ class Pipe:
                     if event.type == "response.completed":
                         # ─────────────────── Usage stats ──────────────────────
                         if usage := event.response.usage:
-                            usage_dict = usage.model_dump()
+                            usage_dict = _to_dict(usage)
                             usage_dict["loops"] = loop_count
 
                             # Accumulate totals
@@ -802,38 +804,60 @@ class Pipe:
 ###############################################################################
 # Module-level Helper Functions (Outside Pipe Class)
 ###############################################################################
+
 async def stream_responses(
     client: httpx.AsyncClient,
     base_url: str,
     api_key: str,
     params: dict,
 ) -> AsyncIterator[SimpleNamespace]:
-    """Stream responses API events via plain HTTP."""
+    """
+    Yields `SimpleNamespace` objects for every SSE event coming from
+    the OpenAI *Responses API*.
+
+    Guarantees:
+      • raises if HTTP status != 200
+      • `event.type` is always present (falls back to "message")
+      • handles ping comments (': keep-alive')
+      • handles CR-LF framing
+      • stops on '[DONE]'
+    """
     url = base_url.rstrip("/") + "/responses"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Accept": "text/event-stream",
+        "Content-Type": "application/json",
     }
 
     async with client.stream("POST", url, headers=headers, json=params) as resp:
-        event_type = None
-        data_lines: list[str] = []
-        async for line in resp.aiter_lines():
-            if line == "":
-                if event_type and data_lines:
-                    data_str = "\n".join(data_lines)
-                    if data_str.strip() == "[DONE]":
-                        return
-                    data = json.loads(data_str)
-                    yield _to_obj({"type": event_type, **data})
-                event_type = None
-                data_lines = []
+        resp.raise_for_status()            # <-- early fail instead of silent loop
+
+        event_type: str | None = None
+        data_buf: list[str] = []
+
+        async for raw in resp.aiter_lines():
+            line = raw.rstrip("\r")        # trim CR so "" really means separator
+
+            # --- comment / keep-alive ----------------------------------------
+            if line.startswith(":"):       # e.g. ": ping"
                 continue
 
+            # --- event boundary ----------------------------------------------
+            if line == "":
+                if data_buf:
+                    data = "\n".join(data_buf)
+                    if data.strip() == "[DONE]":
+                        return
+                    payload = json.loads(data)
+                    yield _to_obj({"type": event_type or "message", **payload})
+                event_type, data_buf = None, []
+                continue
+
+            # --- field parsing ------------------------------------------------
             if line.startswith("event:"):
                 event_type = line[len("event:"):].strip()
             elif line.startswith("data:"):
-                data_lines.append(line[len("data:"):].strip())
+                data_buf.append(line[len("data:"):].strip())
 
 
 def _to_obj(data: Any) -> Any:
@@ -843,6 +867,18 @@ def _to_obj(data: Any) -> Any:
     if isinstance(data, list):
         return [_to_obj(v) for v in data]
     return data
+
+def _to_dict(ns: Any) -> Any:
+    """
+    Recursively turn a SimpleNamespace (or list/tuple of them) into a dict.
+    """
+    if isinstance(ns, SimpleNamespace):
+        return {k: _to_dict(v) for k, v in vars(ns).items()}
+    if isinstance(ns, list):
+        return [_to_dict(v) for v in ns]
+    if isinstance(ns, tuple):
+        return tuple(_to_dict(v) for v in ns)
+    return ns
 
 
 def prepare_tools(registry: dict | None) -> list[dict]:
