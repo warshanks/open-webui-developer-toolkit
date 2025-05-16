@@ -108,17 +108,40 @@ Read more about OpenAI Responses API:
 from __future__ import annotations
 
 # Core & third-party imports
-import os, re, json, uuid, time, asyncio, traceback, sys, logging
+import asyncio
+import json
+import logging
+import os
+import re
+import sys
+import time
+import traceback
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Callable, Awaitable, Literal, ClassVar, AsyncIterator
+from types import SimpleNamespace
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Literal,
+)
 
 import httpx
-from types import SimpleNamespace
 from fastapi import Request
 
 # Internal imports
 from open_webui.models.chats import Chats
 from pydantic import BaseModel, Field
+
+
+EMOJI_LEVELS = {
+    logging.DEBUG: "🔍",
+    logging.INFO: "ℹ",
+    logging.WARNING: "⚠",
+    logging.ERROR: "❌",
+    logging.CRITICAL: "🔥",
+}
 
 
 ###############################################################################
@@ -227,46 +250,25 @@ class Pipe:
         # Set up logging
         self.log = logging.getLogger(self.name)
         self.log.propagate = False  # prevent root interference
-        emoji = {
-            logging.DEBUG: "🔍",
-            logging.INFO: "ℹ️",
-            logging.WARNING: "⚠️",
-            logging.ERROR: "❌",
-            logging.CRITICAL: "🔥",
-        }
         handler = logging.StreamHandler(sys.stderr)
         handler.setLevel(logging.NOTSET)
-        handler.addFilter(
-            lambda r: setattr(r, "emo", emoji.get(r.levelno, "🔹")) or True
-        )
-        handler.setFormatter(
-            logging.Formatter(
-                "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
-            )
-        )
+        handler.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "🔹")) or True)
+        handler.setFormatter(logging.Formatter("%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"))
         self.log.handlers = [handler]
-
-        pass
-
-    async def on_startup(self):
-        pass
 
     async def on_shutdown(self):
         # Clean up HTTP client
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
-        pass
 
-    async def on_valves_updated(self):
-        pass
 
     async def pipe(
         self,
         body: dict[str, Any],
         __user__: Dict[str, Any],
         __request__: Request,
-        __event_emitter__: Callable[["Event"], Awaitable[None]],
+        __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
         __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],
         __files__: list[dict[str, Any]],
         __metadata__: dict[str, Any],
@@ -424,7 +426,7 @@ class Pipe:
 
                     # ─────────────────── Reasoning Summary Text ────────────────────
                     if event_type == "response.reasoning_summary_part.added":
-                        if is_model_thinking == False:
+                        if not is_model_thinking:
                             is_model_thinking = True
                             yield "<think>"
                         continue
@@ -450,7 +452,7 @@ class Pipe:
 
                     # ─────────────────── Assistant output text ──────────────────────
                     if event_type == "response.content_part.added":
-                        if is_model_thinking == True:
+                        if is_model_thinking:
                             is_model_thinking = False
                             yield "</think>\n"
                         continue
@@ -491,7 +493,7 @@ class Pipe:
                                 {
                                     "type": "status",
                                     "data": {
-                                        "description": f"🔍 Searching the internet...",
+                                        "description": "🔍 Searching the internet...",
                                         "done": False,
                                     },
                                 }
