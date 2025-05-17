@@ -14,7 +14,8 @@ dependencies = [
 dev = [
   "ruff",
   "pytest",
-  "pre-commit"
+  "pre-commit",
+  "nox"
 ]
 
 [build-system]
