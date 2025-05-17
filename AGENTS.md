@@ -1,5 +1,5 @@
 # open-webui-developer-toolkit • Contributor & Agent Guide
-Welcome! This repo contains **extensions (pipes, filters, tools)** for  
+Welcome! This repo contains **extensions (pipes, filters, tools)** for
 [Open WebUI](https://github.com/open-webui/open-webui). The codebase is intentionally
 thin: one file per extension, with a small helper script to publish to any WebUI
 instance.
@@ -15,27 +15,24 @@ instance.
 | **`src/openwebui_devtoolkit/tools/`** | single-file *tools* | add/fix tool files |
 | **`scripts/publish_to_webui.py`** | uploader CLI (don’t rename) | edit if API changes |
 
-*Codex tip:* grep for the **exact filename** you need, e.g.  
-`grep -R openai_responses_api_pipeline.py`.
+*Codex tip:* grep for the **exact filename** you need, e.g. `grep -R openai_responses_api_pipeline.py`.
 
 ---
 
 ## Upstream reference (read-only)
-Open WebUI source is included as a shallow submodule in
-`external/open-webui/`.
+Open WebUI source is included as a shallow submodule in `external/open-webui/`.
 **Codex:** use it for reference only—do **not** edit or commit changes
 inside that path.
 
 ---
 
 ## Tests
-Run lint and unit tests with the helper script:
+Run linting and tests with the helper script:
 
 ```bash
 bash scripts/test.sh
 ```
 
-All PRs should ensure this command succeeds. The script sets ``PYTHONPATH`` so
-tests can import from ``src/`` and then runs ``ruff check .`` followed by
-``python -m unittest discover -s tests -v``.
-
+The script sets ``PYTHONPATH`` so the ``src`` package is importable, runs
+``ruff`` for linting, then executes ``pytest`` for all tests.  Fixtures in
+``tests/conftest.py`` stub out ``open_webui`` so tests stay fast and isolated.
