@@ -2,123 +2,172 @@
 title: Universal Example Tool
 version: 1.0.0
 author: OpenWebUI Toolkit
+author_url: https://example.com
 license: MIT
+description: |
+    Demonstrates a wide variety of best practices & features for building tools in Open WebUI.
+    Includes usage of valves, environment variables, event emitters, confirmations, citations,
+    and integration with external APIs (e.g. OpenWeather).
 requirements: sympy,requests
-
-This example demonstrates a variety of patterns when building Open WebUI
-Tools.  It includes:
-  * Using Valves for configuration
-  * Returning strings and numbers
-  * Emitting status updates
-  * Prompting the user with a confirmation dialog
-  * Making HTTP requests
 """
 
-import os
 from datetime import datetime
-from typing import Optional, Callable, Awaitable, Any
+from typing import Optional, Callable, Awaitable, Any, Dict
+import os
 
 import requests
-from pydantic import BaseModel, Field
 import sympy as sp
+from pydantic import BaseModel, Field
 
 
 class Tools:
+    """Showcases key patterns for building Open WebUI tools."""
+
     class Valves(BaseModel):
-        weather_api_key: str = Field(
+        openweather_api_key: str = Field(
             default="",
-            description="OpenWeatherMap API key for the weather tool",
+            description="Optional OpenWeather API key (if empty, will check environment var).",
         )
         default_city: str = Field(
             default="New York",
-            description="Default city for the weather tool",
+            description="Fallback city if none is provided to the weather method.",
+        )
+        citation_demo_enabled: bool = Field(
+            default=True,
+            description="If True, demo_citation emits a sample citation event.",
         )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.valves = self.Valves()
+        self.citation = False  # disable built-in citations
 
-    # --------------------------------------------------------------
-    def get_time(self) -> str:
-        """Return the current date and time in human readable form."""
+    # ------------------------------------------------------------------
+    # 1. Simple synchronous method
+    # ------------------------------------------------------------------
+    def get_current_time(self) -> str:
+        """Return the current date/time in human-readable form."""
         now = datetime.now()
-        return now.strftime("%A %B %d, %Y %I:%M %p")
+        return now.strftime("%A, %B %d, %Y at %I:%M %p")
 
-    # --------------------------------------------------------------
-    def calculate(self, expression: str) -> str:
-        """Evaluate a mathematical expression using SymPy."""
+    # ------------------------------------------------------------------
+    # 2. Local computation using SymPy
+    # ------------------------------------------------------------------
+    def calculate_expression(self, expression: str) -> str:
+        """Evaluate a mathematical expression like '2+3' or 'sqrt(16)'."""
         if "=" in expression:
-            return "Equations are not allowed"
+            return "Equations (with '=') are not allowed."
         try:
             val = sp.sympify(expression).evalf()
-            return f"{expression} = {val}".rstrip("0").rstrip(".")
+            text = str(val).rstrip("0").rstrip(".") if "." in str(val) else str(val)
+            return f"{expression} = {text}"
         except Exception:
             return "Invalid expression"
 
-    # --------------------------------------------------------------
-    async def weather(
+    # ------------------------------------------------------------------
+    # 3. Read data from the '__user__' object
+    # ------------------------------------------------------------------
+    def get_user_info(self, __user__: Dict[str, Any] = {}) -> str:
+        if not __user__:
+            return "No user information provided."
+        parts = []
+        if "name" in __user__:
+            parts.append(f"Name: {__user__['name']}")
+        if "email" in __user__:
+            parts.append(f"Email: {__user__['email']}")
+        if "id" in __user__:
+            parts.append(f"ID: {__user__['id']}")
+        return " | ".join(parts) if parts else "User fields not found."
+
+    # ------------------------------------------------------------------
+    # 4. Async method demonstrating event emitters & confirmations
+    # ------------------------------------------------------------------
+    async def get_weather(
         self,
         city: Optional[str] = None,
         __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
         __event_call__: Optional[Callable[[dict], Awaitable[Any]]] = None,
     ) -> str:
-        """Fetch the current temperature for a city and demonstrate events."""
-        await self._emit_status(
-            __event_emitter__, "Fetching weather information…", done=False
-        )
-
-        api_key = self.valves.weather_api_key or os.getenv("OPENWEATHER_API_KEY")
-        if not api_key:
-            await self._emit_status(
-                __event_emitter__, "No API key set for weather tool", done=True
-            )
-            return "Weather tool is not configured"
+        await _safe_emit_status(__event_emitter__, "Starting weather lookup...", done=False)
 
         target_city = city or self.valves.default_city
 
-        # Ask the user for confirmation before calling the API
         if __event_call__:
-            confirmed = await __event_call__(
-                {
-                    "type": "confirmation",
-                    "data": {
-                        "title": "Confirm",
-                        "message": f"Look up weather for {target_city}?",
-                    },
-                }
-            )
-            if not confirmed:
-                await self._emit_status(
-                    __event_emitter__, "Weather request cancelled", done=True
-                )
-                return "Cancelled"
+            confirm = await __event_call__({
+                "type": "confirmation",
+                "data": {
+                    "title": "Weather Request",
+                    "message": f"Fetch weather for {target_city}?",
+                    "confirm_text": "Yes",
+                    "cancel_text": "No",
+                },
+            })
+            if not confirm:
+                await _safe_emit_status(__event_emitter__, "Request cancelled by user.", done=True)
+                return "Cancelled by user."
 
-        url = "https://api.openweathermap.org/data/2.5/weather"
+        api_key = self.valves.openweather_api_key or os.getenv("OPENWEATHER_API_KEY", "")
+        if not api_key:
+            msg = "Error: No API key set for OpenWeather."
+            await _safe_emit_status(__event_emitter__, msg, done=True)
+            return msg
+
         try:
             resp = requests.get(
-                url,
-                params={"q": target_city, "units": "metric", "appid": api_key},
-                timeout=5,
+                "https://api.openweathermap.org/data/2.5/weather",
+                params={"q": target_city, "appid": api_key, "units": "metric"},
+                timeout=10,
             )
             resp.raise_for_status()
             data = resp.json()
             temp = data["main"]["temp"]
-            await self._emit_status(
-                __event_emitter__, "Weather retrieved", done=True
-            )
-            return f"Temperature in {target_city}: {temp}°C"
+            await _safe_emit_status(__event_emitter__, "Weather fetched successfully", done=True)
+            return f"Weather in {target_city}: {temp}°C"
         except Exception as e:
-            await self._emit_status(__event_emitter__, f"Error: {e}", done=True)
-            return "Failed to fetch weather"
+            msg = f"Weather fetch failed: {e}"
+            await _safe_emit_status(__event_emitter__, msg, done=True)
+            return msg
 
-    # --------------------------------------------------------------
-    async def _emit_status(
+    # ------------------------------------------------------------------
+    # 5. Emit a custom citation event
+    # ------------------------------------------------------------------
+    async def demo_citation(
         self,
-        emitter: Optional[Callable[[dict], Awaitable[None]]],
-        desc: str,
-        done: bool,
-    ) -> None:
-        if not emitter:
-            return
-        await emitter(
-            {"type": "status", "data": {"description": desc, "done": done}}
-        )
+        note: str = "A quick example of custom citation usage.",
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
+    ) -> str:
+        if not self.valves.citation_demo_enabled:
+            return "Citation demo is disabled by tool settings."
+        if not __event_emitter__:
+            return "No event emitter to display citation."
+        citation_event = {
+            "type": "citation",
+            "data": {
+                "document": [
+                    "Sample text for demonstration of how citations can be appended to the chat."
+                ],
+                "metadata": [
+                    {
+                        "date_accessed": datetime.now().isoformat(),
+                        "source": "Demo Source Title",
+                    }
+                ],
+                "source": {"name": "Demo Source Title", "url": "https://example.com/demoCitation"},
+            },
+        }
+        await __event_emitter__(citation_event)
+        return f"Emitted custom citation event. Additional note: {note}"
+
+
+
+async def _safe_emit_status(
+    emitter: Optional[Callable[[dict], Awaitable[None]]],
+    description: str,
+    done: bool,
+) -> None:
+    """Helper to emit status updates without raising on failure."""
+    if not emitter:
+        return
+    try:
+        await emitter({"type": "status", "data": {"description": description, "done": done}})
+    except Exception:
+        pass
