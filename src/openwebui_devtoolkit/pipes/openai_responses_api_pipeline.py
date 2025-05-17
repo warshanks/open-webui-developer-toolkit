@@ -330,18 +330,49 @@ class Pipe:
                     if et == "response.output_item.added":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
-                            await __event_emitter__({"type": "status", "data": {"description": f"🔧 Running {item.name}...", "done": False}})
+                            await __event_emitter__(
+                                {
+                                    "type": "status",
+                                    "data": {
+                                        "description": f"🔧 Running {item.name}...",
+                                        "done": False,
+                                    },
+                                }
+                            )
                         elif getattr(item, "type", None) == "web_search_call":
-                            await __event_emitter__({"type": "status", "data": {"description": "🔍 Searching the internet...", "done": False}})
+                            await __event_emitter__(
+                                {
+                                    "type": "status",
+                                    "data": {
+                                        "description": "🔍 Searching the internet...",
+                                        "done": False,
+                                    },
+                                }
+                            )
                         continue
                     if et == "response.output_item.done":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
-                            # TODO consider removing this.  It can look strange where there are back to back calls and it rapidly flashes and clears.
-                            await __event_emitter__({"type": "status", "data": {"description": "", "done": True}})
+                            await __event_emitter__(
+                                {
+                                    "type": "status",
+                                    "data": {
+                                        "description": f"🔧 Running {item.name}...",
+                                        "done": True,
+                                    },
+                                }
+                            )
                         elif getattr(item, "type", None) == "web_search_call":
-                            await __event_emitter__({"type": "status", "data": {"description": "", "done": True}})
+                            await __event_emitter__(
+                                {
+                                    "type": "status",
+                                    "data": {
+                                        "description": "🔍 Searching the internet...",
+                                        "done": True,
+                                    },
+                                }
+                            )
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(getattr(event, "annotation", ""))
@@ -395,6 +426,13 @@ class Pipe:
             elif loop_count > 2:
                 temp_input.append({"role": "assistant", "content": [{"type": "output_text", "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS} ({remaining} remaining, no action needed)."}]})
             break
+
+        await __event_emitter__(
+            {
+                "type": "status",
+                "data": {"description": "✅ Tool phase complete", "done": True},
+            }
+        )
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
