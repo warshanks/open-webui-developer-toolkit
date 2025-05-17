@@ -61,48 +61,6 @@ Read more about OpenAI Responses API:
 • 1.6.8 (2025-05-09)
     - Improved logging formating and control. Replaced DEBUG (on/off) valve with more granular CUSTOM_LOG_LEVEL (DEBUG/INFO/WARNING/ERROR).
     - Refactored code for improved readability and maintainability.
-• 1.6.7
-    - Increased timeout from 90sec -> 900sec to better account for the o3 model which might take minutes before a response.
-    - Updated requirements to "openai>=1.77.0" (library will automatically install when pipe in initialized).
-• 1.6.6
-    - Added support for usage statistics in OpenWebUI UI. Added aggregated token-usage reporting (with loop count) so WebUI's ℹ pop-over shows correct totals even when the model makes multiple tool-call turns.
-• 1.6.5
-    - Adjusted formating of citation output to include the arguments and output of the function call in the citation.  This is useful for debugging and transparency.
-    - Fixed system-prompt extractor to properly process template variables and honor user-defined prompts over the default defined in the model settings.
-• 1.6.4
-   - Fixed thinking tags so it won't output multiple <think> tags in a row (applies to o3-mini)
-• 1.6.3
-   - Added valve option to enable persistant tool results to the conversation history.  This allows the model to remember tool outputs across requests.
-• 1.6.2
-   - Fixed bug where it would check if the client is established each time a chunk is streamed.  Fixed by moving, 'client = get_openai_client(self.valves)' outside the while loop.
-• 1.6.1
-   - Updated requirements to "openai>=1.76.0" (library will automatically install when pipe in initialized).
-   - Added lazy and safe OpenAI client creation inside pipe() to avoid unnecessary re-instantiation.
-   - Cleaned up docstring for improved readability.
-• 1.6.0
-   - Added TOKEN_BUFFER_SIZE (default 1) for streaming control. This controls the number of tokens to buffer before yielding. Set to 1 for immediate per-token streaming.
-   - Cleaned up docstring at top of file for better readability.
-   - Refactored code for improved readability and maintainability.
-   - Rewrote transform_chat_messages_to_responses_api_format() for better readability and performance.
-   - Changed tool_choice behavior.  Now defaults to "none" if no tools are present.
-• 1.5.10
-   - Introduced True Parallel Tool Calling. Tool calls are now executed in parallel using asyncio.gather, then all results are appended at once before returning to the LLM. Previously, calls were handled one-by-one due to sequential loop logic.
-   - Set PARALLEL_TOOL_CALLS default back to True to match OpenAI's default behavior.
-   - The model now receives a clear system message when nearing the MAX_TOOL_CALLS limit, encouraging it to conclude tool use gracefully.
-   - Status messages now reflect when a tool is being invoked, with more personality and clarity for the user.
-   - Tool responses are now emitted as citations, giving visibility into raw results (especially useful for debugging and transparency).
-• 1.5.9
-   - Fixed bug where web_search tool could cause OpenAI responses to loop indefinitely.
-   - Introduced MAX_TOOL_CALLS valve (default 5) to limit the number of tool calls in a single request as extra safety precaution.
-   - Set PARALLEL_TOOL_CALLS valve default to False (prev. True).
-• 1.5.8
-   - Polished docstrings and streamlined debug logging output.
-   - Refactored code for improved readability.
-• 1.5.7
-   - Introduced native tool support for OpenAI! Integrate with OpenWebUI tools.
-• 1.5.6
-   - Fixed minor bugs in function calling and improved performance for large messages.
-   - Introduced partial support for multi-modal input.
 """
 
 from __future__ import annotations
@@ -130,14 +88,6 @@ EMOJI_LEVELS = {
     logging.WARNING: "\u26A0",
     logging.ERROR: "\u274C",
     logging.CRITICAL: "\U0001F525",
-}
-
-# Events that signal the streaming response is complete or failed
-TERMINATION_EVENTS = {
-    "response.done",
-    "response.failed",
-    "response.incomplete",
-    "error",
 }
 
 
@@ -326,7 +276,7 @@ class Pipe:
                     if et == "response.created":
                         last_response_id = event.response.id
                         continue
-                    if et in TERMINATION_EVENTS:
+                    if et in {"response.done", "response.failed", "response.incomplete", "error"}:
                         self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
@@ -495,7 +445,7 @@ class Pipe:
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "stream": True,
-            "store": self.valves.STORE_RESPONSE,
+            "store": True,
         }
         if self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY:
             params["reasoning"] = {}
