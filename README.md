@@ -9,5 +9,6 @@ pip install -e '.[dev]'
 bash scripts/test.sh
 ```
 
-The script sets ``PYTHONPATH`` so tests can import from ``src/`` and runs
-``ruff`` followed by the unit tests.
+The helper script sets ``PYTHONPATH`` so tests can import from ``src/`` and
+executes ``ruff`` for linting, ``unittest`` discovery, and ``pytest`` (limited to
+the ``tests/`` folder).

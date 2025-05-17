@@ -26,3 +26,8 @@ exclude = [
   "external*",
   "tests*"
 ]
+
+[tool.pytest.ini_options]
+# Only collect tests from our local ``tests`` directory
+testpaths = ["tests"]
+addopts = "-ra"
