@@ -444,6 +444,17 @@ class Pipe:
             usage_total.get("total_tokens", 0),
         )
 
+        if last_response_id and not self.valves.STORE_RESPONSE:
+            try:
+                await delete_response(
+                    client,
+                    self.valves.BASE_URL,
+                    self.valves.API_KEY,
+                    last_response_id,
+                )
+            except Exception as ex:  # pragma: no cover - logging only
+                self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
+
     async def _execute_tools(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
@@ -611,6 +622,19 @@ def _to_dict(ns: Any) -> Any:
     if isinstance(ns, tuple):
         return tuple(_to_dict(v) for v in ns)
     return ns
+
+
+async def delete_response(
+    client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
+) -> None:
+    """Delete a stored response."""
+    url = base_url.rstrip("/") + f"/responses/{response_id}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    resp = await client.delete(url, headers=headers)
+    resp.raise_for_status()
 
 
 def prepare_tools(registry: dict | None) -> list[dict]:
