@@ -5,4 +5,4 @@ set -euo pipefail
 export PYTHONPATH="$(pwd)/src:${PYTHONPATH:-}"
 ruff check .
 # Run the pytest suite in verbose mode
-pytest -vv tests
+pytest -vv
