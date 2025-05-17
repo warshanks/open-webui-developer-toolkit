@@ -23,3 +23,5 @@ Additional files demonstrate advanced features discovered in the
 - `pipes/status_stream_pipe.py` streams tokens and emits status events.
 - `filters/stream_logging_filter.py` shows the optional `stream` hook.
 - `tools/docstring_tools.py` builds tool specs from function docstrings.
+- `tools/universal_example.py` demonstrates valves, event emitters and
+  confirmations in one tool.
