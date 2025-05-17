@@ -4,7 +4,7 @@ id: openai_responses_api_pipeline
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.10
+version: 1.6.11
 license: MIT
 requirements: httpx
 
@@ -50,6 +50,9 @@ Read more about OpenAI Responses API:
 -----------------------------------------------------------------------------
 🛠
 -----------------------------------------------------------------------------
+• 1.6.11 (2025-05-17)
+    - Disabled HTTP/2 to prevent mid-stream stalls
+    - Optimized connection pooling for high concurrency
 • 1.6.10 (2025-05-16)
     - Switched streaming implementation to use plain HTTP via httpx
     - Dropped the OpenAI SDK dependency
@@ -479,7 +482,9 @@ class Pipe:
                 self.log.debug("Creating new httpx.AsyncClient.")
             timeout = httpx.Timeout(900.0, connect=30.0)
             limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
-            self._transport = httpx.AsyncHTTPTransport(http2=True, limits=limits)
+            # HTTP/2 can stall if flow control windows aren't consumed quickly.
+            # Using HTTP/1.1 avoids mid-stream pauses in high traffic scenarios.
+            self._transport = httpx.AsyncHTTPTransport(http2=False, limits=limits)
             self._client = httpx.AsyncClient(transport=self._transport, timeout=timeout)
         return self._client
 
