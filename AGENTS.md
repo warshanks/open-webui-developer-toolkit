@@ -29,17 +29,13 @@ inside that path.
 ---
 
 ## Tests
-Run the test suite with Python’s ``unittest`` module:
+Run lint and unit tests with the helper script:
 
 ```bash
-python -m unittest discover -s tests -v
+bash scripts/test.sh
 ```
 
-All PRs should ensure this command succeeds.
-
-To lint the codebase, run:
-
-```bash
-ruff check .
-```
+All PRs should ensure this command succeeds. The script sets ``PYTHONPATH`` so
+tests can import from ``src/`` and then runs ``ruff check .`` followed by
+``python -m unittest discover -s tests -v``.
 

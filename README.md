@@ -6,6 +6,8 @@ Self-contained **Pipes**, **Filters**, and **Tools** you can copy-paste into
 ```bash
 # local dev
 pip install -e '.[dev]'
-python -m unittest discover -s tests -v
-ruff check .
+bash scripts/test.sh
 ```
+
+The script sets ``PYTHONPATH`` so tests can import from ``src/`` and runs
+``ruff`` followed by the unit tests.
