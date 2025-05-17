@@ -83,7 +83,7 @@ class Tools:
     # ------------------------------------------------------------------
     async def get_weather(
         self,
-        city: Optional[str] = None,
+        city: str = "",
         __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
         __event_call__: Optional[Callable[[dict], Awaitable[Any]]] = None,
     ) -> str:
