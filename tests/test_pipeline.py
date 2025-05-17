@@ -258,3 +258,53 @@ async def test_pipe_deletes_response(dummy_chat):
     args = del_mock.await_args.args
     assert args[1:] == (pipe.valves.BASE_URL, pipe.valves.API_KEY, "rX")
 
+
+@pytest.mark.asyncio
+async def test_debug_logs_citation_emitted(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    class Dummy:
+        def __init__(self, **vals):
+            self._vals = vals
+
+        def model_dump(self, exclude_none=True):
+            return self._vals
+
+    user = {"valves": Dummy(CUSTOM_LOG_LEVEL="DEBUG")}
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_text.delta", delta="ok"),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(client, base_url, api_key, params):
+        for e in events:
+            yield e
+
+    emitted = []
+
+    async def emitter(evt: dict):
+        emitted.append(evt)
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        async for _ in pipe.pipe(
+            {},
+            user,
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        ):
+            pass
+    await pipe.on_shutdown()
+
+    assert emitted[-1]["type"] == "citation"
+    assert "Loop iteration" in emitted[-1]["data"]["document"][0]
+

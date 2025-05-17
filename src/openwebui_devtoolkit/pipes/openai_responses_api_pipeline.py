@@ -187,7 +187,21 @@ class Pipe:
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"))
         handler.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True)
-        self.log.handlers = [handler]
+        self._debug_logs: list[str] = []
+
+        class _MemHandler(logging.Handler):
+            def __init__(self, buf: list[str]) -> None:
+                super().__init__(logging.DEBUG)
+                self.buf = buf
+
+            def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
+                if record.levelno == logging.DEBUG:
+                    msg = self.format(record)
+                    self.buf.append(msg)
+
+        mem_handler = _MemHandler(self._debug_logs)
+        mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+        self.log.handlers = [handler, mem_handler]
         self.log.setLevel(logging.INFO)
 
     async def on_shutdown(self) -> None:
@@ -212,6 +226,7 @@ class Pipe:
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Stream responses from OpenAI and handle tool calls."""
         start_ns = time.perf_counter_ns()
+        self._debug_logs.clear()
         self._apply_user_overrides(__user__.get("valves"))
 
         if __tools__ and __metadata__.get("function_calling") != "native":
@@ -433,6 +448,23 @@ class Pipe:
                 "data": {"description": "✅ Tool phase complete", "done": True},
             }
         )
+
+        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs:
+            await __event_emitter__(
+                {
+                    "type": "citation",
+                    "data": {
+                        "document": ["\n".join(self._debug_logs)],
+                        "metadata": [
+                            {
+                                "date_accessed": datetime.now().isoformat(),
+                                "source": "Debug Logs",
+                            }
+                        ],
+                        "source": {"name": "Debug Logs"},
+                    },
+                }
+            )
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
