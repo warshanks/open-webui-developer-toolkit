@@ -34,5 +34,5 @@ bash scripts/test.sh
 ```
 
 The script sets ``PYTHONPATH`` so the ``src`` package is importable, runs
-``ruff`` for linting, then executes ``pytest`` for all tests.  Fixtures in
+``ruff`` for linting and executes ``pytest``. Fixtures in
 ``tests/conftest.py`` stub out ``open_webui`` so tests stay fast and isolated.
