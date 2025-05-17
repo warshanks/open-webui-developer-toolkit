@@ -1,14 +1,14 @@
 """
-title: Tool Template
-id: tool_template
-description: Example toolkit with multiple functions and Pydantic specs.
-author: suurt8ll
-author_url: https://github.com/suurt8ll
-funding_url: https://github.com/suurt8ll/open_webui_functions
+title: Basic Tools
+id: basic_tools
+description: Toolkit showcasing echo, calculator and weather functions.
+author: open-webui
 license: MIT
 version: 0.0.0
 requirements: requests
 """
+
+from __future__ import annotations
 
 import os
 from datetime import datetime
@@ -25,7 +25,7 @@ class Tool:
         text: str = Field(..., description="Text to echo back")
 
     class CalcInput(BaseModel):
-        equation: str = Field(..., description="Mathematical equation to evaluate")
+        equation: str = Field(..., description="Math equation to evaluate")
 
     class WeatherInput(BaseModel):
         city: str = Field("New York, NY", description="City for the weather report")
@@ -53,16 +53,13 @@ class Tool:
         },
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.valves = self.Valves()
-        print(f"{[__name__]} Tool has been initialized.")
 
     async def echo(self, text: str) -> str:
-        """Return the provided text."""
         return text
 
     async def calculator(self, equation: str) -> str:
-        """Evaluate a math expression. Avoid ``eval`` in production code."""
         try:
             result = eval(equation)
             return f"{equation} = {result}"
@@ -70,11 +67,9 @@ class Tool:
             return "Invalid equation"
 
     async def get_current_time(self) -> str:
-        """Return the current time as a string."""
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     async def get_current_weather(self, city: str = "New York, NY") -> str:
-        """Fetch the current weather for ``city`` using OpenWeatherMap."""
         api_key = os.getenv("OPENWEATHER_API_KEY")
         if not api_key:
             return "OPENWEATHER_API_KEY is not set"
