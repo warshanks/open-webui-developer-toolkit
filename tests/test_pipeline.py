@@ -1,4 +1,7 @@
 from importlib import import_module, reload
+import types
+from unittest.mock import AsyncMock, patch
+import pytest
 
 
 def _reload_pipeline():
@@ -155,3 +158,64 @@ def test_build_responses_payload_complex(dummy_chat):
         {"type": "function_call_output", "call_id": "c1", "output": "42"},
         {"role": "assistant", "content": [{"type": "output_text", "text": "ok"}]},
     ]
+
+
+
+
+@pytest.mark.asyncio
+async def test_pipe_stream_loop(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.reasoning_summary_part.added"),
+        types.SimpleNamespace(type="response.reasoning_summary_text.delta", delta="t"),
+        types.SimpleNamespace(type="response.reasoning_summary_text.done", item_id="sum1", text="end"),
+        types.SimpleNamespace(type="response.content_part.added"),
+        types.SimpleNamespace(type="response.output_text.delta", delta="hi"),
+        types.SimpleNamespace(type="response.output_text.done", text="hi"),
+        types.SimpleNamespace(
+            type="response.completed",
+            response=types.SimpleNamespace(
+                usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
+            ),
+        ),
+    ]
+
+    async def fake_stream(client, base_url, api_key, params):
+        for e in events:
+            yield e
+
+    out_chunks: list[object] = []
+    emitted: list[dict] = []
+
+    async def emitter(evt: dict):
+        emitted.append(evt)
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        async for chunk in pipe.pipe(
+            {},
+            {},
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        ):
+            out_chunks.append(chunk)
+    await pipe.on_shutdown()
+
+    assert out_chunks == [
+        "<think>",
+        "t",
+        "\n\n---\n\n",
+        "</think>\n",
+        "hi",
+        {"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "loops": 1}},
+    ]
+    assert emitted[-1]["type"] == "status"
+
