@@ -176,6 +176,7 @@ class Pipe:
         self.valves = self.Valves()
         self.name = f"OpenAI: {self.valves.MODEL_ID}"  # TODO fix this as MODEL_ID value can't be accessed from within __init__.
         self._client: httpx.AsyncClient | None = None
+        self._transport: httpx.AsyncHTTPTransport | None = None
         self._client_lock = asyncio.Lock()
 
         self.log = logging.getLogger(self.name)
@@ -191,6 +192,9 @@ class Pipe:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
+        if self._transport:
+            await self._transport.aclose()
+            self._transport = None
 
     async def pipe(
         self,
@@ -239,9 +243,10 @@ class Pipe:
                 }
             )
 
-        self.log.debug(pretty_log_block(tools, "tools"))
-        self.log.debug(pretty_log_block(instructions, "instructions"))
-        self.log.debug(pretty_log_block(input_messages, "input_messages"))
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug(pretty_log_block(tools, "tools"))
+            self.log.debug(pretty_log_block(instructions, "instructions"))
+            self.log.debug(pretty_log_block(input_messages, "input_messages"))
 
         request_params = self._build_params(
             body, instructions, tools, __user__.get("email")
@@ -252,7 +257,8 @@ class Pipe:
         is_model_thinking = False
 
         for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
-            self.log.debug("Loop iteration #%d", loop_count)
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("Loop iteration #%d", loop_count)
             if loop_count == 1:
                 request_params.update({"input": input_messages})
             else:
@@ -266,12 +272,14 @@ class Pipe:
 
             try:
                 pending_calls: list[SimpleNamespace] = []
-                self.log.debug("response_stream created for loop #%d", loop_count)
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("response_stream created for loop #%d", loop_count)
                 async for event in stream_responses(
                     client, self.valves.BASE_URL, self.valves.API_KEY, request_params
                 ):
                     et = event.type
-                    self.log.debug("Event received: %s", et)
+                    if self.log.isEnabledFor(logging.DEBUG):
+                        self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
                         last_response_id = event.response.id
@@ -421,7 +429,8 @@ class Pipe:
             if isinstance(user_val, str) and user_val.lower() == "inherit":
                 continue
             setattr(self.valves, setting, user_val)
-            self.log.debug("User override → %s set to %r", setting, user_val)
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("User override → %s set to %r", setting, user_val)
         self.log.setLevel(getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO))
 
     def _build_params(
@@ -458,15 +467,20 @@ class Pipe:
     async def get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
         if self._client and not self._client.is_closed:
-            self.log.debug("Reusing existing httpx client.")
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("Reusing existing httpx client.")
             return self._client
         async with self._client_lock:
             if self._client and not self._client.is_closed:
-                self.log.debug("Client initialized while waiting for lock. Reusing existing.")
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("Client initialized while waiting for lock. Reusing existing.")
                 return self._client
-            self.log.debug("Creating new httpx.AsyncClient.")
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("Creating new httpx.AsyncClient.")
             timeout = httpx.Timeout(900.0, connect=30.0)
-            self._client = httpx.AsyncClient(http2=True, timeout=timeout)
+            limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
+            self._transport = httpx.AsyncHTTPTransport(http2=True, limits=limits)
+            self._client = httpx.AsyncClient(transport=self._transport, timeout=timeout)
         return self._client
 
     @staticmethod
