@@ -7,9 +7,8 @@ Self-contained **Pipes**, **Filters**, and **Tools** you can copy-paste into [Op
 pip install -e '.[dev]'
 nox -s lint tests
 ```
-GitHub Actions run ``nox`` on every push and pull request. ``nox`` installs the
-package in an isolated environment, runs ``ruff`` for linting, and executes the
-``pytest`` suite with coverage. The ``tests`` directory includes fixtures to
-stub ``open_webui`` so the suite can run without the external project. A
-``.pre-commit-config.yaml`` is provided so
-you can install pre-commit hooks if desired.
+
+`nox` reuses the current Python environment and sets up `PYTHONPATH` so tests run
+quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
+checks so you get fast feedback before committing. Fixtures under `tests/` stub
+out `open_webui` so the suite can run without the external project.
