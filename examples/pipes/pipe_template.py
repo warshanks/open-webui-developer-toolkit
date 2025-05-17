@@ -1,8 +1,10 @@
 """
 title: Pipe Function Template
 id: pipe_template
-description: Starting point for custom pipelines. Demonstrates valves, user
-    overrides and event emitters.
+description: |
+    Starting point for custom pipelines. Demonstrates valves, user overrides,
+    event emitters and access to request metadata as seen in the
+    ``open-webui`` code base.
 author: suurt8ll
 author_url: https://github.com/suurt8ll
 funding_url: https://github.com/suurt8ll/open_webui_functions

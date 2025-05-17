@@ -1,7 +1,10 @@
 """
 title: Tool Template
 id: tool_template
-description: Example toolkit with multiple functions and Pydantic specs.
+description: |
+    Example toolkit with multiple functions and Pydantic specs. Inspired by the
+    `open-webui` tool loader, this file shows how a Tool class exposes
+    callable functions and schema metadata.
 author: suurt8ll
 author_url: https://github.com/suurt8ll
 funding_url: https://github.com/suurt8ll/open_webui_functions

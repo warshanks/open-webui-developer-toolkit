@@ -15,6 +15,11 @@ out `open_webui` so the suite can run without the external project.
 
 ## Examples
 
-Minimal example extensions are provided under `examples/`.
-Each subfolder (`pipes/`, `filters/`, `tools/`) contains a template
-showing how the corresponding feature works.
+Minimal example extensions live under `examples/`.
+Each subfolder (`pipes/`, `filters/`, `tools/`) contains starter templates.
+Additional files demonstrate advanced features discovered in the
+`open-webui` code base:
+
+- `pipes/status_stream_pipe.py` streams tokens and emits status events.
+- `filters/stream_logging_filter.py` shows the optional `stream` hook.
+- `tools/docstring_tools.py` builds tool specs from function docstrings.
