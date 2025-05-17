@@ -22,7 +22,24 @@ instance.
 
 ## Upstream reference (read-only)
 Open WebUI source is included as a shallow submodule in
-`external/open-webui/`.  
+`external/open-webui/`.
 **Codex:** use it for reference only—do **not** edit or commit changes
 inside that path.
+
+---
+
+## Tests
+Run the test suite with Python’s ``unittest`` module:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+All PRs should ensure this command succeeds.
+
+To lint the codebase, run:
+
+```bash
+ruff check .
+```
 

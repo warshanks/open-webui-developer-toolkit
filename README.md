@@ -6,5 +6,6 @@ Self-contained **Pipes**, **Filters**, and **Tools** you can copy-paste into
 ```bash
 # local dev
 pip install -e '.[dev]'
-pytest -q
+python -m unittest discover -s tests -v
 ruff check .
+```
