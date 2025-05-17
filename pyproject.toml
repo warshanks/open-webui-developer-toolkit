@@ -4,28 +4,25 @@ version = "0.1.0"
 description = "Self-contained Pipes, Filters & Tools for Open WebUI"
 readme = "README.md"
 requires-python = ">=3.11"
-
-[project.dependencies]
-httpx = "*"
-fastapi = "*"
-pydantic = "*"
+dependencies = [
+  "httpx",
+  "fastapi",
+  "pydantic"
+]
 
 [project.optional-dependencies]
 dev = [
   "requests",
   "ruff",
-  "pytest",
+  "pytest"
 ]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# ─────────────────────────────────────────────────────────────
-# Packaging tweak: exclude vendored submodules & tests
-# ─────────────────────────────────────────────────────────────
 [tool.setuptools.packages.find]
 exclude = [
-  "external*",   # e.g. external/open-webui (read-only submodule)
-  "tests*",      # local test helpers – ship source but skip wheels
+  "external*",
+  "tests*"
 ]
