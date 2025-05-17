@@ -61,48 +61,6 @@ Read more about OpenAI Responses API:
 • 1.6.8 (2025-05-09)
     - Improved logging formating and control. Replaced DEBUG (on/off) valve with more granular CUSTOM_LOG_LEVEL (DEBUG/INFO/WARNING/ERROR).
     - Refactored code for improved readability and maintainability.
-• 1.6.7
-    - Increased timeout from 90sec -> 900sec to better account for the o3 model which might take minutes before a response.
-    - Updated requirements to "openai>=1.77.0" (library will automatically install when pipe in initialized).
-• 1.6.6
-    - Added support for usage statistics in OpenWebUI UI. Added aggregated token-usage reporting (with loop count) so WebUI's ℹ pop-over shows correct totals even when the model makes multiple tool-call turns.
-• 1.6.5
-    - Adjusted formating of citation output to include the arguments and output of the function call in the citation.  This is useful for debugging and transparency.
-    - Fixed system-prompt extractor to properly process template variables and honor user-defined prompts over the default defined in the model settings.
-• 1.6.4
-   - Fixed thinking tags so it won't output multiple <think> tags in a row (applies to o3-mini)
-• 1.6.3
-   - Added valve option to enable persistant tool results to the conversation history.  This allows the model to remember tool outputs across requests.
-• 1.6.2
-   - Fixed bug where it would check if the client is established each time a chunk is streamed.  Fixed by moving, 'client = get_openai_client(self.valves)' outside the while loop.
-• 1.6.1
-   - Updated requirements to "openai>=1.76.0" (library will automatically install when pipe in initialized).
-   - Added lazy and safe OpenAI client creation inside pipe() to avoid unnecessary re-instantiation.
-   - Cleaned up docstring for improved readability.
-• 1.6.0
-   - Added TOKEN_BUFFER_SIZE (default 1) for streaming control. This controls the number of tokens to buffer before yielding. Set to 1 for immediate per-token streaming.
-   - Cleaned up docstring at top of file for better readability.
-   - Refactored code for improved readability and maintainability.
-   - Rewrote transform_chat_messages_to_responses_api_format() for better readability and performance.
-   - Changed tool_choice behavior.  Now defaults to "none" if no tools are present.
-• 1.5.10
-   - Introduced True Parallel Tool Calling. Tool calls are now executed in parallel using asyncio.gather, then all results are appended at once before returning to the LLM. Previously, calls were handled one-by-one due to sequential loop logic.
-   - Set PARALLEL_TOOL_CALLS default back to True to match OpenAI's default behavior.
-   - The model now receives a clear system message when nearing the MAX_TOOL_CALLS limit, encouraging it to conclude tool use gracefully.
-   - Status messages now reflect when a tool is being invoked, with more personality and clarity for the user.
-   - Tool responses are now emitted as citations, giving visibility into raw results (especially useful for debugging and transparency).
-• 1.5.9
-   - Fixed bug where web_search tool could cause OpenAI responses to loop indefinitely.
-   - Introduced MAX_TOOL_CALLS valve (default 5) to limit the number of tool calls in a single request as extra safety precaution.
-   - Set PARALLEL_TOOL_CALLS valve default to False (prev. True).
-• 1.5.8
-   - Polished docstrings and streamlined debug logging output.
-   - Refactored code for improved readability.
-• 1.5.7
-   - Introduced native tool support for OpenAI! Integrate with OpenWebUI tools.
-• 1.5.6
-   - Fixed minor bugs in function calling and improved performance for large messages.
-   - Introduced partial support for multi-modal input.
 """
 
 from __future__ import annotations
@@ -134,6 +92,7 @@ EMOJI_LEVELS = {
 
 
 class Pipe:
+    """Pipeline to interact with the OpenAI Responses API."""
     class Valves(BaseModel):
         BASE_URL: str = Field(
             default="https://api.openai.com/v1",
@@ -213,6 +172,7 @@ class Pipe:
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
+        """Initialize the pipeline and logging."""
         self.valves = self.Valves()
         self.name = f"OpenAI: {self.valves.MODEL_ID}"  # TODO fix this as MODEL_ID value can't be accessed from within __init__.
         self._client: httpx.AsyncClient | None = None
@@ -227,6 +187,7 @@ class Pipe:
         self.log.setLevel(logging.INFO)
 
     async def on_shutdown(self) -> None:
+        """Clean up the HTTP client."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
@@ -237,11 +198,12 @@ class Pipe:
         __user__: Dict[str, Any],
         __request__: Request,
         __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
-        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],
+        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],  # unused
         __files__: list[dict[str, Any]],
         __metadata__: dict[str, Any],
         __tools__: dict[str, Any],
     ) -> AsyncIterator[str | dict[str, Any]]:
+        """Stream responses from OpenAI and handle tool calls."""
         start_ns = time.perf_counter_ns()
         self._apply_user_overrides(__user__.get("valves"))
 
@@ -266,14 +228,7 @@ class Pipe:
         chat_id = __metadata__["chat_id"]
         input_messages = build_responses_payload(chat_id)
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
-        instructions = next(
-            (
-                msg.get("content")
-                for msg in reversed(body.get("messages", []))
-                if msg.get("role") == "system"
-            ),
-            "",
-        )
+        instructions = self._extract_instructions(body)
 
         tools = prepare_tools(__tools__)
         if self.valves.ENABLE_WEB_SEARCH:
@@ -322,7 +277,7 @@ class Pipe:
                         last_response_id = event.response.id
                         continue
                     if et in {"response.done", "response.failed", "response.incomplete", "error"}:
-                        # TODO add some logging here.  Errors should be logged as errors.
+                        self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
                         if not is_model_thinking:
@@ -387,18 +342,7 @@ class Pipe:
                         await __event_emitter__({"type": "citation", "data": {"document": [title], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": title}], "source": {"name": url, "url": url}}})
                         continue
                     if et == "response.completed" and event.response.usage:
-                        usage_dict = _to_dict(event.response.usage)
-                        usage_dict["loops"] = loop_count
-                        for key, current_value in usage_dict.items():
-                            if key == "loops":
-                                continue
-                            if isinstance(current_value, int):
-                                usage_total[key] = usage_total.get(key, 0) + current_value
-                            elif isinstance(current_value, dict):
-                                usage_total.setdefault(key, {})
-                                for subkey, subval in current_value.items():
-                                    usage_total[key][subkey] = usage_total[key].get(subkey, 0) + subval
-                        usage_total["loops"] = loop_count
+                        self._update_usage(usage_total, event.response.usage, loop_count)
                         yield {"usage": usage_total}
                         continue
             except Exception as ex:
@@ -454,6 +398,7 @@ class Pipe:
     async def _execute_tools(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
+        """Run tool calls asynchronously and return their results."""
         tasks = []
         for call in calls:
             entry = registry.get(call.name)
@@ -469,6 +414,7 @@ class Pipe:
             return [f"Error: {ex}"] * len(tasks)
 
     def _apply_user_overrides(self, user_valves: BaseModel | None) -> None:
+        """Override valve settings with user-provided values."""
         if not user_valves:
             return
         for setting, user_val in user_valves.model_dump(exclude_none=True).items():
@@ -485,6 +431,7 @@ class Pipe:
         tools: list[dict[str, Any]],
         user_email: str | None,
     ) -> dict[str, Any]:
+        """Create the request payload for the Responses API."""
         params = {
             "model": self.valves.MODEL_ID,
             "tools": tools,
@@ -498,7 +445,7 @@ class Pipe:
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "stream": True,
-            "store": True
+            "store": True,
         }
         if self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY:
             params["reasoning"] = {}
@@ -509,6 +456,7 @@ class Pipe:
         return params
 
     async def get_http_client(self) -> httpx.AsyncClient:
+        """Return a shared httpx client."""
         if self._client and not self._client.is_closed:
             self.log.debug("Reusing existing httpx client.")
             return self._client
@@ -520,6 +468,34 @@ class Pipe:
             timeout = httpx.Timeout(900.0, connect=30.0)
             self._client = httpx.AsyncClient(http2=True, timeout=timeout)
         return self._client
+
+    @staticmethod
+    def _extract_instructions(body: dict[str, Any]) -> str:
+        """Return the last system message from the chat body."""
+        return next(
+            (
+                m.get("content")
+                for m in reversed(body.get("messages", []))
+                if m.get("role") == "system"
+            ),
+            "",
+        )
+
+    @staticmethod
+    def _update_usage(total: dict[str, Any], current: dict[str, Any], loops: int) -> None:
+        """Aggregate token usage stats."""
+        current = _to_dict(current)
+        current["loops"] = loops
+        for key, value in current.items():
+            if key == "loops":
+                continue
+            if isinstance(value, int):
+                total[key] = total.get(key, 0) + value
+            elif isinstance(value, dict):
+                total.setdefault(key, {})
+                for subkey, subval in value.items():
+                    total[key][subkey] = total[key].get(subkey, 0) + subval
+        total["loops"] = loops
 
 
 async def stream_responses(
@@ -561,6 +537,7 @@ async def stream_responses(
 
 
 def _to_obj(data: Any) -> Any:
+    """Recursively convert dictionaries to SimpleNamespace objects."""
     if isinstance(data, dict):
         return SimpleNamespace(**{k: _to_obj(v) for k, v in data.items()})
     if isinstance(data, list):
@@ -569,6 +546,7 @@ def _to_obj(data: Any) -> Any:
 
 
 def _to_dict(ns: Any) -> Any:
+    """Recursively convert SimpleNamespace objects to dictionaries."""
     if isinstance(ns, SimpleNamespace):
         return {k: _to_dict(v) for k, v in vars(ns).items()}
     if isinstance(ns, list):
@@ -579,6 +557,7 @@ def _to_dict(ns: Any) -> Any:
 
 
 def prepare_tools(registry: dict | None) -> list[dict]:
+    """Convert WebUI tool registry entries to OpenAI format."""
     if not registry:
         return []
     raw = registry.get("tools", registry)
@@ -599,6 +578,7 @@ def prepare_tools(registry: dict | None) -> list[dict]:
 
 
 def build_responses_payload(chat_id: str) -> list[dict]:
+    """Convert WebUI chat history to Responses API input format."""
     chat = Chats.get_chat_by_id(chat_id).chat
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
@@ -654,6 +634,7 @@ def build_responses_payload(chat_id: str) -> list[dict]:
 
 
 def pretty_log_block(data: Any, label: str = "") -> str:
+    """Return a pretty formatted string for debug logging."""
     try:
         content = json.dumps(data, indent=2, default=str)
     except Exception:
