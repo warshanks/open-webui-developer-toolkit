@@ -12,3 +12,9 @@ nox -s lint tests
 quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
 checks so you get fast feedback before committing. Fixtures under `tests/` stub
 out `open_webui` so the suite can run without the external project.
+
+## Examples
+
+Minimal example extensions are provided under `examples/`.
+Each subfolder (`pipes/`, `filters/`, `tools/`) contains a template
+showing how the corresponding feature works.
