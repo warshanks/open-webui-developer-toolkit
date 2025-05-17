@@ -1,11 +1,8 @@
 from pathlib import Path
 from urllib.error import HTTPError
 
-import sys
 import unittest
 from unittest.mock import patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scripts.publish_to_webui import (
     _detect_type,

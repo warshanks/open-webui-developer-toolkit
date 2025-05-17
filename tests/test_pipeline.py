@@ -1,10 +1,7 @@
 import sys
-from pathlib import Path
 import types
 import unittest
 from unittest.mock import patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 dummy_chats_mod = types.ModuleType("open_webui.models.chats")
 dummy_chats_mod.Chats = types.SimpleNamespace(get_chat_by_id=lambda _ : None)
