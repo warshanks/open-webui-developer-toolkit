@@ -219,3 +219,42 @@ async def test_pipe_stream_loop(dummy_chat):
     ]
     assert emitted[-1]["type"] == "status"
 
+
+@pytest.mark.asyncio
+async def test_pipe_deletes_response(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="rX")),
+        types.SimpleNamespace(type="response.output_text.delta", delta="ok"),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(client, base_url, api_key, params):
+        for e in events:
+            yield e
+
+    emitter = AsyncMock()
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipeline, "delete_response", AsyncMock()
+    ) as del_mock, patch.object(pipe, "get_http_client", AsyncMock(return_value=object())):
+        async for _ in pipe.pipe(
+            {},
+            {},
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        ):
+            pass
+    await pipe.on_shutdown()
+
+    del_mock.assert_awaited_once()
+    args = del_mock.await_args.args
+    assert args[1:] == (pipe.valves.BASE_URL, pipe.valves.API_KEY, "rX")
+
