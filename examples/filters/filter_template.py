@@ -1,7 +1,10 @@
 """
 title: Filter Template
 id: filter_template
-description: Demonstrates inlet/outlet hooks and per-user valves.
+description: |
+    Demonstrates inlet/outlet hooks and per-user valves. The optional
+    ``stream`` method can inspect events during generation just like in
+    `open-webui`.
 author: suurt8ll
 author_url: https://github.com/suurt8ll
 funding_url: https://github.com/suurt8ll/open_webui_functions
