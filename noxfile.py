@@ -13,4 +13,11 @@ def tests(session):
     env = session.env.copy()
     project_root = os.getcwd()
     env["PYTHONPATH"] = f"{project_root}/src" + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    session.run("pytest", "-vv", *session.posargs, env=env)
+    session.run(
+        "pytest",
+        "-vv",
+        "--cov=openwebui_devtoolkit",
+        "--cov-report=term-missing",
+        *session.posargs,
+        env=env,
+    )

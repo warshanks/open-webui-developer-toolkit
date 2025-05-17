@@ -10,3 +10,4 @@ repos:
         entry: pytest
         language: system
         pass_filenames: false
+        args: ["-q", "--cov=openwebui_devtoolkit", "--cov-report=term-missing"]
