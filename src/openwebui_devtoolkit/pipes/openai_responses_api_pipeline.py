@@ -299,11 +299,10 @@ class Pipe:
         for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
             self.log.debug("Loop iteration #%d", loop_count)
             if loop_count == 1:
-                request_params.update({"store": True, "input": input_messages})
+                request_params.update({"input": input_messages})
             else:
                 request_params.update(
                     {
-                        "store": True,
                         "previous_response_id": last_response_id,
                         "input": temp_input,
                     }
@@ -499,6 +498,7 @@ class Pipe:
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "stream": True,
+            "store": True
         }
         if self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY:
             params["reasoning"] = {}
