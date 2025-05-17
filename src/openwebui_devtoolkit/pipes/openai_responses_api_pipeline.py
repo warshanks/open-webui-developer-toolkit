@@ -132,8 +132,17 @@ EMOJI_LEVELS = {
     logging.CRITICAL: "\U0001F525",
 }
 
+# Events that signal the streaming response is complete or failed
+TERMINATION_EVENTS = {
+    "response.done",
+    "response.failed",
+    "response.incomplete",
+    "error",
+}
+
 
 class Pipe:
+    """Pipeline to interact with the OpenAI Responses API."""
     class Valves(BaseModel):
         BASE_URL: str = Field(
             default="https://api.openai.com/v1",
@@ -213,6 +222,7 @@ class Pipe:
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
+        """Initialize the pipeline and logging."""
         self.valves = self.Valves()
         self.name = f"OpenAI: {self.valves.MODEL_ID}"  # TODO fix this as MODEL_ID value can't be accessed from within __init__.
         self._client: httpx.AsyncClient | None = None
@@ -227,6 +237,7 @@ class Pipe:
         self.log.setLevel(logging.INFO)
 
     async def on_shutdown(self) -> None:
+        """Clean up the HTTP client."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
@@ -237,11 +248,12 @@ class Pipe:
         __user__: Dict[str, Any],
         __request__: Request,
         __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
-        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],
+        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],  # unused
         __files__: list[dict[str, Any]],
         __metadata__: dict[str, Any],
         __tools__: dict[str, Any],
     ) -> AsyncIterator[str | dict[str, Any]]:
+        """Stream responses from OpenAI and handle tool calls."""
         start_ns = time.perf_counter_ns()
         self._apply_user_overrides(__user__.get("valves"))
 
@@ -266,14 +278,7 @@ class Pipe:
         chat_id = __metadata__["chat_id"]
         input_messages = build_responses_payload(chat_id)
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
-        instructions = next(
-            (
-                msg.get("content")
-                for msg in reversed(body.get("messages", []))
-                if msg.get("role") == "system"
-            ),
-            "",
-        )
+        instructions = self._extract_instructions(body)
 
         tools = prepare_tools(__tools__)
         if self.valves.ENABLE_WEB_SEARCH:
@@ -321,8 +326,8 @@ class Pipe:
                     if et == "response.created":
                         last_response_id = event.response.id
                         continue
-                    if et in {"response.done", "response.failed", "response.incomplete", "error"}:
-                        # TODO add some logging here.  Errors should be logged as errors.
+                    if et in TERMINATION_EVENTS:
+                        self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
                         if not is_model_thinking:
@@ -387,18 +392,7 @@ class Pipe:
                         await __event_emitter__({"type": "citation", "data": {"document": [title], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": title}], "source": {"name": url, "url": url}}})
                         continue
                     if et == "response.completed" and event.response.usage:
-                        usage_dict = _to_dict(event.response.usage)
-                        usage_dict["loops"] = loop_count
-                        for key, current_value in usage_dict.items():
-                            if key == "loops":
-                                continue
-                            if isinstance(current_value, int):
-                                usage_total[key] = usage_total.get(key, 0) + current_value
-                            elif isinstance(current_value, dict):
-                                usage_total.setdefault(key, {})
-                                for subkey, subval in current_value.items():
-                                    usage_total[key][subkey] = usage_total[key].get(subkey, 0) + subval
-                        usage_total["loops"] = loop_count
+                        self._update_usage(usage_total, event.response.usage, loop_count)
                         yield {"usage": usage_total}
                         continue
             except Exception as ex:
@@ -454,6 +448,7 @@ class Pipe:
     async def _execute_tools(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
+        """Run tool calls asynchronously and return their results."""
         tasks = []
         for call in calls:
             entry = registry.get(call.name)
@@ -469,6 +464,7 @@ class Pipe:
             return [f"Error: {ex}"] * len(tasks)
 
     def _apply_user_overrides(self, user_valves: BaseModel | None) -> None:
+        """Override valve settings with user-provided values."""
         if not user_valves:
             return
         for setting, user_val in user_valves.model_dump(exclude_none=True).items():
@@ -485,6 +481,7 @@ class Pipe:
         tools: list[dict[str, Any]],
         user_email: str | None,
     ) -> dict[str, Any]:
+        """Create the request payload for the Responses API."""
         params = {
             "model": self.valves.MODEL_ID,
             "tools": tools,
@@ -498,7 +495,7 @@ class Pipe:
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "stream": True,
-            "store": True
+            "store": self.valves.STORE_RESPONSE,
         }
         if self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY:
             params["reasoning"] = {}
@@ -509,6 +506,7 @@ class Pipe:
         return params
 
     async def get_http_client(self) -> httpx.AsyncClient:
+        """Return a shared httpx client."""
         if self._client and not self._client.is_closed:
             self.log.debug("Reusing existing httpx client.")
             return self._client
@@ -520,6 +518,34 @@ class Pipe:
             timeout = httpx.Timeout(900.0, connect=30.0)
             self._client = httpx.AsyncClient(http2=True, timeout=timeout)
         return self._client
+
+    @staticmethod
+    def _extract_instructions(body: dict[str, Any]) -> str:
+        """Return the last system message from the chat body."""
+        return next(
+            (
+                m.get("content")
+                for m in reversed(body.get("messages", []))
+                if m.get("role") == "system"
+            ),
+            "",
+        )
+
+    @staticmethod
+    def _update_usage(total: dict[str, Any], current: dict[str, Any], loops: int) -> None:
+        """Aggregate token usage stats."""
+        current = _to_dict(current)
+        current["loops"] = loops
+        for key, value in current.items():
+            if key == "loops":
+                continue
+            if isinstance(value, int):
+                total[key] = total.get(key, 0) + value
+            elif isinstance(value, dict):
+                total.setdefault(key, {})
+                for subkey, subval in value.items():
+                    total[key][subkey] = total[key].get(subkey, 0) + subval
+        total["loops"] = loops
 
 
 async def stream_responses(
@@ -561,6 +587,7 @@ async def stream_responses(
 
 
 def _to_obj(data: Any) -> Any:
+    """Recursively convert dictionaries to SimpleNamespace objects."""
     if isinstance(data, dict):
         return SimpleNamespace(**{k: _to_obj(v) for k, v in data.items()})
     if isinstance(data, list):
@@ -569,6 +596,7 @@ def _to_obj(data: Any) -> Any:
 
 
 def _to_dict(ns: Any) -> Any:
+    """Recursively convert SimpleNamespace objects to dictionaries."""
     if isinstance(ns, SimpleNamespace):
         return {k: _to_dict(v) for k, v in vars(ns).items()}
     if isinstance(ns, list):
@@ -579,6 +607,7 @@ def _to_dict(ns: Any) -> Any:
 
 
 def prepare_tools(registry: dict | None) -> list[dict]:
+    """Convert WebUI tool registry entries to OpenAI format."""
     if not registry:
         return []
     raw = registry.get("tools", registry)
@@ -599,6 +628,7 @@ def prepare_tools(registry: dict | None) -> list[dict]:
 
 
 def build_responses_payload(chat_id: str) -> list[dict]:
+    """Convert WebUI chat history to Responses API input format."""
     chat = Chats.get_chat_by_id(chat_id).chat
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
@@ -654,6 +684,7 @@ def build_responses_payload(chat_id: str) -> list[dict]:
 
 
 def pretty_log_block(data: Any, label: str = "") -> str:
+    """Return a pretty formatted string for debug logging."""
     try:
         content = json.dumps(data, indent=2, default=str)
     except Exception:
