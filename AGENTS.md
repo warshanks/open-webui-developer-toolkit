@@ -27,12 +27,12 @@ inside that path.
 ---
 
 ## Tests
-Run linting and tests with the helper script:
+Run linting and tests with ``nox``:
 
 ```bash
-bash scripts/test.sh
+nox -s lint tests
 ```
 
-The script sets ``PYTHONPATH`` so the ``src`` package is importable, runs
-``ruff`` for linting and executes ``pytest``. Fixtures in
-``tests/conftest.py`` stub out ``open_webui`` so tests stay fast and isolated.
+``nox`` uses the current Python environment, adds ``src`` to ``PYTHONPATH``
+and executes ``ruff`` followed by ``pytest``. Fixtures in ``tests/conftest.py``
+stub out ``open_webui`` so tests stay fast and isolated.

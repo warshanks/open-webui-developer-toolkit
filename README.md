@@ -5,13 +5,11 @@ Self-contained **Pipes**, **Filters**, and **Tools** you can copy-paste into [Op
 ```bash
 # local dev
 pip install -e '.[dev]'
-bash scripts/test.sh
+nox -s lint tests
 ```
-
-GitHub Actions run the same script on every push and pull request.
-
-``scripts/test.sh`` adds ``src`` to ``PYTHONPATH`` so the package can be imported
-in tests, runs ``ruff`` for linting and then ``pytest``.  The
-``tests`` directory includes fixtures to stub ``open_webui`` so the suite can
-run without the external project.  A ``.pre-commit-config.yaml`` is provided so
+GitHub Actions run ``nox`` on every push and pull request. ``nox`` installs the
+package in an isolated environment, runs ``ruff`` for linting, and executes the
+``pytest`` suite with coverage. The ``tests`` directory includes fixtures to
+stub ``open_webui`` so the suite can run without the external project. A
+``.pre-commit-config.yaml`` is provided so
 you can install pre-commit hooks if desired.
