@@ -7,7 +7,7 @@ if [ ! -s external/open-webui/.git ]; then
 fi
 
 echo "▶ Installing runtime dependencies …"
-pip install --quiet ruff httpx fastapi pydantic
+pip install --quiet ruff httpx fastapi pydantic pytest
 
 echo "▶ Installing toolkit in editable mode …"
 pip install -e '.[dev]' --quiet
