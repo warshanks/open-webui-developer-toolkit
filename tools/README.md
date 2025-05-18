@@ -1,34 +1,71 @@
 # Tools Guide
 
-Standalone tools expose functionality that pipes can call. A tool is a single
-Python file with a `spec` describing the function and an `invoke()` function that
-executes it.
+Standalone tools expose additional functionality that pipes can call. Each tool
+is a **single Python file** containing a `Tools` class. Every method of the
+class becomes an individual tool. Open WebUI loads these modules through
+`plugin.load_tool_module_by_id` and builds the OpenAI style specs
+automatically.
 
 ```python
-spec = {
-    "name": "hello_world",
-    "description": "Return a friendly greeting",
-    "parameters": {"type": "object", "properties": {}}
-}
+"""
+requirements: httpx
+"""
 
-async def invoke(args: dict) -> str:
-    return "hello"
+class Tools:
+    def hello(self, name: str):
+        """Return a friendly greeting.
+
+        :param name: User name
+        """
+        return {"message": f"Hello {name}"}
 ```
 
-Pipes register tools so they can be called using Open WebUI's native tool system.
-Place new tool modules in this folder.
+When a file is uploaded via the admin UI the loader installs any packages listed
+in the optional **frontmatter** block (`requirements:` in the example above).
+Short import paths such as `from utils.chat` are rewritten to `open_webui.utils`
+so the module can reuse helpers from the main project.
 
-The backend keeps a registry mapping each tool's name to its specification and
-`invoke()` coroutine. When a pipe needs a tool it looks it up in this registry
-and awaits the `invoke()` function with the provided arguments.
+## How tools are discovered
+
+`backend/open_webui/utils/tools.py` converts each method of the `Tools` class
+into an async callable. Type hints and docstrings are parsed using
+`convert_function_to_pydantic_model` and then transformed to an OpenAI spec with
+`convert_pydantic_model_to_openai_function_spec`【F:external/TOOLS_GUIDE.md†L3-L10】【F:external/TOOLS_GUIDE.md†L30-L51】.
+`get_tools()` returns a dictionary mapping the method name to its callable and
+metadata such as the generated spec【F:external/TOOLS_GUIDE.md†L12-L28】.
+
+Tools may expose two optional Pydantic models named `Valves` and `UserValves`
+for configuration. The loader hydrates these models with values stored in the
+database before every call. This allows administrators to define global defaults
+while users can override selected fields.
+
+If a module defines `file_handler = True` the middleware removes uploaded files
+from the payload after the tool runs because the tool manages them itself.
+
+## Calling tools from a pipe
+
+Pipes receive a mapping of registered tools via the `__tools__` parameter. Each
+entry exposes a `callable` and a `spec` describing the parameters. A pipe can
+invoke a tool directly:
+
+```python
+async def pipe(self, body, __tools__):
+    add = __tools__["add"]["callable"]
+    result = await add(a=1, b=2)
+    return str(result)
+```
+
+Remote **tool servers** are also supported. When a tool id starts with
+`server:` the loader fetches an OpenAPI document, converts each `operationId`
+into a tool payload and proxies the call via `execute_tool_server`【F:external/TOOLS_GUIDE.md†L53-L79】.
 
 ## Events and callbacks
 
-Tools may send updates to the browser while running. Two helpers are injected
-when the tool requests them in its signature:
+Tools may interact with the browser while running. Two helpers can be requested
+in a tool function's signature:
 
-- `__event_emitter__` – fire-and-forget messages to the UI.
-- `__event_call__` – display a dialog and wait for a response.
+- `__event_emitter__` – fire-and-forget messages such as status updates.
+- `__event_call__` – display a dialog and wait for the user's response.
 
 ```python
 async def example_tool(__event_emitter__, __event_call__):
@@ -47,7 +84,6 @@ async def example_tool(__event_emitter__, __event_call__):
         })
 ```
 
-`__event_call__` can also run JavaScript (`execute`) or prompt the user for text
+`__event_call__` can also run JavaScript (`execute`) or prompt for text
 (`input`). The emitter supports `message`, `replace`, `status`, `citation` and
-`notification` event types. See the removed `event_emitter_example.py` for a
-full demonstration.
+`notification` event types.
