@@ -14,7 +14,8 @@ dependencies = [
   "beautifulsoup4",
   "peewee",
   "peewee-migrate",
-  "SQLAlchemy"
+  "SQLAlchemy",
+  "aiocache"
 ]
 
 [project.optional-dependencies]
