@@ -8,15 +8,7 @@ dependencies = [
   "httpx",
   "fastapi",
   "pydantic",
-  "requests",
-  "typer",
-  "Markdown",
-  "beautifulsoup4",
-  "peewee",
-  "peewee-migrate",
-  "SQLAlchemy",
-  "asyncio",
-  "cached"
+  "requests"
 ]
 
 [project.optional-dependencies]
