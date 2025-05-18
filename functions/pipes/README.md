@@ -9,7 +9,6 @@
 3. [Anatomy of a Pipe](#anatomy-of-a-pipe)  
    3.1 [Metadata Block](#metadata-block)  
    3.2 [The `Pipe` Class](#the-pipe-class)  
-   3.3 [Where to Save & Map Files](#where-to-save--map-files)
 4. [Execution Lifecycle](#execution-lifecycle)
 5. [Parameter Injection & Special Arguments](#parameter-injection--special-arguments)  
    5.1 [Built-in Injectables](#built-in-injectables)  
@@ -113,22 +112,6 @@ Return types accepted:
 | `str` / `dict`                 | Sent as one chunk.                     |
 | `AsyncGenerator` / `Generator` | Each `yield` becomes a streamed token. |
 | `StreamingResponse`            | Passed straight through.               |
-
----
-
-### Where to Save & Map Files <a id="where-to-save--map-files"></a>
-
-| Location                                                | Purpose                                |
-| ------------------------------------------------------- | -------------------------------------- |
-| `functions/pipes/`                                      | Local, version-controlled pipes.       |
-| `external/open-webui/backend/open_webui/pipes_builtin/` | Upstream defaults—look but don’t edit. |
-
-Map a model to your file via **Models ▸ Add** or programmatically with:
-
-```bash
-POST /api/models
-{ "id": "my-echo", "provider": "pipe", "file_id": "echo" }
-```
 
 ---
 
