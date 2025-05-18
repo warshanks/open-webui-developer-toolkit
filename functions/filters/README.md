@@ -27,6 +27,7 @@ Only the methods you implement are called. They may be synchronous or `async`.
 
 ## Loading and frontmatter
 
+Filter files live in the database and are fetched on demand.
 `utils.plugin.load_function_module_by_id` rewrites short import paths (e.g.
 `from utils.chat` → `from open_webui.utils.chat`), installs any packages listed
 in a triple quoted **frontmatter** block and executes the file. If the module
@@ -87,6 +88,15 @@ following names are commonly available:
 - `__model__` – model data
 
 Extra context can be injected using the same variable names.
+
+## Middleware integration
+
+`process_chat_payload` in the WebUI middleware builds the `extra_params`
+dictionary containing event callbacks, user info and metadata.  This dictionary
+is passed to `process_filter_functions` so every filter can access the same
+helpers that pipes do.  Filters execute before the selected pipe runs and again
+while streaming tokens back to the client.  See
+`external/MIDDLEWARE_GUIDE.md` for a deeper walkthrough of the request flow.
 
 ## Filter lifecycle
 
