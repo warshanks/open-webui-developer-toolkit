@@ -116,3 +116,49 @@ def outlet(body, __id__):
 ```
 
 Upload the file via the Functions UI, mark it as a filter and enable it. `process_filter_functions` imports the module and invokes `outlet` before sending the response back to the client.
+
+## Filter module anatomy
+
+A filter file can define several optional pieces that are recognised by
+`process_filter_functions`:
+
+- **`Valves`** – a `pydantic.BaseModel` describing global settings.  When
+  present the loader hydrates it with values from the database and assigns an
+  instance to `function_module.valves`.
+- **`UserValves`** – per‑user overrides that are attached to the
+  `__user__["valves"]` dictionary passed to the handler.
+- **`file_handler`** – set this boolean when the filter manages uploaded files
+  on its own.  After the handler returns the middleware removes the `files`
+  field from the payload so the default logic does not process them again.
+
+Only the functions that exist (`inlet`, `outlet` and `stream`) are invoked.
+
+### Advanced example
+
+```python
+# throttle_filter.py
+from pydantic import BaseModel
+
+class Valves(BaseModel):
+    max_turns: int = 4
+
+class UserValves(BaseModel):
+    bonus_turns: int = 0
+
+file_handler = True
+
+def inlet(body, __user__, valves):
+    limit = valves.max_turns + __user__.valves.bonus_turns
+    if len(body.get("messages", [])) > limit:
+        raise Exception(f"Conversation turn limit exceeded ({limit})")
+    # uploaded files can be inspected here
+    return body
+
+async def stream(event):
+    # inspect tokens as they are streamed back
+    print("token", event.get("data"))
+    return event
+```
+
+This filter enforces a per‑user turn limit, handles any uploaded files and logs
+each streaming token as it arrives.
