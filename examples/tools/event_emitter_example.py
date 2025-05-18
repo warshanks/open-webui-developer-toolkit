@@ -1,74 +1,65 @@
 """
-title: Event Playground Tool
+title: Event Emitter Example
 author: Open-WebUI Docs Team
-version: 1.0
+version: 1.1
 license: MIT
 description: |
-  One 100-line file that shows **every** event channel Open-WebUI supports.
-  Read it top-to-bottom and you’ll know how to build any interactive tool.
+  This tool demonstrates how to use Open WebUI's built-in event system (__event_emitter__ and __event_call__) to communicate with the UI during tool execution:
 
-  Shown in order of appearance…
-    1. status      – streaming progress bar
-    2. message     – append text to the assistant bubble
-    3. input       – text-input modal (awaits user)
-    4. confirmation– yes/no modal (awaits user)
-    5. citation    – collapsible Sources panel
-    6. replace     – edits the assistant bubble in-place
+  __event_emitter__: Sends immediate, non-blocking UI updates:
+      • type="status": Updates progress indicators.
+      • type="message": Adds messages directly to the chat.
+      • type="citation": Attaches collapsible source/reference blocks.
+      • type="replace": Dynamically edits the current chat bubble.
+
+  __event_call__: Displays interactive pop-ups and pauses execution until the user responds:
+      • type="input": Prompts the user to enter text input.
+      • type="confirmation": Asks the user for Yes/No confirmation.
 """
 
 from __future__ import annotations
 import asyncio, time
 from typing import Awaitable, Callable, Dict
 
-from pydantic import BaseModel, Field  # Only for the “Valves” settings panel
+from pydantic import BaseModel, Field
 
-
-# ── Aliases that match the injections you get at runtime ───────────────
+# Runtime injections → helpful aliases
 Emitter = Callable[[Dict[str, any]], Awaitable[None]]
 Caller = Callable[[Dict[str, any]], Awaitable[any]]
-# -----------------------------------------------------------------------
 
 
 class Tools:
-    # 🛠 1) Global knobs that appear under “Tool Settings” in WebUI
+    # UI-visible “settings” pane ────────────────────────────────────
     class Valves(BaseModel):
         units: int = Field(4, description="Fake work-units to process")
-        delay: float = Field(0.6, description="Seconds to wait between units")
+        delay: float = Field(0.6, description="Seconds between units")
 
-    def __init__(self) -> None:
+    def __init__(self):
         self.valves = self.Valves()
 
-    # 🛠 2) The single public method – becomes the tool name
+    # Public tool method  –  shows every event type in order
     async def playground(
         self,
         units: int = None,
         __event_emitter__: Emitter | None = None,
         __event_call__: Caller | None = None,
     ) -> str:
-        """Streams, prompts, confirms, cites, then edits its own bubble."""
 
-        # Mini helper so we can just   await emit({...})
-        async def emit(evt: Dict):
+        async def emit(evt: Dict):  # await emit({...})
             if __event_emitter__:
                 await __event_emitter__(evt)
 
-        # ---------- STEP 0  •  decide how much “work” to do -------------
         total = units if isinstance(units, int) and units > 0 else self.valves.units
 
-        # ---------- STEP 1  •  put a placeholder message in the chat ----
-        await emit(
-            {"type": "message", "data": {"content": "⏳ *Setting up the demo…*"}}
-        )
-
-        # ---------- STEP 2  •  start a progress bar ---------------------
+        # 1) initial chat stub + progress bar
+        await emit({"type": "message", "data": {"content": "⏳ *Demo starting…*"}})
         await emit(
             {
                 "type": "status",
-                "data": {"description": f"🚀 starting {total} units", "done": False},
+                "data": {"description": f"🚀 {total} units", "done": False},
             }
         )
 
-        # ---------- STEP 3  •  simulate work & stream updates -----------
         for idx in range(1, total + 1):
             await asyncio.sleep(self.valves.delay)
             await emit(
@@ -78,17 +69,15 @@ class Tools:
                 }
             )
 
-            # ── Mid-way: interactive break (only once)
+            # Mid-way:  input   →   confirmation
             if idx == total // 2 and __event_call__:
-                # 3A) Ask for a note (text-input modal)
                 note = (
                     await __event_call__(
                         {
                             "type": "input",
                             "data": {
                                 "title": "Add a note (optional)",
-                                "message": "Enter any text to inject into the chat, "
-                                "or leave blank.",
+                                "message": "Enter text to inject or leave blank",
                                 "placeholder": "my note",
                             },
                         }
@@ -96,18 +85,17 @@ class Tools:
                     or ""
                 )
 
-                # 3B) Confirm we should continue (yes/no modal)
-                keep_going = await __event_call__(
+                proceed = await __event_call__(
                     {
                         "type": "confirmation",
                         "data": {
-                            "title": "Continue processing?",
-                            "message": f"We’re half-way ({idx}/{total}). Continue?",
+                            "title": "Continue?",
+                            "message": f"We’re at {idx}/{total}. Proceed?",
                         },
                     }
                 )
 
-                if not keep_going:
+                if not proceed:  # user aborted
                     await emit(
                         {
                             "type": "message",
@@ -128,7 +116,6 @@ class Tools:
                         }
                     )
                     return "User cancelled."
-
                 if note:
                     await emit(
                         {
@@ -137,12 +124,12 @@ class Tools:
                         }
                     )
 
-        # ---------- STEP 4  •  attach a citation block ------------------
+        # citation + finished bar + in-place bubble edit
         await emit(
             {
                 "type": "citation",
                 "data": {
-                    "document": [f"Demo processed **{total}** units of fake work."],
+                    "document": [f"Demo processed **{total}** units."],
                     "metadata": [
                         {"date_accessed": time.strftime("%Y-%m-%dT%H:%M:%SZ")}
                     ],
@@ -153,8 +140,6 @@ class Tools:
                 },
             }
         )
-
-        # ---------- STEP 5  •  mark the progress bar ‘done’ -------------
         await emit(
             {
                 "type": "status",
@@ -166,9 +151,6 @@ class Tools:
             }
         )
 
-        # ---------- STEP 6  •  overwrite the first bubble ---------------
-        final_text = f"🎉 Completed {total} units successfully."
-        await emit({"type": "replace", "data": {"content": final_text}})
-
-        # ---------- STEP 7  •  normal Python return ---------------------
-        return final_text
+        final_msg = f"🎉 Completed {total} units successfully."
+        await emit({"type": "replace", "data": {"content": final_msg}})
+        return final_msg
