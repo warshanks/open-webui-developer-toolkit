@@ -32,6 +32,6 @@ Additional files demonstrate advanced features discovered in the
 
 ## Documentation
 
-Detailed notes about upstream Open WebUI internals live under `docs/`.
-See `docs/middleware.md` for an overview of the core middleware logic.
-Additional placeholders are collected in `docs/utils/` and `docs/custom_pipes.md`.
+Detailed notes about upstream Open WebUI internals live under `external/`.
+See `external/MIDDLEWARE_GUIDE.md` for an overview of the core middleware logic.
+Additional placeholders are collected in the other `*_GUIDE.md` files and `docs/custom_pipes.md`.
