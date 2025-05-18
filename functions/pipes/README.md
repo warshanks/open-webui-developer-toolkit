@@ -231,3 +231,43 @@ class Pipe:
 ```
 
 Selecting `demo:fast` or `demo:slow` calls the same module with the id suffix. Inspect `__id__` in the handler to adapt behaviour.
+
+## Using internal Open WebUI functions
+
+Pipes can call helpers from the main application instead of reimplementing
+common features.  The chat routing logic lives in
+`open_webui.utils.chat.generate_chat_completion`, referenced throughout the
+upstream docs【F:external/CHAT_GUIDE.md†L10-L24】.  You may invoke this function
+directly inside a custom pipe to reuse Open WebUI's model switching and
+streaming behaviour.
+
+```python
+from pydantic import BaseModel, Field
+from fastapi import Request
+
+from open_webui.models.users import Users
+from open_webui.utils.chat import generate_chat_completion
+
+
+class Pipe:
+    async def pipe(
+        self,
+        body: dict,
+        __user__: dict,
+        __request__: Request,
+    ) -> str:
+        # Fetch the full user object then delegate to Open WebUI's pipeline
+        user = Users.get_user_by_id(__user__["id"])
+        body["model"] = "llama3.2:latest"
+        return await generate_chat_completion(__request__, body, user)
+```
+
+`generate_chat_completion` accepts the incoming request, processed chat payload
+and a user instance.  Its definition shows the expected parameters and optional
+`bypass_filter` flag【F:external/open-webui/backend/open_webui/utils/chat.py†L158-L166】.
+The `Users` helper provides access to the current account object
+【F:external/open-webui/backend/open_webui/models/users.py†L137-L143】.
+
+Use this approach when you want to delegate the heavy lifting to Open WebUI but
+still ship custom preprocessing or post-processing logic.  Keep an eye on the
+upstream project for signature changes and handle errors gracefully.
