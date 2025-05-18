@@ -22,71 +22,19 @@ description: |
 """
 
 from __future__ import annotations
+
 import asyncio
 import time
-from typing import Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel, Field
 
-# Runtime injections → helpful aliases
-Emitter = Callable[[Dict[str, any]], Awaitable[None]]
-Caller = Callable[[Dict[str, any]], Awaitable[any]]
+# Runtime injection aliases for readability
+Emitter = Callable[[dict[str, Any]], Awaitable[None]]
+Caller = Callable[[dict[str, Any]], Awaitable[Any]]
 
-
-class Tools:
-    # UI-visible “settings” pane ────────────────────────────────────
-    class Valves(BaseModel):
-        units: int = Field(4, description="Fake work-units to process")
-        delay: float = Field(0.6, description="Seconds between units")
-
-    def __init__(self):
-        self.valves = self.Valves()
-
-    async def example_tool(
-        self,
-        units: int = None,
-        __event_emitter__: Emitter | None = None,
-        __event_call__: Caller | None = None,
-    ) -> str:
-
-        # ``__event_emitter__`` broadcasts events to the browser while
-        # ``__event_call__`` waits for a response from the user interface.
-
-        async def emit(evt: Dict) -> None:
-            """Send ``evt`` to the UI if possible."""
-            if __event_emitter__:
-                await __event_emitter__(evt)
-
-        async def confirm(message: str) -> bool:
-            """Show a yes/no dialog and return ``True`` if confirmed."""
-            if __event_call__:
-                return await __event_call__(
-                    {
-                        "type": "confirmation",
-                        "data": {"title": "Event Demo", "message": message},
-                    }
-                )
-            return True
-
-        async def run_js(code: str) -> any:
-            """Execute ``code`` in the browser and return the result."""
-            if __event_call__:
-                return await __event_call__({"type": "execute", "data": {"code": code}})
-            return None
-
-        total = units if isinstance(units, int) and units > 0 else self.valves.units
-
-        # Intro notification and chat line
-        await emit(
-            {
-                "type": "notification",
-                "data": {"type": "info", "content": "Starting demo"},
-            }
-        )
-        await emit({"type": "message", "data": {"content": "🧪 Beginning event demo."}})
-
-        # ----- temporary banner -----
-        banner_add_js = """
+# JavaScript snippets used to display a temporary banner in the UI
+BANNER_ADD_JS = """
 if (!document.getElementById('demo-banner')) {
   const div = document.createElement('div');
   div.id = 'demo-banner';
@@ -110,15 +58,75 @@ if (!document.getElementById('demo-banner')) {
   requestAnimationFrame(() => { div.style.opacity = '1'; });
 }
 """
-        banner_remove_js = (
-            "const b=document.getElementById('demo-banner');"
-            "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),300);}"
-        )
 
-        await run_js(banner_add_js)
+BANNER_REMOVE_JS = (
+    "const b=document.getElementById('demo-banner');"
+    "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),300);}"
+)
+
+
+class Tools:
+    """Collection of example tools."""
+
+    # UI-visible “settings” pane ────────────────────────────────────
+    class Valves(BaseModel):
+        """Parameters exposed to the user interface."""
+
+        units: int = Field(4, description="Fake work-units to process")
+        delay: float = Field(0.6, description="Seconds between units")
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    async def example_tool(
+        self,
+        units: int | None = None,
+        __event_emitter__: Emitter | None = None,
+        __event_call__: Caller | None = None,
+    ) -> str:
+        """Demonstrate the built-in ``__event_*`` functions."""
+
+        # ``__event_emitter__`` broadcasts events to the browser while
+        # ``__event_call__`` waits for a response from the user interface.
+
+        async def emit(evt: dict[str, Any]) -> None:
+            """Send ``evt`` to the UI if possible."""
+            if __event_emitter__:
+                await __event_emitter__(evt)
+
+        async def confirm(message: str) -> bool:
+            """Show a yes/no dialog and return ``True`` if confirmed."""
+            if __event_call__:
+                return await __event_call__(
+                    {
+                        "type": "confirmation",
+                        "data": {"title": "Event Demo", "message": message},
+                    }
+                )
+            return True
+
+        async def run_js(code: str) -> Any:
+            """Execute ``code`` in the browser and return the result."""
+            if __event_call__:
+                return await __event_call__({"type": "execute", "data": {"code": code}})
+            return None
+
+        total = units if isinstance(units, int) and units > 0 else self.valves.units
+
+        # Intro notification and chat line
+        await emit(
+            {
+                "type": "notification",
+                "data": {"type": "info", "content": "Starting demo"},
+            }
+        )
+        await emit({"type": "message", "data": {"content": "🧪 Beginning event demo."}})
+
+        # ----- temporary banner -----
+        await run_js(BANNER_ADD_JS)
 
         if not await confirm("Banner added. Continue to progress demo?"):
-            await run_js(banner_remove_js)
+            await run_js(BANNER_REMOVE_JS)
             return "Demo cancelled."
 
         # ----- status events -----
@@ -134,7 +142,10 @@ if (!document.getElementById('demo-banner')) {
                 }
             )
             await run_js(
-                f"const el=document.getElementById('demo-banner-text'); if(el) el.textContent='Step {idx}/{total}';"
+                (
+                    "const el=document.getElementById('demo-banner-text');"
+                    f" if(el) el.textContent='Step {idx}/{total}';"
+                )
             )
         await emit(
             {
@@ -148,11 +159,11 @@ if (!document.getElementById('demo-banner')) {
         )
         await run_js(
             "const el=document.getElementById('demo-banner-text');"
-            "if(el){el.textContent='Progress finished \u2713';}"
+            " if(el){el.textContent='Progress finished \u2713';}"
         )
 
         if not await confirm("Progress complete. Provide a note?"):
-            await run_js(banner_remove_js)
+            await run_js(BANNER_REMOVE_JS)
             return "Demo cancelled."
 
         note = ""
@@ -175,7 +186,7 @@ if (!document.getElementById('demo-banner')) {
             await emit({"type": "message", "data": {"content": f"📝 {note}"}})
 
         if not await confirm("Show markup/HTML example?"):
-            await run_js(banner_remove_js)
+            await run_js(BANNER_REMOVE_JS)
             return "Demo cancelled."
 
         js_result = await run_js("return 2 + 2")
@@ -184,7 +195,7 @@ if (!document.getElementById('demo-banner')) {
         )
 
         if not await confirm("Show citation example?"):
-            await run_js(banner_remove_js)
+            await run_js(BANNER_REMOVE_JS)
             return "Demo cancelled."
 
         # ----- citation -----
@@ -205,7 +216,7 @@ if (!document.getElementById('demo-banner')) {
         )
 
         if not await confirm("Replace the final message and finish demo?"):
-            await run_js(banner_remove_js)
+            await run_js(BANNER_REMOVE_JS)
             return "Demo cancelled."
 
         final_msg = "🎉 Event demo finished successfully."
@@ -217,6 +228,6 @@ if (!document.getElementById('demo-banner')) {
                 "data": {"type": "success", "content": "Demo finished"},
             }
         )
-        await run_js(banner_remove_js)
+        await run_js(BANNER_REMOVE_JS)
 
         return final_msg
