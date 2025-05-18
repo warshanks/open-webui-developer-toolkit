@@ -1,64 +1,62 @@
 name: Update Open WebUI
 
 on:
-  # every Monday at 07:00 UTC (≈ midnight PT)
-  schedule: [{ cron: '0 7 * * 1' }]
-  workflow_dispatch:   # allow manual runs
+  schedule: [{ cron: '0 7 * * 1' }]   # every Monday 07:00 UTC
+  workflow_dispatch:
 
-permissions:          # <-- job can push and open PRs
+permissions:            # job may push & open PRs
   contents: write
   pull-requests: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
-    # 1. Get your repo
-    - name: Check out code
-      uses: actions/checkout@v4   # official, pinned action
+    # 1 ▸ checkout your repo
+    - uses: actions/checkout@v4
 
-    # 2. Pull a fresh snapshot of OpenWebUI into a subfolder
+    # 2 ▸ copy a fresh snapshot of OpenWebUI
     - name: Copy upstream OpenWebUI
       run: |
         rm -rf open-webui
         git clone --depth 1 https://github.com/open-webui/open-webui.git open-webui
-        rm -rf open-webui/.git   # keep only the files
+        rm -rf open-webui/.git        # keep only the files
 
-    # 3. Commit & push to a dedicated branch (if anything changed)
-    - name: Commit and push branch
+    # 3 ▸ commit & push only when something really changed
+    - name: Commit (if needed)
+      id: push
       run: |
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-        # Create or reset the branch locally
         git checkout -B update-open-webui
 
-        # Nothing to do? Exit early to save CI minutes
-        if git diff --quiet; then
-          echo "No changes – skipping commit/PR."
+        if git diff --quiet; then          # nothing changed
+          echo "changed=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
         git add open-webui
         git commit -m "chore: update OpenWebUI snapshot"
         git push -u origin update-open-webui
+        echo "changed=true" >> "$GITHUB_OUTPUT"
 
-    # 4. Open or update the pull request with GitHub CLI
+    # 4 ▸ create / update the PR only when we really have changes
     - name: Create or update PR
+      if: steps.push.outputs.changed == 'true'
       env:
-        GH_TOKEN: ${{ github.token }}   # give gh cli the job token
+        GH_TOKEN: ${{ github.token }}
+        BASE_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
-        # GitHub CLI comes pre-installed on all GitHub-hosted runners
-        #  [oai_citation:1‡GitHub Docs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/using-github-cli-in-workflows?utm_source=chatgpt.com)
+        # GitHub CLI is pre-installed on the runner 
         if gh pr view update-open-webui >/dev/null 2>&1; then
           gh pr edit update-open-webui \
-            --title "chore: update OpenWebUI snapshot" \
-            --body  "Automated weekly sync of the OpenWebUI code."
+             --title "chore: update OpenWebUI snapshot" \
+             --body  "Automated weekly sync of the OpenWebUI code."
         else
           gh pr create \
-            --title "chore: update OpenWebUI snapshot" \
-            --body  "Automated weekly sync of the OpenWebUI code." \
-            --head  update-open-webui \
-            --base  main
+             --title "chore: update OpenWebUI snapshot" \
+             --body  "Automated weekly sync of the OpenWebUI code." \
+             --head  update-open-webui \
+             --base  "$BASE_BRANCH"
         fi
