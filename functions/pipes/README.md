@@ -1,14 +1,18 @@
 # Pipes Guide
 
-Pipes let you plug custom logic or whole model APIs into Open WebUI. Think of a
-pipe as a miniature "agent" that decides how to handle a chat request. Each pipe
-is a single Python file exposing a `Pipe` class. When a chat model id is mapped
-to that file, Open WebUI loads the module and executes `Pipe.pipe()` to generate
-the assistant response. Requests travel through any configured filters before
-they reach the pipe so most files only implement the core reply logic.
+## Overview
+
+Pipes plug custom logic or whole model APIs into Open WebUI. Think of a pipe as
+a miniature "agent" that decides how to handle a chat request. Each pipe is a
+single Python file exposing a `Pipe` class. When a chat model id is mapped to a
+file, Open WebUI loads the module and executes `Pipe.pipe()` to generate the
+assistant response. Requests travel through any configured filters before they
+reach the pipe so most files only implement the core reply logic.
+
+
+### Quick example
 
 ```python
-# minimal pipe structure
 class Pipe:
     async def pipe(self, body: dict) -> str:
         return "response"
@@ -234,12 +238,14 @@ Selecting `demo:fast` or `demo:slow` calls the same module with the id suffix. I
 
 ## Using internal Open WebUI functions
 
-Pipes can call helpers from the main application instead of reimplementing
-common features.  The chat routing logic lives in
-`open_webui.utils.chat.generate_chat_completion`, referenced throughout the
-upstream docs【F:external/CHAT_GUIDE.md†L10-L24】.  You may invoke this function
-directly inside a custom pipe to reuse Open WebUI's model switching and
-streaming behaviour.
+Sometimes a pipe only needs a bit of custom pre‑ or post‑processing and can
+delegate the heavy lifting back to Open WebUI.  You can import and call internal
+helpers directly from the `open_webui` package.  The chat routing logic is
+implemented in
+`open_webui.utils.chat.generate_chat_completion`【F:external/CHAT_GUIDE.md†L10-L24】
+and exposes the same behaviour used by the built‑in models.  Calling it from
+your pipe reuses the platform's model switching, tool handling and streaming
+mechanism.
 
 ```python
 from pydantic import BaseModel, Field
@@ -250,24 +256,31 @@ from open_webui.utils.chat import generate_chat_completion
 
 
 class Pipe:
+    def __init__(self) -> None:
+        pass
+
     async def pipe(
         self,
         body: dict,
         __user__: dict,
         __request__: Request,
     ) -> str:
-        # Fetch the full user object then delegate to Open WebUI's pipeline
+        # Use the unified endpoint with the updated signature
         user = Users.get_user_by_id(__user__["id"])
         body["model"] = "llama3.2:latest"
         return await generate_chat_completion(__request__, body, user)
 ```
 
-`generate_chat_completion` accepts the incoming request, processed chat payload
-and a user instance.  Its definition shows the expected parameters and optional
-`bypass_filter` flag【F:external/open-webui/backend/open_webui/utils/chat.py†L158-L166】.
-The `Users` helper provides access to the current account object
-【F:external/open-webui/backend/open_webui/models/users.py†L137-L143】.
+Key points:
 
-Use this approach when you want to delegate the heavy lifting to Open WebUI but
-still ship custom preprocessing or post-processing logic.  Keep an eye on the
-upstream project for signature changes and handle errors gracefully.
+- **Imports** – `Users` fetches the account object while
+  `generate_chat_completion` drives the standard chat pipeline.
+- **Parameters** – pass the FastAPI `Request`, incoming `body` and the full
+  user instance.  The helper accepts optional flags such as `bypass_filter`
+  【F:external/open-webui/backend/open_webui/utils/chat.py†L158-L166】.
+- **Stability** – internal functions may change as Open WebUI evolves. Always
+  verify the signature in the upstream repository and handle errors
+  gracefully.
+
+Use this approach when you want to re-use WebUI's streaming behaviour and tool
+integration while adding your own transformations.
