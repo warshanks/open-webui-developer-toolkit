@@ -57,6 +57,53 @@ These helpers populate the required `id`, `created`, `model` and `choices` field
 parse_duration("3h15m")  # -> datetime.timedelta(seconds=11700)
 ```
 
-`parse_ollama_modelfile(model_text)` extracts parameters from an Ollama `Modelfile`. Fields such as `temperature` or `num_ctx` are converted to the right type and placed under the returned `params` dictionary. The helper also collects any `MESSAGE` entries into a list of message dictionaries.
+### `parse_ollama_modelfile`
 
-`convert_logit_bias_input_to_json("32098:-100,1234:50")` converts comma separated `token:bias` pairs to a JSON string accepted by OpenAI style APIs.
+Ollama models are configured with a **Modelfile** that resembles a Dockerfile.
+This helper parses the text version and extracts two pieces of
+information:
+
+1. `base_model_id` – the model referenced by the `FROM` line.
+2. `params` – a dictionary of parameters and extra data.
+
+It recognises a range of `PARAMETER` directives such as `temperature`,
+`num_ctx` or `top_k` and converts them to the appropriate Python type.  Any
+`MESSAGE` lines become a list of dictionaries so they can be appended to the
+chat history.
+
+```python
+from open_webui.utils.misc import parse_ollama_modelfile
+
+modelfile = """
+FROM llama2
+PARAMETER temperature 0.7
+PARAMETER num_ctx 2048
+SYSTEM """This is the default system"""
+MESSAGE user hello
+MESSAGE assistant world
+"""
+
+info = parse_ollama_modelfile(modelfile)
+```
+
+The resulting structure is:
+
+```python
+{
+    "base_model_id": "llama2",
+    "params": {
+        "num_ctx": 2048,
+        "temperature": 0.7,
+        "system": "This is the default system",
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+        ],
+    },
+}
+```
+
+### Other helpers
+
+`convert_logit_bias_input_to_json("32098:-100,1234:50")` converts comma
+separated `token:bias` pairs to a JSON string accepted by OpenAI style APIs.
