@@ -88,7 +88,26 @@ Each tool file begins with a triple quoted block. At minimum declare an `id:` so
 WebUI can store and update the tool. Additional keys such as `requirements:` and
 `description:` list extra packages and optional metadata. The loader parses this
 header and rewrites short imports before executing the module in a temporary
-file【F:external/PLUGIN_GUIDE.md†L5-L29】. The full flow is:
+file【F:external/PLUGIN_GUIDE.md†L5-L29】. A typical header looks like:
+
+```python
+"""
+id: string_inverse
+title: String Inverse
+author: Your Name
+author_url: https://website.com
+git_url: https://github.com/username/string-reverse.git
+description: This tool calculates the inverse of a string
+required_open_webui_version: 0.4.0
+requirements: langchain-openai, langgraph, ollama, langchain_ollama
+version: 0.4.0
+licence: MIT
+"""
+```
+
+Only the `id` is mandatory, however declaring `title`, `description` and
+`requirements` makes the tool easier to manage. The loader performs these steps
+when initializing the module:
 1. Retrieve the source from the database (or use uploaded content).
 2. Apply `replace_imports` and install `requirements`.
 3. Write the code to a temporary file so `__file__` points to a real path.
