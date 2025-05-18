@@ -1,292 +1,145 @@
-# Writing **Tools** for Open WebUI
-
-*A practical guide for first-time authors (human **and** AI).*  
-
----
+# Writing Pipes
 
 ## Table of Contents
-1. [Why Tools?](#why-tools)
-2. [Quick Start](#quick-start)
-3. [Anatomy of a Tool](#anatomy-of-a-tool)  
-   3.1  [Metadata Block](#metadata-block)  
-   3.2  [The `Tools` Class](#the-tools-class)  
-   3.3  [Defining Tool Methods](#defining-tool-methods)  
-4. [Field Reference](#field-reference)
-5. [Execution Lifecycle](#execution-lifecycle)
-6. [Valves & UserValves](#valves--uservalves)
-7. [Default vs Native Mode](#default-vs-native-mode)
-8. [EventEmitter Patterns](#eventemitter-patterns)
-9. [Testing Your Tool](#testing-your-tool)
-10. [Publishing & Distribution](#publishing--distribution)
-11. [Example Gallery](#example-gallery)
-12. [Troubleshooting Checklist](#troubleshooting-checklist)
-13. [Glossary](#glossary)
-14. [TODO / Future Research](#todo--future-research)
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Anatomy of a Pipe](#anatomy-of-a-pipe)
+  - [Frontmatter](#frontmatter)
+  - [The Pipe Class](#the-pipe-class)
+- [Loading and Execution](#loading-and-execution)
+- [Valve Configuration](#valve-configuration)
+  - [Managing Valves via the API](#managing-valves-via-the-api)
+- [Automatic Parameter Injection](#automatic-parameter-injection)
+  - [Example Usage](#example-usage)
+  - [Understanding `__metadata__`](#understanding-metadata)
+  - [Working with `__request__`](#working-with-request)
+- [Streaming and Return Values](#streaming-and-return-values)
+- [Invoking Tools](#invoking-tools)
+- [Manifold Pipes](#manifold-pipes)
+- [Using Internal WebUI Functions](#using-internal-webui-functions)
+- [Additional Examples](#additional-examples)
+- [Future Research](#future-research)
 
----
+## Overview
+Pipes plug custom logic or entire model APIs into Open WebUI. A pipe is a single
+Python file exposing a `Pipe` class. When a chat model id references your file
+Open WebUI loads it and calls `Pipe.pipe()` to generate a reply. Any configured
+filters run first so most pipes focus purely on the response logic.
 
-## Why Tools? <a id="why-tools"></a>
+## Quick Start
+A minimal pipe echoes the last message:
 
-Tools give an LLM real-world abilities—live data, external APIs, file I/O, etc.  
-When Open WebUI loads a tool it **parses the method docstrings to build a
-JSON schema**. That schema is sent to the model so it knows when to call your
-code and what arguments to provide. In “Native” mode the model can even
-*chain* multiple tools in a single turn. 
+```python
+class Pipe:
+    async def pipe(self, body: dict) -> str:
+        return body["messages"][-1]["content"]
+```
 
----
+Save the file under `functions/pipes/` and map a chat model to it via the
+Functions UI. If you stream results your `pipe()` must be `async`.
 
-## Quick Start <a id="quick-start"></a>
+## Anatomy of a Pipe
+Every pipe follows the same basic structure.
 
-Create `functions/tools/my_weather.py`:
+### Frontmatter
+Start the file with an optional metadata block. The loader reads it and installs
+any packages listed under `requirements`:
 
 ```python
 """
-name: weather
-description: Get the current temperature for a city.
-"""
-
-from typing import Dict
-import httpx
-
-class Tools:
-    async def weather(self, city: str) -> Dict[str, str]:
-        """
-        name: weather
-        description: Returns the current temperature for the given city.
-        parameters:
-          type: object
-          properties:
-            city:
-              type: string
-              description: Name of the city (e.g. "Paris")
-          required: [city]
-        returns:
-          type: object
-          properties:
-            location: {type: string}
-            temperature_c: {type: number}
-        """
-        r = httpx.get(f"https://wttr.in/{city}?format=j1").json()
-        return {
-            "location": r["nearest_area"][0]["areaName"][0]["value"],
-            "temperature_c": float(r["current_condition"][0]["temp_C"]),
-        }
-````
-
-Enable the tool for your model (Workspace → Models → Tools) and ask:
-
-> “What’s the temperature in Paris?”
-
-The LLM will trigger `weather()` and include the result in its reply.
-
----
-
-## Anatomy of a Tool <a id="anatomy-of-a-tool"></a>
-
-### 1  Metadata Block <a id="metadata-block"></a>
-
-A *top-level multi-line string* (or YAML front-matter) can declare file-wide
-defaults—handy when your file exports many tool functions.
-
-```python
-"""
-author: Jane Dev
-version: 0.1.0
-license: MIT
 requirements: httpx
+id: demo_pipe
 """
 ```
 
-Packages listed in `requirements` are auto-installed when the tool is first
-imported.
-
-### 2  The `Tools` Class <a id="the-tools-class"></a>
-
-Open WebUI looks for a class literally named `Tools`.
-Each *public method* (no leading `_`) is exposed as a callable tool.
+### The Pipe Class
+Expose a `Pipe` class with a `pipe()` method. It may be synchronous or async. In
+practice async is preferred so you can await APIs or stream tokens.
 
 ```python
-class Tools:
-    def say_hi(self) -> str:
-        """name: hello | description: Return a friendly greeting."""
-        return "👋 Hi from Open WebUI!"
+class Pipe:
+    async def pipe(self, body: dict) -> str:
+        return "hello"
 ```
 
-Methods can be **sync or async**. Async is recommended for I/O.
+## Loading and Execution
+The loader `open_webui.utils.plugin.load_function_module_by_id` rewrites short
+imports then executes your file in a temporary module. Instances are cached under
+`request.app.state.FUNCTIONS` so subsequent calls reuse the same object. See
+`external/open-webui/backend/open_webui/utils/plugin.py` lines 18‑60 and
+`external/open-webui/backend/open_webui/functions.py` lines 55‑66 for details.
 
-### 3  Defining Tool Methods <a id="defining-tool-methods"></a>
-
-* **Docstring → JSON Schema**
-  Use the “single-line header + YAML block” pattern shown above.
-  Required keys:
-
-| Key           | Purpose                                   |
-| ------------- | ----------------------------------------- |
-| `name`        | Unique identifier seen by the LLM.        |
-| `description` | One-line summary; must start with a verb. |
-| `parameters`  | JSON Schema describing inputs.            |
-| `returns`     | *(Optional)* JSON Schema for outputs.     |
-
-If `returns` is omitted, the result is treated as an arbitrary string.
-
-Example with required and optional args:
-
-```python
-    def news(self, topic: str, limit: int = 5) -> list[dict]:
-        """
-        name: headlines
-        description: Fetch top news headlines for a topic.
-        parameters:
-          type: object
-          properties:
-            topic:  {type: string, description: Search phrase}
-            limit:  {type: integer, description: Max results, default: 5}
-          required: [topic]
-        returns:
-          type: array
-          items:
-            type: object
-            properties:
-              title:   {type: string}
-              url:     {type: string, description: Original article}
-        """
-```
-
----
-
-## Field Reference <a id="field-reference"></a>
-
-| Field             | Type   | Notes                                     |
-| ----------------- | ------ | ----------------------------------------- |
-| `name`            | string | Must be *unique* across all loaded tools. |
-| `description`     | string | Starts with a verb; ≤ 100 chars is ideal. |
-| `parameters.type` | string | Usually `"object"`.                       |
-| `.properties`     | object | Keys become argument names.               |
-| `.required`       | array  | List of mandatory properties.             |
-| `returns`         | object | JSON Schema describing return value.      |
-
-> **Tip:** stick to primitives (`string`, `number`, `boolean`, `array`, `object`) so more models can reason about your schema.
-
----
-
-## Execution Lifecycle <a id="execution-lifecycle"></a>
-
-1. **Import** – File is loaded, deps installed, `Tools()` instantiated once.
-2. **Schema Build** – Docstrings parsed → tool JSON appended to model prompt.
-3. **Chat** – LLM decides to call tool (native) *or* returns a text trigger (default).
-4. **Invoke** – Open WebUI locates method, injects args, awaits result.
-5. **Return** – Result inserted into assistant message (or streamed).
-
----
-
-## Valves & UserValves <a id="valves--uservalves"></a>
-
-Tools can expose configuration using Pydantic models:
+## Valve Configuration
+Pipes can expose persistent settings via `Valves` and `UserValves` pydantic
+models. WebUI hydrates these before each run and passes them to your handler.
 
 ```python
 from pydantic import BaseModel
 
 class Valves(BaseModel):
-    api_key: str
-    base_url: str = "https://api.example.com"
+    prefix: str = ">>"
 
 class UserValves(BaseModel):
-    default_city: str | None = None
+    shout: bool = False
+
+class Pipe:
+    def pipe(self, body, __user__, valves):
+        msg = body["messages"][-1]["content"]
+        if __user__.valves.shout:
+            msg = msg.upper()
+        return f"{valves.prefix} {msg}"
 ```
 
-Declare them at module scope; Open WebUI will hydrate instances and pass them
-to every method that accepts a `valves` or `__user__` parameter.
+### Managing Valves via the API
+Administrators and users can update valve values without modifying the code
+using the routes under `routers/functions.py`.
 
----
+## Automatic Parameter Injection
+`generate_function_chat_completion` inspects your function signature and only
+passes the extras you ask for. The middleware assembles an `extra_params`
+dictionary which includes metadata, user info and tools. Unknown parameters are
+silently ignored.
 
-## Default vs Native Mode <a id="default-vs-native-mode"></a>
-
-| Mode        | Trigger style                               | Best for                                               |
-| ----------- | ------------------------------------------- | ------------------------------------------------------ |
-| **Default** | Prompt template (“Use the *weather* tool…”) | Any model, but slower / less precise                   |
-| **Native**  | OpenAI-style function calling               | GPT-4o, GPT-3.5-1106, etc. for fast, multi-tool chains |
-
-Switch modes per chat: **Chat ⚙ Controls → Advanced Params → Function Calling**.
-
----
-
-## EventEmitter Patterns <a id="eventemitter-patterns"></a>
-
-If your method accepts `__event_emitter__`, you can push custom events:
+### Example Usage
 
 ```python
-async def download(self, url: str, __event_emitter__):
-    __event_emitter__("status", {"percent": 0})
-    ...
-    __event_emitter__("status", {"percent": 100})
-    return "Download complete!"
+class Pipe:
+    async def pipe(self, body, __messages__, __event_emitter__):
+        last = __messages__[-1]["content"]
+        __event_emitter__("log", {"msg": last})
+        return last
 ```
 
-Common event types: `status`, `message`, `notification`, `confirmation`.
+### Understanding `__metadata__`
+`__metadata__` combines identifiers and feature flags for the current request.
+It originates in `main.py` and flows through the middleware before hitting your
+pipe.
 
----
+### Working with `__request__`
+The `__request__` argument exposes the underlying FastAPI `Request` object. Use
+it to inspect headers or query parameters.
 
-## Testing Your Tool <a id="testing-your-tool"></a>
+## Streaming and Return Values
+When `stream=True`, `generate_function_chat_completion` treats your return value
+as a server-sent event stream. Strings, generators and `StreamingResponse` are
+handled transparently. See `functions.py` lines 263‑307.
 
-```python
-from importlib import import_module, reload
-tool_mod = reload(import_module("functions.tools.my_weather"))
-tools = tool_mod.Tools()
-assert asyncio.run(tools.weather("Paris"))["location"] == "Paris"
-```
+## Invoking Tools
+Tools are provided via the `__tools__` mapping. Call `__tools__[name]["callable"]`
+to execute a tool. See `tools/README.md` for details.
 
-For end-to-end tests call `open_webui.utils.chat.generate_chat_completion`
-with `tools=[{"spec":..., "callable": ...}]`.
+## Manifold Pipes
+Define a `pipes` attribute returning a list of sub-pipe definitions to expose
+multiple models from one file. `generate_function_models` in `functions.py`
+processes these entries.
 
----
+## Using Internal WebUI Functions
+For advanced scenarios you can import helpers from the `open_webui` package.
+`open_webui.utils.chat.generate_chat_completion` runs the standard chat pipeline
+and accepts the same parameters used internally.
 
-## Publishing & Distribution <a id="publishing--distribution"></a>
+## Additional Examples
+TODO: add real-world sample pipes demonstrating tool calls and streaming.
 
-1. Add a semantic version and `license` to your metadata block.
-2. Push to GitHub.
-3. Submit to the **Community Tool Library**.
-4. Users click **“Import to WebUI”** → Done!
-
----
-
-## Example Gallery <a id="example-gallery"></a>
-
-| File               | Highlighted concept                   |
-| ------------------ | ------------------------------------- |
-| `simple_echo.py`   | Minimal sync tool                     |
-| `stream_search.py` | Async & streaming results             |
-| `image_gen.py`     | Binary data + custom `returns` schema |
-| `multi_toolkit.py` | Multiple methods in one file          |
-
-*(All samples live under `functions/tools/examples/`.)*
-
----
-
-## Troubleshooting Checklist <a id="troubleshooting-checklist"></a>
-
-* Tool not listed? File name must end with `.py`, class must be `Tools`.
-* Native calls ignored? Verify model supports function calling **and** mode is *Native*.
-* JSON parse errors? Ensure arguments are valid JSON and match your schema.
-* Import crash? Check `requirements` spelling—packages install at runtime.
-
----
-
-## Glossary <a id="glossary"></a>
-
-| Term             | Meaning                                        |
-| ---------------- | ---------------------------------------------- |
-| **Tool**         | A callable Python function exposed to the LLM. |
-| **Valves**       | Admin-level persistent settings for a tool.    |
-| **UserValves**   | Per-user settings surfaced in the chat UI.     |
-| **EventEmitter** | Callback for sending UI events mid-execution.  |
-| **Native Mode**  | OpenAI-style function calling pipeline.        |
-
----
-
-## TODO / Future Research <a id="todo--future-research"></a>
-
-* **Security Best Practices:** sandboxing, network policies, secrets.
-* **Tool Chaining Agents:** design patterns for multi-step reasoning.
-* **Typed Returns:** auto-generate Pydantic models from `returns` schema.
-
-```
+## Future Research
+TODO: document authentication strategies and advanced streaming patterns.
