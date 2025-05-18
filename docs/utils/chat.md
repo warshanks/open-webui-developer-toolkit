@@ -128,3 +128,65 @@ result, _ = await process_filter_functions(
 
 This mechanism lets extensions modify the final message before it is emitted to
 the client.
+
+### Chat actions
+
+`chat_action` runs extension-defined actions on a given chat message. The caller
+sends an action identifier along with the normal form data. The function loads
+the corresponding module, injects context parameters and then calls its
+`action` function.
+
+The first part deals with locating the module and building an event helper pair:
+
+```python
+if "." in action_id:
+    action_id, sub_action_id = action_id.split(".")
+else:
+    sub_action_id = None
+
+if action_id in request.app.state.FUNCTIONS:
+    function_module = request.app.state.FUNCTIONS[action_id]
+else:
+    function_module, _, _ = load_function_module_by_id(action_id)
+    request.app.state.FUNCTIONS[action_id] = function_module
+```
+
+Each call is associated with a message so an event emitter and event caller are
+constructed using its metadata (lines 375‑390) so the action can dispatch socket
+events when necessary.
+
+Before invocation the loader hydrates any `valves` attached to the action and
+prepares a parameter dictionary. Only arguments present in the function
+signature are added:
+
+```python
+sig = inspect.signature(action)
+params = {"body": data}
+extra_params = {
+    "__model__": model,
+    "__id__": sub_action_id if sub_action_id is not None else action_id,
+    "__event_emitter__": __event_emitter__,
+    "__event_call__": __event_call__,
+    "__request__": request,
+}
+for key, value in extra_params.items():
+    if key in sig.parameters:
+        params[key] = value
+```
+
+If `__user__` appears in the signature the user's info and per-user valve
+settings are merged in. The handler may be a coroutine or a regular function—the
+wrapper handles both cases transparently.
+
+In practice a custom action can look like:
+
+```python
+class Action:
+    def action(self, body, __model__, __event_emitter__, __user__):
+        __event_emitter__("log", {"msg": f"Using model {__model__['name']}"})
+        return {"echo": body["messages"][-1]["content"]}
+```
+
+The module can then be triggered from the API by posting `{"actionId": "foo",
+"model": "gpt-4", ...}` and `chat_action` will load `foo`, pass in the extra
+context and return the resulting dictionary.
