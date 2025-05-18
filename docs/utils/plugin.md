@@ -38,7 +38,25 @@ replacements = {
 4. Create a `types.ModuleType` instance and execute the code inside it using `exec`.
 5. Instantiate the class that matches the extension type.
 
-The temporary file created around lines 91‑99 sets `__file__` so relative paths behave correctly when executed.
+The temporary file created around lines 92‑104 sets `__file__` so relative paths behave correctly when executed.
+
+### Temporary module files
+
+Before executing the plugin code the loader writes it to a temporary location.  This
+gives the module a real `__file__` value which helps when relative imports or error
+messages reference the file system.
+
+```python
+temp_file = tempfile.NamedTemporaryFile(delete=False)
+temp_file.close()
+with open(temp_file.name, "w", encoding="utf-8") as f:
+    f.write(content)
+module.__dict__["__file__"] = temp_file.name
+exec(content, module.__dict__)
+```
+
+After loading the object the temporary file is removed in the `finally` block so the
+database-backed code does not linger on disk.
 
 ### Selecting the class
 
@@ -67,3 +85,23 @@ subprocess.check_call(
 ```
 
 `install_tool_and_function_dependencies` iterates over all stored tools and active functions, collects their `requirements` frontmatter and installs them in one go.
+
+### Example plugin file
+
+Below is a minimal tool extension.  When uploaded through the admin UI the
+loader installs `httpx`, executes the code and exposes the `hello` function via
+the tool API.
+
+```python
+"""
+requirements: httpx
+"""
+
+class Tools:
+    def hello(self, name: str):
+        return {"message": f"Hello {name}"}
+```
+
+The file may use short import paths such as `from utils.chat import ...`.  These
+are rewritten to `open_webui.utils` before execution so the in-database code can
+reuse helpers from the main project.
