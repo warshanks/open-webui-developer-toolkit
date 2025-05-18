@@ -13,6 +13,22 @@ if hasattr(module, "Pipe"):
 
 Any triple quoted frontmatter block at the start of the file is parsed with `extract_frontmatter` so dependencies can be installed automatically.
 
+### Frontmatter fields
+
+The optional frontmatter block may contain arbitrary key/value pairs. The most
+common field is `requirements` which lists Python packages that should be
+installed before the module runs:
+
+```python
+"""
+requirements: httpx, numpy
+other_field: example
+"""
+```
+
+`plugin.py` installs these packages using `pip` and returns the metadata along
+with the pipe object. Other fields can be read inside the module if desired.
+
 ## Execution flow
 
 `generate_function_chat_completion` retrieves the pipe and prepares extra parameters such as the current user, associated files and websocket callbacks. These values are only passed if the pipe declares matching arguments:
@@ -37,6 +53,33 @@ extra_params = {
     "__request__": request,
 }
 ```
+
+### Event hooks
+
+`__event_emitter__` and `__event_call__` allow a pipe to send websocket events
+to the client.  They wrap the same helpers used by the server middleware so
+messages appear in the UI immediately:
+
+```python
+async def pipe(self, body, __event_emitter__):
+    await __event_emitter__({"type": "log", "data": "working"})
+    return "done"
+```
+
+### Streaming responses
+
+When `form_data["stream"]` is true the return value may be a generator,
+`StreamingResponse` or async generator.  Each yielded item is wrapped in the
+OpenAI streaming chunk format and forwarded to the browser:
+
+```python
+class Pipe:
+    def pipe(self, body):
+        for word in body["messages"][-1]["content"].split():
+            yield word
+```
+
+Non streaming calls simply return the concatenated string result.
 
 If `form_data["stream"]` is truthy the function yields chunks produced by the pipe using `StreamingResponse`. Otherwise it waits for the result and converts it to the OpenAI completion format.
 
