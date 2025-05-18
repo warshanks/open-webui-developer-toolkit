@@ -1,11 +1,6 @@
 # Pipes Guide
 
-A **pipe** is a single Python file that exposes a `Pipe` class. Open WebUI loads
-these modules dynamically and executes the pipe when a user selects it as a chat
-model.
-
-Each chat request flows through any configured filters before hitting your pipe.
-The pipe generates the main response and can call tools for additional work.
+A **pipe** is a single Python file exposing a `Pipe` class. When a chat model id points to that file, Open WebUI loads the module and executes `Pipe.pipe()` to generate the assistant reply. Requests travel through any configured filters first so a pipe usually only implements the core response logic.
 
 ```python
 # minimal pipe structure
@@ -14,34 +9,26 @@ class Pipe:
         return "response"
 ```
 
-Pipes may call external APIs, emit new chat messages and manage their own state.
-To add a new pipe place the file here and ensure it defines a `Pipe` class with
-an async `pipe()` method.
+Pipes may call external APIs, emit additional chat messages and hold state between calls. Add new pipes under this folder and ensure the class defines an **async** `pipe()` method.
 
 ## Loading custom pipes
 
-`backend/open_webui/utils/plugin.py` retrieves each file, rewrites short imports
-and executes it in a temporary module. A triple quoted *frontmatter* block at
-the top is parsed so dependencies can be installed automatically:
+The loader at `backend/open_webui/utils/plugin.py` reads the file, rewrites short imports such as `from utils.chat` to `open_webui.utils.chat` and executes the content in a temporary module【F:external/PLUGIN_GUIDE.md†L18-L41】. A leading triple quoted *frontmatter* block declares metadata and optional dependencies:
 
 ```python
 """
 requirements: httpx, numpy
+id: demo_pipe
 """
 ```
 
-If the module exposes `Pipe`, the loader returns an instance.
+`install_frontmatter_requirements` installs the `requirements` list before the pipe runs. Other fields are stored as metadata.
 
-### Frontmatter fields
-
-The frontmatter may contain any key/value pairs. The `requirements` list is
-installed with `pip` before the pipe runs. Other fields are available as
-metadata.
+If the executed module exposes `Pipe`, the loader returns an instance and caches it in `request.app.state.FUNCTIONS` for reuse【F:external/open-webui/backend/open_webui/functions.py†L60-L66】.
 
 ### Valves
 
-A pipe can define `Valves` and `UserValves` classes to expose adjustable
-settings. Values are stored by the server and injected on each call:
+A pipe can define `Valves` and `UserValves` Pydantic models to expose adjustable settings. The server stores these values and injects them on each call:
 
 ```python
 from pydantic import BaseModel
@@ -60,43 +47,39 @@ class Pipe:
         return f"{valves.prefix} {msg}"
 ```
 
-The server exposes endpoints to update these values without re-uploading the
-code.
+Valve values can be updated via the Functions API without re-uploading the code.
 
 ## Parameter injection
 
-`functions.py` inspects the `pipe` signature and only passes the arguments it
-requests. Useful values include:
+`generate_function_chat_completion` inspects the `pipe` signature and only supplies the parameters it declares. Common values include:
 
 - `__event_emitter__` / `__event_call__` – communicate with the browser
-- `__chat_id__`, `__session_id__`, `__message_id__` – conversation identifiers
+- `__chat_id__`, `__session_id__`, `__message_id__` – identifiers for the conversation
 - `__files__` – uploaded files
 - `__user__` – user info and optional `UserValves`
 - `__tools__` – mapping of registered tools
 - `__messages__` – raw message history
 - `__model__` – current model definition
 - `__metadata__` – metadata dictionary attached to the request
+- `__task__`, `__task_body__` – background task information
+- `__id__` – sub-pipe id when using manifolds
 - `__request__` – the FastAPI `Request` object
 
-Extra context can be passed using the same names.
+The snippet below from the upstream source shows how these extras are assembled【F:external/open-webui/backend/open_webui/functions.py†L222-L251】.
 
 ### Streaming and return values
 
-When `stream=True` the middleware treats the pipe output as a server-sent event
-stream. A pipe may:
+When `stream=True` the middleware treats the output of `pipe()` as a server-sent event stream. `generate_function_chat_completion` handles several cases:
 
-- return a `StreamingResponse` to proxy another generator directly,
-- yield text or preformatted `data:` lines from a (async) generator, or
-- return a plain string to emit a single chunk followed by `[DONE]`.
+- returning a `StreamingResponse` proxies its body iterator directly;
+- yielding strings or `data:` lines from a generator produces streamed chunks;
+- returning a plain string sends one chunk followed by `[DONE]`.
 
-For non streaming requests the pipe can return a string, `dict` or Pydantic
-model. Dictionaries are forwarded as-is while models are converted with
-`model_dump()`.
+Relevant logic appears around lines 267‑307 of `functions.py`【F:external/open-webui/backend/open_webui/functions.py†L267-L307】. For non streaming requests the pipe may return a string, a `dict` or any Pydantic model. Dictionaries are forwarded as-is while models are converted using `model_dump()`.
 
 ## Invoking tools from a pipe
 
-Tools are provided through the `__tools__` dictionary and can be called
-directly:
+Tools are provided through the `__tools__` dictionary. Each entry exposes an async `callable` and an OpenAI style `spec`:
 
 ```python
 class Pipe:
@@ -106,12 +89,11 @@ class Pipe:
         return str(result)
 ```
 
-`utils.tools.get_tools` converts each tool into a callable and exposes its spec.
+`get_tools()` builds this mapping and handles valve hydration for tools. See `tools/README.md` for more details.
 
 ## Pipe lifecycle
 
-Pipes are cached in `request.app.state.FUNCTIONS` and loaded only once per
-server process. Valve values are hydrated before each execution:
+Pipes are loaded once per process and cached. Before each execution valve values and user settings are hydrated and the function parameters are assembled:
 
 ```python
 pipe = function_module.pipe
@@ -119,13 +101,11 @@ params = get_function_params(function_module, form_data, user, extra_params)
 res = await execute_pipe(pipe, params)
 ```
 
-Reload the server or update the valves to pick up changes.
+Reload the server or update valve settings to pick up changes.
 
 ## Manifold pipes
 
-A single file can expose multiple sub‑pipes by defining a `pipes` attribute.
-This may be a list of dictionaries or a callable returning that list. Each entry
-describes an additional model shown in the UI:
+A single file can expose multiple sub‑pipes by defining a `pipes` attribute. This can be a list or a callable (sync or async) returning that list. Each entry describes an additional model shown in the UI:
 
 ```python
 class Pipe:
@@ -143,6 +123,4 @@ class Pipe:
         return "slow reply"
 ```
 
-Selecting `demo:fast` or `demo:slow` in WebUI calls the same module with the
-given id suffix. The main `Pipe` class is shared and can inspect `__id__` to
-change behaviour.
+Selecting `demo:fast` or `demo:slow` calls the same module with the id suffix. Inspect `__id__` in the handler to adapt behaviour.
