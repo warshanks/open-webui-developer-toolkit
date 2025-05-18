@@ -89,3 +89,76 @@ This multi stage processing allows Open WebUI to offer web search, code executio
 ## Background tasks
 
 Longer operations such as database updates, title generation or tag extraction are offloaded using `create_task`. This keeps the HTTP response snappy while ensuring chat history and metadata are stored reliably.
+
+## Deep dive: `process_chat_response`
+`process_chat_response` receives the raw model output and turns it into events that the browser understands.  The function distinguishes between streaming and non‑streaming replies, spawns background tasks for post‑processing and wraps streaming generators so every chunk can be filtered and emitted to the websocket.
+
+The inner `post_response_handler` consolidates streamed blocks into full messages:
+
+```python
+  1188	        def split_content_and_whitespace(content):
+  1189	            content_stripped = content.rstrip()
+  1190	            original_whitespace = (
+  1191	                content[len(content_stripped) :]
+  1192	                if len(content) > len(content_stripped)
+  1193	                else ""
+  1194	            )
+  1195	            return content_stripped, original_whitespace
+  1196	
+  1197	        def is_opening_code_block(content):
+  1198	            backtick_segments = content.split("```")
+  1199	            # Even number of segments means the last backticks are opening a new block
+  1200	            return len(backtick_segments) > 1 and len(backtick_segments) % 2 == 0
+  1201	
+  1202	        # Handle as a background task
+  1203	        async def post_response_handler(response, events):
+  1204	            def serialize_content_blocks(content_blocks, raw=False):
+  1205	                content = ""
+  1206	
+  1207	                for block in content_blocks:
+  1208	                    if block["type"] == "text":
+```
+
+This handler assembles the streamed `tool_calls`, reasoning blocks and code interpreter output into final messages before persisting them.
+
+When streaming, the original generator is wrapped so extra events can be injected and each chunk is run through any outlet filters:
+
+```python
+    else:
+        # Fallback to the original response
+        async def stream_wrapper(original_generator, events):
+            def wrap_item(item):
+                return f"data: {item}\n\n"
+
+            for event in events:
+                event, _ = await process_filter_functions(
+                    request=request,
+                    filter_functions=filter_functions,
+                    filter_type="stream",
+                    form_data=event,
+                    extra_params=extra_params,
+                )
+
+                if event:
+                    yield wrap_item(json.dumps(event))
+
+            async for data in original_generator:
+                data, _ = await process_filter_functions(
+                    request=request,
+                    filter_functions=filter_functions,
+                    filter_type="stream",
+                    form_data=data,
+                    extra_params=extra_params,
+                )
+
+                if data:
+                    yield data
+
+        return StreamingResponse(
+            stream_wrapper(response.body_iterator, events),
+            headers=dict(response.headers),
+            background=response.background,
+        )
+```
+
+The wrapper yields any queued events before forwarding chunks from the language model.  Each payload is also passed through configured outlet filters so extensions can modify the stream.
