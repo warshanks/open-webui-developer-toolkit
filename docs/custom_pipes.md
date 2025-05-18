@@ -246,6 +246,56 @@ class Pipe:
 The functions router exposes `/id/{id}/valves` and `/id/{id}/valves/user` so
 administrators can update these values without re-uploading the code.
 
+## Parameter injection reference
+
+`functions.py` builds the argument list for each pipe by inspecting the
+function signature.  Only values whose names appear in the signature are passed
+through.  The helper responsible for this is `get_function_params`:
+
+```python
+def get_function_params(function_module, form_data, user, extra_params=None):
+    if extra_params is None:
+        extra_params = {}
+
+    pipe_id = get_pipe_id(form_data)
+
+    # Get the signature of the function
+    sig = inspect.signature(function_module.pipe)
+    params = {"body": form_data} | {
+        k: v for k, v in extra_params.items() if k in sig.parameters
+    }
+
+    if "__user__" in params and hasattr(function_module, "UserValves"):
+        user_valves = Functions.get_user_valves_by_id_and_user_id(pipe_id, user.id)
+        try:
+            params["__user__"]["valves"] = function_module.UserValves(**user_valves)
+        except Exception:
+            params["__user__"]["valves"] = function_module.UserValves()
+
+    return params
+```
+
+`extra_params` contains context extracted from the request.  The default set is
+assembled in the same file and covers:
+
+- `__event_emitter__` / `__event_call__` – websocket helpers for emitting
+  events and making callback requests.
+- `__chat_id__`, `__session_id__` and `__message_id__` – identifiers of the
+  current conversation.
+- `__task__` / `__task_body__` – optional task metadata.
+- `__files__` – list of uploaded files.
+- `__user__` – dictionary with the user's id, email, name and role.  When a
+  `UserValves` class exists the instance is attached under
+  `__user__["valves"]`.
+- `__metadata__` – unmodified metadata payload.
+- `__request__` – the active `Request` object.
+- `__tools__` – mapping of tool names to callables as produced by `get_tools`.
+- `__model__` – information about the selected model.
+- `__messages__` – raw message history for tool execution.
+
+Understanding these parameters makes it easier to design pipes that integrate
+cleanly with the rest of Open WebUI.
+
 ## Invoking tools from a pipe
 
 When a chat request specifies tool IDs they are resolved to callables and passed
