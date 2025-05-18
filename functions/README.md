@@ -14,3 +14,8 @@ Each subfolder contains a dedicated guide:
   pipes.
 - [`filters/README.md`](filters/README.md) – how to implement and
   use filters.
+
+Requests pass through filters first and then your pipe. Filters can mutate the
+incoming message or the pipe's response, while the pipe generates the final
+answer and may invoke tools. Place new modules in the matching subfolder so the
+WebUI loader can discover them.
