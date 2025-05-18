@@ -6,7 +6,7 @@ on:
     - cron: "0 7 * * 1"   # Every Monday at 07:00 UTC
   workflow_dispatch:
 
-permissions:              
+permissions:
   contents: write
   pull-requests: write
 
@@ -26,7 +26,7 @@ jobs:
           git clone --depth 1 https://github.com/open-webui/open-webui.git external/open-webui
           rm -rf external/open-webui/.git
 
-      # Step 3 ▸ Commit & push if anything changed (robust and safe)
+      # Step 3 ▸ Commit & push changes safely
       - name: Commit & push branch
         id: push
         run: |
@@ -48,7 +48,7 @@ jobs:
           git push -u origin update-open-webui --force-with-lease
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      # Step 4 ▸ Create or update pull request
+      # Step 4 ▸ Create or update PR
       - name: Create or update PR
         if: steps.push.outputs.changed == 'true'
         env:
@@ -68,12 +68,13 @@ jobs:
               --base  "$BASE_BRANCH"
           fi
 
-      # Step 5 ▸ Merge immediately (no approval needed)
+      # Step 5 ▸ Merge & delete branch immediately, correctly handling non-interactive execution
       - name: Merge & delete branch
         if: steps.push.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh pr merge update-open-webui --merge --delete-branch --admin -y \
-          || gh pr merge update-open-webui --merge --auto --delete-branch -y
+          # Attempt immediate merge with admin rights first
+          gh pr merge update-open-webui --merge --delete-branch --admin \
+          || gh pr merge update-open-webui --merge --auto --delete-branch
