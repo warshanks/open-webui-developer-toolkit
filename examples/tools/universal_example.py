@@ -1,228 +1,174 @@
 """
-title: Universal Example Tool
-version: 1.1.0
-author: OpenWebUI Toolkit
-author_url: https://example.com
+title: Event Playground Tool
+author: Open-WebUI Docs Team
+version: 1.0
 license: MIT
 description: |
-    Complete reference for building Open WebUI tools without external dependencies.
-    Demonstrates valves, environment variables, __event_emitter__ and __event_call__,
-    confirmation dialogs, input prompts, client-side code execution and custom citations.
-requirements: sympy
+  One 100-line file that shows **every** event channel Open-WebUI supports.
+  Read it top-to-bottom and you’ll know how to build any interactive tool.
+
+  Shown in order of appearance…
+    1. status      – streaming progress bar
+    2. message     – append text to the assistant bubble
+    3. input       – text-input modal (awaits user)
+    4. confirmation– yes/no modal (awaits user)
+    5. citation    – collapsible Sources panel
+    6. replace     – edits the assistant bubble in-place
 """
 
-from datetime import datetime
-from typing import Optional, Callable, Awaitable, Any, Dict
-import os
+from __future__ import annotations
+import asyncio, time
+from typing import Awaitable, Callable, Dict
 
-import sympy as sp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # Only for the “Valves” settings panel
+
+
+# ── Aliases that match the injections you get at runtime ───────────────
+Emitter = Callable[[Dict[str, any]], Awaitable[None]]
+Caller = Callable[[Dict[str, any]], Awaitable[any]]
+# -----------------------------------------------------------------------
 
 
 class Tools:
-    """Comprehensive reference implementation for tool authors."""
-
+    # 🛠 1) Global knobs that appear under “Tool Settings” in WebUI
     class Valves(BaseModel):
-        """User-configurable values accessible from the WebUI."""
-
-        default_greeting: str = Field(
-            default="Hello",
-            description="Greeting used by greet_user when no name is supplied.",
-        )
-        citation_demo_enabled: bool = Field(
-            default=True,
-            description="If True, demo_citation emits a sample citation.",
-        )
-        notes_limit: int = Field(
-            default_factory=lambda: int(os.getenv("UNIVERSAL_NOTES_LIMIT", "5")),
-            description="Maximum number of notes stored by manage_notes.",
-        )
+        units: int = Field(4, description="Fake work-units to process")
+        delay: float = Field(0.6, description="Seconds to wait between units")
 
     def __init__(self) -> None:
         self.valves = self.Valves()
-        self.citation = False  # disable built-in citations
-        self.notes: list[str] = []
 
-    # ------------------------------------------------------------------
-    # 1. Basic synchronous helpers
-    # ------------------------------------------------------------------
-    def greet_user(self, name: str = "") -> str:
-        """Return a friendly greeting."""
-        greeting = self.valves.default_greeting
-        target = name or "there"
-        return f"{greeting}, {target}!"
-
-    def calculate_expression(self, expression: str) -> str:
-        """Evaluate a mathematical expression like '2+3' or 'sqrt(16)'."""
-        if "=" in expression:
-            return "Equations (with '=') are not allowed."
-        try:
-            val = sp.sympify(expression).evalf()
-            text = str(val).rstrip("0").rstrip(".") if "." in str(val) else str(val)
-            return f"{expression} = {text}"
-        except Exception:
-            return "Invalid expression"
-
-    def get_user_info(self, __user__: Dict[str, Any] = {}) -> str:
-        """Return fields from the special ``__user__`` argument."""
-        if not __user__:
-            return "No user information provided."
-        parts = []
-        if "name" in __user__:
-            parts.append(f"Name: {__user__['name']}")
-        if "email" in __user__:
-            parts.append(f"Email: {__user__['email']}")
-        if "id" in __user__:
-            parts.append(f"ID: {__user__['id']}")
-        return " | ".join(parts) if parts else "User fields not found."
-
-    # ------------------------------------------------------------------
-    # 2. Async method demonstrating __event_emitter__ and __event_call__
-    # ------------------------------------------------------------------
-    async def manage_notes(
+    # 🛠 2) The single public method – becomes the tool name
+    async def playground(
         self,
-        action: str = "add",
-        index: int = 0,
-        text: str = "",
-        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
-        __event_call__: Optional[Callable[[dict], Awaitable[Any]]] = None,
+        units: int = None,
+        __event_emitter__: Emitter | None = None,
+        __event_call__: Caller | None = None,
     ) -> str:
-        """Add, edit or remove notes with interactive prompts."""
-        await _safe_emit_status(__event_emitter__, "Processing note action...", done=False)
+        """Streams, prompts, confirms, cites, then edits its own bubble."""
 
-        if len(self.notes) > self.valves.notes_limit:
-            self.notes = self.notes[-self.valves.notes_limit :]
+        # Mini helper so we can just   await emit({...})
+        async def emit(evt: Dict):
+            if __event_emitter__:
+                await __event_emitter__(evt)
 
-        if action == "add":
-            if not text and __event_call__:
-                text = await __event_call__(
-                    {
-                        "type": "input",
-                        "data": {
-                            "title": "New Note",
-                            "message": "Enter note text",
-                            "placeholder": "My note",
-                        },
-                    }
-                ) or ""
-            if not text:
-                await _safe_emit_status(__event_emitter__, "No note text provided.", done=True)
-                return "No note added."
-            self.notes.append(text)
-            await _safe_emit_notification(
-                __event_emitter__, {"type": "success", "content": "Note added"}
+        # ---------- STEP 0  •  decide how much “work” to do -------------
+        total = units if isinstance(units, int) and units > 0 else self.valves.units
+
+        # ---------- STEP 1  •  put a placeholder message in the chat ----
+        await emit(
+            {"type": "message", "data": {"content": "⏳ *Setting up the demo…*"}}
+        )
+
+        # ---------- STEP 2  •  start a progress bar ---------------------
+        await emit(
+            {
+                "type": "status",
+                "data": {"description": f"🚀 starting {total} units", "done": False},
+            }
+        )
+
+        # ---------- STEP 3  •  simulate work & stream updates -----------
+        for idx in range(1, total + 1):
+            await asyncio.sleep(self.valves.delay)
+            await emit(
+                {
+                    "type": "status",
+                    "data": {"description": f"…unit {idx}/{total}", "done": False},
+                }
             )
-        elif action == "remove":
-            if index < 0 or index >= len(self.notes):
-                await _safe_emit_status(__event_emitter__, "Index out of range.", done=True)
-                return "Invalid note index."
-            if __event_call__:
-                confirm = await __event_call__(
+
+            # ── Mid-way: interactive break (only once)
+            if idx == total // 2 and __event_call__:
+                # 3A) Ask for a note (text-input modal)
+                note = (
+                    await __event_call__(
+                        {
+                            "type": "input",
+                            "data": {
+                                "title": "Add a note (optional)",
+                                "message": "Enter any text to inject into the chat, "
+                                "or leave blank.",
+                                "placeholder": "my note",
+                            },
+                        }
+                    )
+                    or ""
+                )
+
+                # 3B) Confirm we should continue (yes/no modal)
+                keep_going = await __event_call__(
                     {
                         "type": "confirmation",
                         "data": {
-                            "title": "Delete Note",
-                            "message": f"Delete note #{index + 1}?",
+                            "title": "Continue processing?",
+                            "message": f"We’re half-way ({idx}/{total}). Continue?",
                         },
                     }
                 )
-                if not confirm:
-                    await _safe_emit_status(__event_emitter__, "Deletion cancelled.", done=True)
-                    return "Cancelled."
-            note = self.notes.pop(index)
-            await _safe_emit_notification(
-                __event_emitter__, {"type": "warning", "content": f"Deleted note: {note}"}
-            )
-        elif action == "edit":
-            if index < 0 or index >= len(self.notes):
-                await _safe_emit_status(__event_emitter__, "Index out of range.", done=True)
-                return "Invalid note index."
-            if __event_call__:
-                text = await __event_call__(
-                    {
-                        "type": "input",
-                        "data": {
-                            "title": "Edit Note",
-                            "message": "Update note text",
-                            "placeholder": "Note",
-                            "value": self.notes[index],
-                        },
-                    }
-                ) or ""
-            if not text:
-                await _safe_emit_status(__event_emitter__, "Edit cancelled.", done=True)
-                return "Cancelled."
-            self.notes[index] = text
-            await _safe_emit_notification(
-                __event_emitter__, {"type": "success", "content": "Note updated"}
-            )
-        elif action == "alert":
-            if __event_call__:
-                await __event_call__(
-                    {
-                        "type": "execute",
-                        "data": {"code": f'alert("Notes count: {len(self.notes)}");'},
-                    }
-                )
-            await _safe_emit_notification(
-                __event_emitter__, {"type": "info", "content": "Alert executed"}
-            )
-        else:
-            await _safe_emit_status(__event_emitter__, f"Unknown action: {action}", done=True)
-            return "Invalid action."
 
-        await _safe_emit_status(__event_emitter__, "Done", done=True)
-        return " | ".join(f"{i+1}. {n}" for i, n in enumerate(self.notes))
+                if not keep_going:
+                    await emit(
+                        {
+                            "type": "message",
+                            "data": {
+                                "content": "⚠️ Cancelled by user",
+                                "style": "warning",
+                            },
+                        }
+                    )
+                    await emit(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": "cancelled",
+                                "done": True,
+                                "hidden": True,
+                            },
+                        }
+                    )
+                    return "User cancelled."
 
-    # ------------------------------------------------------------------
-    # 3. Custom citation event
-    # ------------------------------------------------------------------
-    async def demo_citation(
-        self,
-        note: str = "A quick example of custom citation usage.",
-        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
-    ) -> str:
-        if not self.valves.citation_demo_enabled:
-            return "Citation demo is disabled by tool settings."
-        if not __event_emitter__:
-            return "No event emitter to display citation."
-        citation_event = {
-            "type": "citation",
-            "data": {
-                "document": [note],
-                "metadata": [
-                    {"date_accessed": datetime.now().isoformat(), "source": "Demo Source"}
-                ],
-                "source": {"name": "Demo Source", "url": "https://example.com/demoCitation"},
-            },
-        }
-        await __event_emitter__(citation_event)
-        return "Emitted custom citation event."
+                if note:
+                    await emit(
+                        {
+                            "type": "message",
+                            "data": {"content": f"📝 Note saved: {note}"},
+                        }
+                    )
 
+        # ---------- STEP 4  •  attach a citation block ------------------
+        await emit(
+            {
+                "type": "citation",
+                "data": {
+                    "document": [f"Demo processed **{total}** units of fake work."],
+                    "metadata": [
+                        {"date_accessed": time.strftime("%Y-%m-%dT%H:%M:%SZ")}
+                    ],
+                    "source": {
+                        "name": "Event Playground Tool",
+                        "url": "https://github.com/open-webui/open-webui",
+                    },
+                },
+            }
+        )
 
-async def _safe_emit_status(
-    emitter: Optional[Callable[[dict], Awaitable[None]]],
-    description: str,
-    done: bool,
-) -> None:
-    """Helper to emit status updates without raising on failure."""
-    if not emitter:
-        return
-    try:
-        await emitter({"type": "status", "data": {"description": description, "done": done}})
-    except Exception:
-        pass
+        # ---------- STEP 5  •  mark the progress bar ‘done’ -------------
+        await emit(
+            {
+                "type": "status",
+                "data": {
+                    "description": "✅ all done!",
+                    "done": True,
+                    "style": "success",
+                },
+            }
+        )
 
+        # ---------- STEP 6  •  overwrite the first bubble ---------------
+        final_text = f"🎉 Completed {total} units successfully."
+        await emit({"type": "replace", "data": {"content": final_text}})
 
-async def _safe_emit_notification(
-    emitter: Optional[Callable[[dict], Awaitable[None]]],
-    data: dict,
-) -> None:
-    """Safely send a notification event via ``__event_emitter__``."""
-    if not emitter:
-        return
-    try:
-        await emitter({"type": "notification", "data": data})
-    except Exception:
-        pass
-
+        # ---------- STEP 7  •  normal Python return ---------------------
+        return final_text
