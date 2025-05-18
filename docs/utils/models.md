@@ -74,6 +74,73 @@ and may expose additional actions via their metadata.  When finished the
 function writes the dictionary to `request.app.state.MODELS` and returns the
 list.
 
+### Merging user presets
+
+Entries in the `Models` table let administrators rename or extend built‑in
+models. Each record either points to a `base_model_id` or overrides the
+parameters of a model with the same `id`. The snippet below outlines how these
+presets are merged (lines 113‑171):
+
+```python
+custom_models = Models.get_all_models()
+for custom_model in custom_models:
+    if custom_model.base_model_id is None:
+        for model in models:
+            if custom_model.id == model["id"] or (
+                model.get("owned_by") == "ollama"
+                and custom_model.id == model["id"].split(":")[0]
+            ):
+                if custom_model.is_active:
+                    model["name"] = custom_model.name
+                    model["info"] = custom_model.model_dump()
+                    action_ids = []
+                    if "info" in model and "meta" in model["info"]:
+                        action_ids.extend(model["info"]["meta"].get("actionIds", []))
+                    model["action_ids"] = action_ids
+                else:
+                    models.remove(model)
+
+    elif custom_model.is_active and (
+        custom_model.id not in [m["id"] for m in models]
+    ):
+        owned_by = "openai"
+        pipe = None
+        action_ids = []
+
+        for model in models:
+            if (
+                custom_model.base_model_id == model["id"]
+                or custom_model.base_model_id == model["id"].split(":")[0]
+            ):
+                owned_by = model.get("owned_by", "unknown owner")
+                if "pipe" in model:
+                    pipe = model["pipe"]
+                break
+
+        if custom_model.meta:
+            meta = custom_model.meta.model_dump()
+            if "actionIds" in meta:
+                action_ids.extend(meta["actionIds"])
+
+        models.append(
+            {
+                "id": f"{custom_model.id}",
+                "name": custom_model.name,
+                "object": "model",
+                "created": custom_model.created_at,
+                "owned_by": owned_by,
+                "info": custom_model.model_dump(),
+                "preset": True,
+                **({"pipe": pipe} if pipe is not None else {}),
+                "action_ids": action_ids,
+            }
+        )
+```
+
+This mechanism allows a preset to inherit the behaviour of its base model while
+exposing different defaults or additional actions. Deactivated presets are
+removed from the list entirely.
+
 ### `check_model_access`
 
 Validates that a user can see the given model.  Arena models honour the
