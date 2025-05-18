@@ -1,6 +1,6 @@
 # Utilities Overview
 
-This folder tracks key helper modules found under `backend/open_webui/utils/` in the upstream project. Each file implements a slice of the server logic. See the individual pages for details:
+This folder tracks key helper modules found under `backend/open_webui/utils/` in the upstream project.  The utilities underpin almost every route in Open WebUI, from authentication to model selection.  Each file implements a slice of the server logic. See the individual pages for details:
 
 - [plugin.py](plugin.md)
 - [filter.py](filter.md)
@@ -14,3 +14,4 @@ This folder tracks key helper modules found under `backend/open_webui/utils/` in
 - [misc.py](misc.md)
 - [redis.py](redis.md)
 - [oauth.md](oauth.md)
+- [access_control.py](access_control.md)
