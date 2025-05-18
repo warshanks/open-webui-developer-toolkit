@@ -57,7 +57,7 @@ class Pipe:
     async def pipe(self, body: dict) -> str:
         # Echo the last user message
         return body["messages"][-1]["content"]
-````
+```
 
 1. Save under `functions/pipes/`.
 2. In WebUI → **Workspace ▸ Models ▸ “Add Model”** choose *Custom Pipe* and
@@ -263,18 +263,9 @@ assert asyncio.run(pipe.pipe(body)) == "hi"
 ---
 
 ## Example Gallery <a id="example-gallery"></a>
-
-| File                | Demonstrates                                  |
-| ------------------- | --------------------------------------------- |
-| `echo.py`           | Minimal async pipe                            |
-| `openai_proxy.py`   | Forward payloads to OpenAI `chat.completions` |
-| `weather_stream.py` | Streaming + tool invocation                   |
-| `multi_pipe.py`     | Manifold definition                           |
-
-All live under `functions/pipes/examples/`.
+Example pipe files will be added in a future update.
 
 ---
-
 ## Glossary <a id="glossary"></a>
 
 | Term             | Meaning                                                     |
