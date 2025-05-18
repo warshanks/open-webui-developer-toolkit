@@ -1,221 +1,292 @@
-# Tools Guide
+# Writing **Tools** for Open WebUI
 
-Tools are single-file Python modules that teach Open WebUI new actions. Each file defines a `Tools` class whose methods are converted into OpenAI function specs. The loader installs any dependencies and rewrites imports so the code runs inside WebUI.
+*A practical guide for first-time authors (human **and** AI).*  
+
+---
 
 ## Table of Contents
-- [Introduction](#introduction)
-- [Quick Start](#quick-start)
-  - [Hello Tool Example](#hello-tool-example)
-  - [Installing Your Tool](#installing-your-tool)
-- [Anatomy of a Tool](#anatomy-of-a-tool)
-  - [File Layout](#file-layout)
-  - [Frontmatter Fields](#frontmatter-fields)
-  - [Writing Tool Methods](#writing-tool-methods)
-  - [Valves and UserValves](#valves-and-uservalves)
-- [Using Tools in WebUI](#using-tools-in-webui)
-  - [Enabling Tools](#enabling-tools)
-  - [Default vs Native Function Calling](#default-vs-native-function-calling)
-  - [Uploading with Frontmatter](#uploading-with-frontmatter)
-- [Calling Tools from a Pipe](#calling-tools-from-a-pipe)
-- [Internals](#internals)
-  - [Tool Discovery](#tool-discovery)
-  - [Parameter Injection](#parameter-injection)
-  - [Remote Tool Servers](#remote-tool-servers)
-  - [Events and Callbacks](#events-and-callbacks)
-- [Further Reading](#further-reading)
-- [TODO](#todo)
-  - [Research Topics](#research-topics)
-  - [Example Ideas](#example-ideas)
-  - [Documentation Placeholders](#documentation-placeholders)
-  - [Field Reference TODO](#field-reference-todo)
+1. [Why Tools?](#why-tools)
+2. [Quick Start](#quick-start)
+3. [Anatomy of a Tool](#anatomy-of-a-tool)  
+   3.1  [Metadata Block](#metadata-block)  
+   3.2  [The `Tools` Class](#the-tools-class)  
+   3.3  [Defining Tool Methods](#defining-tool-methods)  
+4. [Field Reference](#field-reference)
+5. [Execution Lifecycle](#execution-lifecycle)
+6. [Valves & UserValves](#valves--uservalves)
+7. [Default vs Native Mode](#default-vs-native-mode)
+8. [EventEmitter Patterns](#eventemitter-patterns)
+9. [Testing Your Tool](#testing-your-tool)
+10. [Publishing & Distribution](#publishing--distribution)
+11. [Example Gallery](#example-gallery)
+12. [Troubleshooting Checklist](#troubleshooting-checklist)
+13. [Glossary](#glossary)
+14. [TODO / Future Research](#todo--future-research)
 
-## Introduction
+---
 
-Tools teach WebUI new actions. Each Python file exposes a `Tools` class and every
-method becomes an OpenAI function definition. The loader reads the method name,
-type hints and docstring to create the JSON schema that tells the LLM which
-parameters to send.
+## Why Tools? <a id="why-tools"></a>
 
-Typical uses include:
+Tools give an LLM real-world abilities—live data, external APIs, file I/O, etc.  
+When Open WebUI loads a tool it **parses the method docstrings to build a
+JSON schema**. That schema is sent to the model so it knows when to call your
+code and what arguments to provide. In “Native” mode the model can even
+*chain* multiple tools in a single turn. 
 
-- **Web search** for real-time answers
-- **Image generation** from text prompts
-- **Voice output** using text-to-speech services
+---
 
-## Quick Start
+## Quick Start <a id="quick-start"></a>
 
-### Hello Tool Example
-
-Create a file named `hello_tool.py`:
+Create `functions/tools/my_weather.py`:
 
 ```python
 """
-id: hello_tool
+name: weather
+description: Get the current temperature for a city.
 """
+
+from typing import Dict
+import httpx
 
 class Tools:
-    def hello(self, name: str) -> str:
-        """Return a friendly greeting."""
-        return f"Hello {name}!"
-```
-
-Upload the file through the **Community Tool Library** or the API and enable it for your chat. The method will appear as an OpenAI function named `hello`.
-
-### Installing Your Tool
-
-You can install tools from the library or upload a Python file directly. Click *Get* in the library, enter your WebUI address and choose *Import to WebUI*. Only import tools from sources you trust as they execute Python code on your server.
-
-## Anatomy of a Tool
-
-### File Layout
-
-Each tool file begins with a frontmatter block followed by the `Tools` class.
-
-### Frontmatter Fields
-
-```python
-"""
-id: string_inverse
-title: String Inverse
-author: Your Name
-author_url: https://website.com
-git_url: https://github.com/username/string-reverse.git
-description: This tool calculates the inverse of a string
-required_open_webui_version: 0.4.0
-requirements: langchain-openai, langgraph, ollama, langchain_ollama
-version: 0.4.0
-licence: MIT
-"""
-```
-
-Only `id` is required. The loader installs any `requirements` before executing
-the file ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L5-L29)). Other common
-fields are:
-
-- `title` – human friendly name shown in WebUI
-- `author` / `author_url` – attribution displayed in the library
-- `git_url` – optional repository link
-- `description` – short explanation for the LLM and users
-- `required_open_webui_version` – minimum WebUI version
-- `requirements` – Python packages installed before loading
-- `version` – your tool version string
-- `licence` – licence identifier
-
-### Writing Tool Methods
-
-```python
-class Tools:
-    def __init__(self):
-        self.valves = self.Valves()
-
-    class Valves(BaseModel):
-        api_key: str = Field("", description="Your API key here")
-
-    def reverse_string(self, string: str) -> str:
-        """Reverses the input string.
-
-        :param string: The string to reverse
+    async def weather(self, city: str) -> Dict[str, str]:
         """
-        if self.valves.api_key != "42":
-            return "Wrong API key"
-        return string[::-1]
-```
+        name: weather
+        description: Returns the current temperature for the given city.
+        parameters:
+          type: object
+          properties:
+            city:
+              type: string
+              description: Name of the city (e.g. "Paris")
+          required: [city]
+        returns:
+          type: object
+          properties:
+            location: {type: string}
+            temperature_c: {type: number}
+        """
+        r = httpx.get(f"https://wttr.in/{city}?format=j1").json()
+        return {
+            "location": r["nearest_area"][0]["areaName"][0]["value"],
+            "temperature_c": float(r["current_condition"][0]["temp_C"]),
+        }
+````
 
-The method name becomes the function name. Parameter names and `:param` blocks
-populate the tool schema. Type hints are mandatory so the loader can build the
-JSON schema for function calling. Nested hints such as `list[tuple[str, int]]`
-are supported.
+Enable the tool for your model (Workspace → Models → Tools) and ask:
 
-### Valves and UserValves
+> “What’s the temperature in Paris?”
 
-`Valves` define global settings while `UserValves` allow per-user overrides. Values are hydrated from the database before each call ([FILTER_GUIDE.md](../external/FILTER_GUIDE.md#L120-L145)).
+The LLM will trigger `weather()` and include the result in its reply.
 
-## Using Tools in WebUI
+---
 
-### Enabling Tools
+## Anatomy of a Tool <a id="anatomy-of-a-tool"></a>
 
-Tools can be enabled per chat or per model. Click the ➕ icon in the chat input to toggle individual tools or enable them by default under **Workspace ▸ Models**. The optional **AutoTool Filter** helps choose the right tool when multiple are available.
+### 1  Metadata Block <a id="metadata-block"></a>
 
-### Default vs Native Function Calling
-
-Tools work with any model using a prompt based helper, but models with built in function calling can chain tools natively. When native mode is disabled the pipe warns the user:
-
-```python
-if __tools__ and __metadata__.get("function_calling") != "native":
-    await __event_emitter__({
-        "type": "chat:completion",
-        "data": {
-            "content": (
-                "🛑 Tools detected, but native function calling is disabled.\n\n"
-                "To enable tools in this chat, switch Function Calling to 'Native'."
-            ),
-        },
-    })
-```
-
-Switch modes from **Chat Controls ▸ Advanced Params**.
-
-### Uploading with Frontmatter
-
-When a file is uploaded the loader applies `replace_imports`, installs `requirements` and writes the code to a temporary file before executing it ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L33-L59)). Use `.scripts/publish_to_webui.py` to upload a tool via the API.
-
-## Calling Tools from a Pipe
+A *top-level multi-line string* (or YAML front-matter) can declare file-wide
+defaults—handy when your file exports many tool functions.
 
 ```python
-async def pipe(self, body, __tools__):
-    add = __tools__["add"]["callable"]
-    result = await add(a=1, b=2)
-    return str(result)
+"""
+author: Jane Dev
+version: 0.1.0
+license: MIT
+requirements: httpx
+"""
 ```
 
-Remote tool servers are also supported. When a tool id starts with `server:` the loader fetches an OpenAPI document, converts each operation into a tool definition and proxies calls via [`execute_tool_server`](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/routers/tools.py#L38-L71) ([TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md#L53-L103)).
+Packages listed in `requirements` are auto-installed when the tool is first
+imported.
 
-## Internals
+### 2  The `Tools` Class <a id="the-tools-class"></a>
 
-### Tool Discovery
-
-`backend/open_webui/utils/tools.py` converts methods into async callables and JSON specs. `get_tools` loads modules by id and prepares the mapping ready for the chat pipeline【F:external/open-webui/backend/open_webui/utils/tools.py†L68-L206】.
-
-### Parameter Injection
-
-`convert_function_to_pydantic_model` turns type hints and docstrings into Pydantic models at lines 264–303【F:external/open-webui/backend/open_webui/utils/tools.py†L264-L303】. Parameters such as `__event_emitter__`, `__user__` and `__metadata__` are injected only when requested, mirroring the behaviour for pipes (see [functions/pipes/README.md](../functions/pipes/README.md#parameter-injection)).
-
-### Remote Tool Servers
-
-Connections to external tool servers are listed in `TOOL_SERVER_CONNECTIONS`. The router caches the OpenAPI specs on first access【F:external/open-webui/backend/open_webui/routers/tools.py†L38-L71】 before merging them with local tools.
-
-### Events and Callbacks
-
-Tool methods can emit live updates using `__event_emitter__` or prompt the user via `__event_call__`:
+Open WebUI looks for a class literally named `Tools`.
+Each *public method* (no leading `_`) is exposed as a callable tool.
 
 ```python
-async def example_tool(__event_emitter__, __event_call__):
-    await __event_emitter__({"type": "status", "data": {"description": "Loading", "done": False}})
-    ok = await __event_call__({"type": "confirmation", "data": {"title": "Continue?", "message": "Run step?"}})
-    if ok:
-        await __event_emitter__({"type": "replace", "data": {"content": "step complete"}})
+class Tools:
+    def say_hi(self) -> str:
+        """name: hello | description: Return a friendly greeting."""
+        return "👋 Hi from Open WebUI!"
 ```
 
-`__event_call__` can also run JavaScript (`execute`) or request text (`input`). The emitter supports `message`, `replace`, `status`, `citation` and `notification` event types.
+Methods can be **sync or async**. Async is recommended for I/O.
 
-## Further Reading
+### 3  Defining Tool Methods <a id="defining-tool-methods"></a>
 
-- [TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md)
-- [PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md)
+* **Docstring → JSON Schema**
+  Use the “single-line header + YAML block” pattern shown above.
+  Required keys:
 
-## TODO
+| Key           | Purpose                                   |
+| ------------- | ----------------------------------------- |
+| `name`        | Unique identifier seen by the LLM.        |
+| `description` | One-line summary; must start with a verb. |
+| `parameters`  | JSON Schema describing inputs.            |
+| `returns`     | *(Optional)* JSON Schema for outputs.     |
 
-### Research Topics
-- Document how tools are stored in the database via `ToolsTable`.
-- Investigate how valves are cached and refreshed.
+If `returns` is omitted, the result is treated as an arbitrary string.
 
-### Example Ideas
-- Provide a full remote tool server example.
-- Explain troubleshooting steps for import errors.
+Example with required and optional args:
 
-### Documentation Placeholders
-- TODO: describe how to bundle multiple tools in one file.
-- TODO: show best practices for unit testing tools.
+```python
+    def news(self, topic: str, limit: int = 5) -> list[dict]:
+        """
+        name: headlines
+        description: Fetch top news headlines for a topic.
+        parameters:
+          type: object
+          properties:
+            topic:  {type: string, description: Search phrase}
+            limit:  {type: integer, description: Max results, default: 5}
+          required: [topic]
+        returns:
+          type: array
+          items:
+            type: object
+            properties:
+              title:   {type: string}
+              url:     {type: string, description: Original article}
+        """
+```
 
-### Field Reference TODO
-- TODO: compile a table of all frontmatter fields and their meanings.
+---
+
+## Field Reference <a id="field-reference"></a>
+
+| Field             | Type   | Notes                                     |
+| ----------------- | ------ | ----------------------------------------- |
+| `name`            | string | Must be *unique* across all loaded tools. |
+| `description`     | string | Starts with a verb; ≤ 100 chars is ideal. |
+| `parameters.type` | string | Usually `"object"`.                       |
+| `.properties`     | object | Keys become argument names.               |
+| `.required`       | array  | List of mandatory properties.             |
+| `returns`         | object | JSON Schema describing return value.      |
+
+> **Tip:** stick to primitives (`string`, `number`, `boolean`, `array`, `object`) so more models can reason about your schema.
+
+---
+
+## Execution Lifecycle <a id="execution-lifecycle"></a>
+
+1. **Import** – File is loaded, deps installed, `Tools()` instantiated once.
+2. **Schema Build** – Docstrings parsed → tool JSON appended to model prompt.
+3. **Chat** – LLM decides to call tool (native) *or* returns a text trigger (default).
+4. **Invoke** – Open WebUI locates method, injects args, awaits result.
+5. **Return** – Result inserted into assistant message (or streamed).
+
+---
+
+## Valves & UserValves <a id="valves--uservalves"></a>
+
+Tools can expose configuration using Pydantic models:
+
+```python
+from pydantic import BaseModel
+
+class Valves(BaseModel):
+    api_key: str
+    base_url: str = "https://api.example.com"
+
+class UserValves(BaseModel):
+    default_city: str | None = None
+```
+
+Declare them at module scope; Open WebUI will hydrate instances and pass them
+to every method that accepts a `valves` or `__user__` parameter.
+
+---
+
+## Default vs Native Mode <a id="default-vs-native-mode"></a>
+
+| Mode        | Trigger style                               | Best for                                               |
+| ----------- | ------------------------------------------- | ------------------------------------------------------ |
+| **Default** | Prompt template (“Use the *weather* tool…”) | Any model, but slower / less precise                   |
+| **Native**  | OpenAI-style function calling               | GPT-4o, GPT-3.5-1106, etc. for fast, multi-tool chains |
+
+Switch modes per chat: **Chat ⚙ Controls → Advanced Params → Function Calling**.
+
+---
+
+## EventEmitter Patterns <a id="eventemitter-patterns"></a>
+
+If your method accepts `__event_emitter__`, you can push custom events:
+
+```python
+async def download(self, url: str, __event_emitter__):
+    __event_emitter__("status", {"percent": 0})
+    ...
+    __event_emitter__("status", {"percent": 100})
+    return "Download complete!"
+```
+
+Common event types: `status`, `message`, `notification`, `confirmation`.
+
+---
+
+## Testing Your Tool <a id="testing-your-tool"></a>
+
+```python
+from importlib import import_module, reload
+tool_mod = reload(import_module("functions.tools.my_weather"))
+tools = tool_mod.Tools()
+assert asyncio.run(tools.weather("Paris"))["location"] == "Paris"
+```
+
+For end-to-end tests call `open_webui.utils.chat.generate_chat_completion`
+with `tools=[{"spec":..., "callable": ...}]`.
+
+---
+
+## Publishing & Distribution <a id="publishing--distribution"></a>
+
+1. Add a semantic version and `license` to your metadata block.
+2. Push to GitHub.
+3. Submit to the **Community Tool Library**.
+4. Users click **“Import to WebUI”** → Done!
+
+---
+
+## Example Gallery <a id="example-gallery"></a>
+
+| File               | Highlighted concept                   |
+| ------------------ | ------------------------------------- |
+| `simple_echo.py`   | Minimal sync tool                     |
+| `stream_search.py` | Async & streaming results             |
+| `image_gen.py`     | Binary data + custom `returns` schema |
+| `multi_toolkit.py` | Multiple methods in one file          |
+
+*(All samples live under `functions/tools/examples/`.)*
+
+---
+
+## Troubleshooting Checklist <a id="troubleshooting-checklist"></a>
+
+* Tool not listed? File name must end with `.py`, class must be `Tools`.
+* Native calls ignored? Verify model supports function calling **and** mode is *Native*.
+* JSON parse errors? Ensure arguments are valid JSON and match your schema.
+* Import crash? Check `requirements` spelling—packages install at runtime.
+
+---
+
+## Glossary <a id="glossary"></a>
+
+| Term             | Meaning                                        |
+| ---------------- | ---------------------------------------------- |
+| **Tool**         | A callable Python function exposed to the LLM. |
+| **Valves**       | Admin-level persistent settings for a tool.    |
+| **UserValves**   | Per-user settings surfaced in the chat UI.     |
+| **EventEmitter** | Callback for sending UI events mid-execution.  |
+| **Native Mode**  | OpenAI-style function calling pipeline.        |
+
+---
+
+## TODO / Future Research <a id="todo--future-research"></a>
+
+* **Security Best Practices:** sandboxing, network policies, secrets.
+* **Tool Chaining Agents:** design patterns for multi-step reasoning.
+* **Typed Returns:** auto-generate Pydantic models from `returns` schema.
+
+```
