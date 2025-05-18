@@ -165,3 +165,29 @@ class Pipe:
 
 `get_tools` in `utils.tools` handles the conversion and provides each function's
 OpenAI-style spec under `spec`.
+
+### Pipe lifecycle
+
+Custom pipes are only loaded once per server process. `get_function_module_by_id` checks `request.app.state.FUNCTIONS` and calls `load_function_module_by_id` when necessary:
+
+```python
+if pipe_id not in request.app.state.FUNCTIONS:
+    function_module, _, _ = load_function_module_by_id(pipe_id)
+    request.app.state.FUNCTIONS[pipe_id] = function_module
+else:
+    function_module = request.app.state.FUNCTIONS[pipe_id]
+
+if hasattr(function_module, "valves") and hasattr(function_module, "Valves"):
+    valves = Functions.get_function_valves_by_id(pipe_id)
+    function_module.valves = function_module.Valves(**(valves or {}))
+```
+
+The module object exposes the `pipe` method, any valve classes and optional `pipes` metadata. `generate_function_chat_completion` uses this information to build the execution parameters, install tools and forward WebSocket callbacks. Each call hydrates the valve values before invoking the handler:
+
+```python
+pipe = function_module.pipe
+params = get_function_params(function_module, form_data, user, extra_params)
+res = await execute_pipe(pipe, params)
+```
+
+This lifecycle keeps startup fast while ensuring configuration changes take effect the next time a pipe is triggered.
