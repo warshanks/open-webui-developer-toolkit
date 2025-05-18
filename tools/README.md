@@ -148,6 +148,7 @@ mirror those available to pipes and filters such as `__event_emitter__`,
 `__user__` and `__metadata__` (see
 [functions/pipes/README.md](../functions/pipes/README.md#L66-L78)).
 
+
 ### Calling tools from a pipe
 ```python
 async def pipe(self, body, __tools__):
