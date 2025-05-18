@@ -175,6 +175,71 @@ tool contexts are only set up when `chat_id`, `session_id` and `message_id` are
 present. See lines 200‑251 of `functions.py` for the full logic
 【F:external/open-webui/backend/open_webui/functions.py†L200-L251】.
 
+### Deep dive: `__metadata__`
+
+`__metadata__` carries identifiers and configuration for the current request.
+The chat route builds this dictionary just before the pipe runs:
+
+```python
+metadata = {
+    "user_id": user.id,
+    "chat_id": form_data.pop("chat_id", None),
+    "message_id": form_data.pop("id", None),
+    "session_id": form_data.pop("session_id", None),
+    "tool_ids": form_data.get("tool_ids", None),
+    "tool_servers": form_data.pop("tool_servers", None),
+    "files": form_data.get("files", None),
+    "features": form_data.get("features", None),
+    "variables": form_data.get("variables", None),
+    "model": model,
+    "direct": model_item.get("direct", False),
+    **(
+        {"function_calling": "native"}
+        if form_data.get("params", {}).get("function_calling") == "native"
+        or (
+            model_info
+            and model_info.params.model_dump().get("function_calling")
+            == "native"
+        )
+        else {}
+    ),
+}
+```
+【F:external/open-webui/backend/open_webui/main.py†L1165-L1187】
+
+Pipeline middleware may extend it with `tool_ids` and unique `files`
+before invoking the pipe【F:external/open-webui/backend/open_webui/utils/middleware.py†L790-L801】.
+Task endpoints add their own fields such as `task` and `task_body` when
+generating titles or tags【F:external/open-webui/backend/open_webui/routers/tasks.py†L206-L214】.
+
+`generate_function_chat_completion` forwards this dictionary to your pipe as
+`__metadata__` along with the other extras【F:external/open-webui/backend/open_webui/functions.py†L216-L239】.
+
+Typical entries include `chat_id`, `message_id`, `user_id`, feature flags,
+file metadata and the resolved `model` object.  Use the dictionary like any
+normal Python mapping:
+
+```python
+class Pipe:
+    async def pipe(
+        self,
+        body: dict,
+        __metadata__: dict,
+        __event_emitter__,
+    ):
+        if __metadata__.get("function_calling") != "native":
+            await __event_emitter__(
+                {
+                    "type": "chat:completion",
+                    "data": {"content": "Switch to native mode for tools."},
+                }
+            )
+
+        count = len(__metadata__.get("files", []) or [])
+        return f"chat {__metadata__['chat_id']} with {count} files"
+```
+
+
 ### Working with `__request__`
 
 The `__request__` argument exposes the underlying `fastapi.Request` instance.
