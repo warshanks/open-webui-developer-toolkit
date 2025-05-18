@@ -14,18 +14,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1 ▸ your repo
+    # Step 1 ▸ Check out your repository
     - uses: actions/checkout@v4
 
-    # 2 ▸ snapshot upstream
-    - name: Copy upstream OpenWebUI
+    # Step 2 ▸ Clone the upstream OpenWebUI repository into external/open-webui
+    - name: Clone upstream OpenWebUI
       run: |
         set -euo pipefail
         rm -rf external/open-webui
         git clone --depth 1 https://github.com/open-webui/open-webui.git external/open-webui
-        rm -rf external/open-webui/.git
+        rm -rf external/open-webui/.git  # remove .git to keep only files
 
-    # 3 ▸ commit & push if anything changed
+    # Step 3 ▸ Commit & push changes safely (handles existing remote branch)
     - name: Commit & push branch
       id: push
       run: |
@@ -33,19 +33,23 @@ jobs:
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-        git checkout -B update-open-webui
+        # Fetch existing branch if it exists, or continue if it doesn't
+        git fetch origin update-open-webui || true
+        git checkout -B update-open-webui origin/update-open-webui || git checkout -B update-open-webui
+
         git add -A
 
+        # Exit early if no changes detected
         if git diff --cached --quiet; then
-          echo "changed=false" >>"$GITHUB_OUTPUT"
+          echo "changed=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
         git commit -m "chore: update OpenWebUI snapshot"
-        git push -u origin update-open-webui
-        echo "changed=true"  >>"$GITHUB_OUTPUT"
+        git push -u origin update-open-webui --force-with-lease
+        echo "changed=true" >> "$GITHUB_OUTPUT"
 
-    # 4 ▸ open / update PR
+    # Step 4 ▸ Create or update pull request if changes exist
     - name: Create or update PR
       if: steps.push.outputs.changed == 'true'
       env:
@@ -65,21 +69,20 @@ jobs:
             --base  "$BASE_BRANCH"
         fi
 
-    # 5 ▸ approve PR (satisfies simple “1 approval” rules)
+    # Step 5 ▸ Automatically approve the PR
     - name: Approve PR
       if: steps.push.outputs.changed == 'true'
       env:
         GH_TOKEN: ${{ github.token }}
       run: gh pr review update-open-webui --approve -b "Automated approval"
 
-    # 6 ▸ merge and delete branch
+    # Step 6 ▸ Automatically merge PR and delete branch
     - name: Merge & delete branch
       if: steps.push.outputs.changed == 'true'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        # Try immediate merge with admin bypass;
-        # if that fails (e.g. pending checks), enable auto-merge instead.
+        # Attempt immediate merge with admin rights, fallback to auto-merge otherwise
         gh pr merge update-open-webui --merge --delete-branch --admin -y \
-        || gh pr merge update-open-webui --merge --auto --delete-branch -y  [oai_citation:2‡GitHub CLI](https://cli.github.com/manual/gh_pr_merge?utm_source=chatgpt.com)
+        || gh pr merge update-open-webui --merge --auto --delete-branch -y
