@@ -32,11 +32,10 @@ from typing import Final
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 CREATE: Final = "/api/v1/functions/create"
 UPDATE: Final = "/api/v1/functions/id/{id}/update"
-TOGGLE: Final = "/api/v1/functions/id/{id}/toggle"
 
 
 def _post(base_url: str, api_key: str, path: str, payload: dict) -> int:
@@ -59,12 +58,6 @@ def _post(base_url: str, api_key: str, path: str, payload: dict) -> int:
             return resp.getcode()
     except HTTPError as exc:
         return exc.code
-
-
-def _activate(base_url: str, api_key: str, plugin_id: str) -> int:
-    """Toggle activation state for a plugin."""
-    return _post(base_url, api_key, TOGGLE.format(id=plugin_id), {})
-
 
 def _parse_args() -> argparse.Namespace:
     """Return CLI arguments."""
@@ -135,11 +128,13 @@ def main() -> None:
     path = Path(args.file_path)
     if not path.is_file():
         sys.exit(f"❌  File not found: {path}")
+    logging.info("Reading plugin from %s", path)
 
     code = path.read_text(encoding="utf-8")
 
     try:
         plugin_id, description = _extract_metadata(code)
+        logging.info("Plugin id: %s", plugin_id)
     except ValueError as exc:
         sys.exit(f"❌  {exc}")
 
@@ -149,17 +144,16 @@ def main() -> None:
     plugin_type = _detect_type(path, args.type)
     payload = _build_payload(plugin_id, plugin_type, code, description)
 
+    logging.info("Publishing '%s' (%s) to %s", plugin_id, plugin_type, args.url)
     status = _post(args.url, args.key, CREATE, payload)
     if status in (200, 201):
-        logging.info("Created '%s' on %s", plugin_id, args.url)
-        _activate(args.url, args.key, plugin_id)
+        logging.info("Created '%s' on %s [HTTP %s]", plugin_id, args.url, status)
         return
 
     if status == 400:
         status = _post(args.url, args.key, UPDATE.format(id=plugin_id), payload)
         if status in (200, 201):
-            logging.info("Updated '%s' on %s", plugin_id, args.url)
-            _activate(args.url, args.key, plugin_id)
+            logging.info("Updated '%s' on %s [HTTP %s]", plugin_id, args.url, status)
             return
 
     sys.exit(f"❌  WebUI returned HTTP {status}")
