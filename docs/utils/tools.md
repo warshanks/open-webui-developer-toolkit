@@ -9,6 +9,47 @@ It handles:
 - Building OpenAI style JSON specs from Pydantic models.
 - Integrating with **OpenAPI tool servers** for remote actions.
 
+## Local tool loading
+
+`get_tools(request, tool_ids, user, extra_params)` retrieves tool modules from
+the database and returns a dictionary mapping **function names** to callables and
+metadata. It transparently handles per‑user valve configuration and converts
+each function into an awaitable:
+
+```python
+tool_map = get_tools(request, ["calculator"], user, {"__user__": user.model_dump()})
+
+add_spec = tool_map["add"]["spec"]  # OpenAI style function schema
+result = await tool_map["add"]["callable"](a=1, b=2)
+```
+
+The helper loads the module with
+`plugin.load_tool_module_by_id`, sets any `Valves` or `UserValves` objects, and
+filters out internal parameters such as `__id__` before returning the spec.
+
+## Pydantic conversion deep dive
+
+`convert_function_to_pydantic_model` inspects a Python function and converts its
+signature plus docstring into a Pydantic model. Parameter descriptions defined
+with `:param` are copied over to the schema:
+
+```python
+def greet(name: str, excited: bool = False):
+    """Return a greeting.
+
+    :param name: User name
+    :param excited: Add an exclamation mark
+    """
+    suffix = "!" if excited else "."
+    return f"Hello {name}{suffix}"
+
+Model = convert_function_to_pydantic_model(greet)
+print(Model.model_json_schema())
+```
+
+This schema is then fed through `convert_pydantic_model_to_openai_function_spec`
+so tools appear as ChatGPT compatible definitions.
+
 ## Tool server integration
 
 Tool servers expose functions over HTTP by serving an OpenAPI document. The
