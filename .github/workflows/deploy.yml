@@ -4,7 +4,8 @@ on:
   push:
     branches: [ main ]                      # 🚀 deploy pipeline only on main
     paths:
-      - 'src/openwebui_devtoolkit/**.py'    # run when a plugin changes
+      - 'functions/**.py'
+      - 'tools/**.py'
       - 'scripts/publish_to_webui.py'
   workflow_dispatch:
 
@@ -29,9 +30,9 @@ jobs:
         uses: tj-actions/changed-files@v43
         with:
           files: |
-            src/openwebui_devtoolkit/pipes/**/*.py
-            src/openwebui_devtoolkit/filters/**/*.py
-            src/openwebui_devtoolkit/tools/**/*.py
+            functions/pipes/**/*.py
+            functions/filters/**/*.py
+            tools/**/*.py
 
       # ➋ publish each changed file
       - name: Publish to GLC
@@ -42,11 +43,11 @@ jobs:
         run: |
           for file in ${{ steps.changed.outputs.all_changed_files }}; do
             echo "Publishing $file to GLC …"
-            if [[ "$file" == src/openwebui_devtoolkit/pipes/* ]]; then
+            if [[ "$file" == functions/pipes/* ]]; then
               type=pipe
-            elif [[ "$file" == src/openwebui_devtoolkit/filters/* ]]; then
+            elif [[ "$file" == functions/filters/* ]]; then
               type=filter
-            elif [[ "$file" == src/openwebui_devtoolkit/tools/* ]]; then
+            elif [[ "$file" == tools/* ]]; then
               type=tool
             else
               type=pipe
@@ -74,9 +75,9 @@ jobs:
         uses: tj-actions/changed-files@v43
         with:
           files: |
-            src/openwebui_devtoolkit/pipes/**/*.py
-            src/openwebui_devtoolkit/filters/**/*.py
-            src/openwebui_devtoolkit/tools/**/*.py
+            functions/pipes/**/*.py
+            functions/filters/**/*.py
+            tools/**/*.py
 
       - name: Publish to CLAC
         if: steps.changed.outputs.any_changed == 'true'
@@ -86,11 +87,11 @@ jobs:
         run: |
           for file in ${{ steps.changed.outputs.all_changed_files }}; do
             echo "Publishing $file to CLAC …"
-            if [[ "$file" == src/openwebui_devtoolkit/pipes/* ]]; then
+            if [[ "$file" == functions/pipes/* ]]; then
               type=pipe
-            elif [[ "$file" == src/openwebui_devtoolkit/filters/* ]]; then
+            elif [[ "$file" == functions/filters/* ]]; then
               type=filter
-            elif [[ "$file" == src/openwebui_devtoolkit/tools/* ]]; then
+            elif [[ "$file" == tools/* ]]; then
               type=tool
             else
               type=pipe

@@ -1,13 +1,18 @@
-from importlib import import_module, reload
+from importlib.util import spec_from_file_location, module_from_spec
+import sys
+from pathlib import Path
 import types
 from unittest.mock import AsyncMock, patch
 import pytest
 
 
 def _reload_pipeline():
-    return reload(
-        import_module("openwebui_devtoolkit.pipes.openai_responses_api_pipeline")
-    )
+    path = Path(__file__).resolve().parents[1] / "functions" / "pipes" / "openai_responses_api_pipeline.py"
+    spec = spec_from_file_location("openai_responses_api_pipeline", path)
+    mod = module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def test_prepare_tools_variants(dummy_chat):

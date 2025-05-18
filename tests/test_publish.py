@@ -13,7 +13,7 @@ from scripts.publish_to_webui import (
 
 
 def test_detect_type_from_path():
-    assert _detect_type(Path("src/openwebui_devtoolkit/pipes/tool.py"), None) == "pipe"
+    assert _detect_type(Path("functions/pipes/tool.py"), None) == "pipe"
     assert _detect_type(Path("any/filters/foo.py"), None) == "filter"
     assert _detect_type(Path("toolz/tools/x.py"), None) == "tool"
     assert _detect_type(Path("some/other/path.py"), "filter") == "filter"
