@@ -6,6 +6,10 @@ class becomes an individual tool. Open WebUI loads these modules through
 `plugin.load_tool_module_by_id` and builds the OpenAI style specs
 automatically.
 
+This folder complements the guides for [pipes](../functions/pipes/README.md) and
+[filters](../functions/filters/README.md). A tool provides standalone functions
+that a pipe can invoke during a chat request.
+
 ```python
 """
 requirements: httpx
@@ -25,6 +29,18 @@ in the optional **frontmatter** block (`requirements:` in the example above).
 Short import paths such as `from utils.chat` are rewritten to `open_webui.utils`
 so the module can reuse helpers from the main project.
 
+### Frontmatter and upload
+
+Each tool file begins with a triple quoted block. At minimum declare an `id:` so
+WebUI can store and update the tool. Additional keys like `requirements:` list
+extra packages that are installed before the code runs. The loader parses this
+header and rewrites short imports before executing the module in a temporary
+file【F:external/PLUGIN_GUIDE.md†L5-L29】.
+
+Use `.scripts/publish_to_webui.py` to upload a tool via the API. The script
+extracts the `id:` and description from the header and sends the file to a
+running WebUI instance.
+
 ## How tools are discovered
 
 `backend/open_webui/utils/tools.py` converts each method of the `Tools` class
@@ -41,6 +57,23 @@ while users can override selected fields.
 
 If a module defines `file_handler = True` the middleware removes uploaded files
 from the payload after the tool runs because the tool manages them itself.
+
+### Parameter injection
+
+`get_tools()` passes extra context to tool functions. Only the parameters
+declared in the function signature are provided. Useful names mirror those
+available to pipes and filters and include:
+
+- `__event_emitter__` / `__event_call__`
+- `__user__`
+- `__metadata__`
+- `__request__`
+- `__model__`
+- `__messages__`
+- `__files__`
+
+These values come from the chat middleware and allow a tool to inspect the
+conversation or emit events【F:functions/pipes/README.md†L66-L78】.
 
 ## Calling tools from a pipe
 
