@@ -9,7 +9,12 @@ dependencies = [
   "fastapi",
   "pydantic",
   "requests",
-  "typer"
+  "typer",
+  "Markdown",
+  "beautifulsoup4",
+  "peewee",
+  "peewee-migrate",
+  "SQLAlchemy"
 ]
 
 [project.optional-dependencies]
