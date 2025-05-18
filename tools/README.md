@@ -1,44 +1,47 @@
 # Tools Guide
 
-Tools are small Python modules that expose callable functions for Open WebUI.  A
-single file defines a `Tools` class and optional configuration.  The loader
-imports the file with `plugin.load_tool_module_by_id`, rewrites short imports
-and installs any dependencies so the methods appear as OpenAI function specs.
+Tools are single-file Python modules that teach Open WebUI new actions. Each file defines a `Tools` class whose methods are converted into OpenAI function specs. The loader installs any dependencies and rewrites imports so the code runs inside WebUI.
 
 ## Table of Contents
-
-- [Overview](#overview)
-- [Quickstart Example](#quickstart-example)
-- [Anatomy of a Tool](#anatomy-of-a-tool)
+- [Introduction](#introduction)
+- [Getting Started](#getting-started)
+  - [Hello Tool Example](#hello-tool-example)
+  - [Installing Tools](#installing-tools)
+- [Tool Structure](#tool-structure)
   - [Frontmatter](#frontmatter)
-  - [Tools Class](#tools-class)
+  - [Methods and Type Hints](#methods-and-type-hints)
   - [Valves and UserValves](#valves-and-uservalves)
 - [Using Tools in WebUI](#using-tools-in-webui)
+  - [Enabling Tools](#enabling-tools)
   - [Default vs Native Function Calling](#default-vs-native-function-calling)
   - [Uploading with Frontmatter](#uploading-with-frontmatter)
 - [Calling Tools from a Pipe](#calling-tools-from-a-pipe)
-- [Events and Callbacks](#events-and-callbacks)
 - [Internals](#internals)
   - [Tool Discovery](#tool-discovery)
   - [Parameter Injection](#parameter-injection)
   - [Remote Tool Servers](#remote-tool-servers)
+  - [Events and Callbacks](#events-and-callbacks)
+- [Further Reading](#further-reading)
 - [TODO](#todo)
+  - [Research Topics](#research-topics)
+  - [Example Ideas](#example-ideas)
+  - [Documentation Placeholders](#documentation-placeholders)
 
-## Overview
+## Introduction
 
-Typical capabilities include:
+Tools let you extend WebUI with Python code or remote APIs. They complement the [pipes](../functions/pipes/README.md) and [filters](../functions/filters/README.md) guides. A pipe can call any enabled tool during a chat request.
 
-- **Web search** for real-time answers.
-- **Image generation** from text prompts.
-- **Voice output** using text-to-speech services.
+Typical uses include:
 
-Tools complement the [pipes](../functions/pipes/README.md) and
-[filters](../functions/filters/README.md) guides. A pipe can call any enabled
-tool during a chat request.
+- **Web search** for real-time answers
+- **Image generation** from text prompts
+- **Voice output** using text-to-speech services
 
-## Quickstart Example
+## Getting Started
 
-Create a file named `hello_tool.py` and copy it into WebUI:
+### Hello Tool Example
+
+Create a file named `hello_tool.py`:
 
 ```python
 """
@@ -51,18 +54,18 @@ class Tools:
         return f"Hello {name}!"
 ```
 
-Upload the file through the **Community Tool Library** or the API and enable it
-for your chat. The method will show up as an OpenAI function named `hello`.
+Upload the file through the **Community Tool Library** or the API and enable it for your chat. The method will appear as an OpenAI function named `hello`.
 
-## Installing Tools
-You can install tools from the **Community Tool Library** or by uploading a Python file directly. Click *Get* in the library, enter your WebUI address and use “Import to WebUI”.
+### Installing Tools
 
-**Safety tip:** Only import tools from sources you trust as they execute Python code on your server.
+You can install tools from the library or upload a Python file directly. Click *Get* in the library, enter your WebUI address and choose *Import to WebUI*. Only import tools from sources you trust as they execute Python code on your server.
 
-## Anatomy of a Tool
-A toolkit lives in a single Python file. Each file begins with a frontmatter block followed by a `Tools` class.
+## Tool Structure
+
+Each tool file begins with a frontmatter block followed by the `Tools` class.
 
 ### Frontmatter
+
 ```python
 """
 id: string_inverse
@@ -77,11 +80,11 @@ version: 0.4.0
 licence: MIT
 """
 ```
-Only `id` is required but the extra fields make maintenance easier. The loader
-parses this header and installs any `requirements` before executing the
-file ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L5-L29)).
 
-### Tools Class
+Only `id` is required. The loader installs any `requirements` before executing the file ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L5-L29)).
+
+### Methods and Type Hints
+
 ```python
 class Tools:
     def __init__(self):
@@ -99,19 +102,23 @@ class Tools:
             return "Wrong API key"
         return string[::-1]
 ```
-Type hints are mandatory so the loader can build the JSON schema for function calling. Nested hints such as `list[tuple[str, int]]` also work.
+
+Type hints are mandatory so the loader can build the JSON schema for function calling. Nested hints such as `list[tuple[str, int]]` are supported.
 
 ### Valves and UserValves
-`Valves` define global settings while `UserValves` allow per-user overrides. The
-loader hydrates them from the database before each call so administrators can
-set defaults and users can tweak values
-([FILTER_GUIDE.md](../external/FILTER_GUIDE.md#L120-L145)).
+
+`Valves` define global settings while `UserValves` allow per-user overrides. Values are hydrated from the database before each call ([FILTER_GUIDE.md](../external/FILTER_GUIDE.md#L120-L145)).
 
 ## Using Tools in WebUI
+
+### Enabling Tools
+
 Tools can be enabled per chat or per model. Click the ➕ icon in the chat input to toggle individual tools or enable them by default under **Workspace ▸ Models**. The optional **AutoTool Filter** helps choose the right tool when multiple are available.
 
-### Default vs native function calling
+### Default vs Native Function Calling
+
 Tools work with any model using a prompt based helper, but models with built in function calling can chain tools natively. When native mode is disabled the pipe warns the user:
+
 ```python
 if __tools__ and __metadata__.get("function_calling") != "native":
     await __event_emitter__({
@@ -124,46 +131,42 @@ if __tools__ and __metadata__.get("function_calling") != "native":
         },
     })
 ```
+
 Switch modes from **Chat Controls ▸ Advanced Params**.
 
-### Uploading with frontmatter
-When a file is uploaded the loader applies `replace_imports`, installs
-`requirements` and writes the code to a temporary file before executing it
-([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L33-L59)). Use
-`.scripts/publish_to_webui.py` to upload a tool via the API.
+### Uploading with Frontmatter
 
-## Internals
-### Tool discovery
-`backend/open_webui/utils/tools.py` turns each method into an async callable and
-a JSON spec. `convert_function_to_pydantic_model` parses the signature and
-docstring while `convert_pydantic_model_to_openai_function_spec` produces the
-final format ([source](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/tools.py#L49-L65))
-([TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md#L3-L10)). `get_tools()` assembles
-the mapping ready for the chat pipeline
-([TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md#L12-L28)).
+When a file is uploaded the loader applies `replace_imports`, installs `requirements` and writes the code to a temporary file before executing it ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L33-L59)). Use `.scripts/publish_to_webui.py` to upload a tool via the API.
 
-### Parameter injection
-`get_tools()` only passes parameters requested in the signature. Useful names
-mirror those available to pipes and filters such as `__event_emitter__`,
-`__user__` and `__metadata__` (see
-[functions/pipes/README.md](../functions/pipes/README.md#L66-L78)).
+## Calling Tools from a Pipe
 
-
-### Calling tools from a pipe
 ```python
 async def pipe(self, body, __tools__):
     add = __tools__["add"]["callable"]
     result = await add(a=1, b=2)
     return str(result)
 ```
-Remote tool servers are also supported. When a tool id starts with `server:` the
-loader fetches an OpenAPI document, converts each operation into a tool
-definition and proxies calls via
-[`execute_tool_server`](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/routers/tools.py#L38-L71)
-([TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md#L53-L103)).
 
-### Events and callbacks
+Remote tool servers are also supported. When a tool id starts with `server:` the loader fetches an OpenAPI document, converts each operation into a tool definition and proxies calls via [`execute_tool_server`](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/routers/tools.py#L38-L71) ([TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md#L53-L103)).
+
+## Internals
+
+### Tool Discovery
+
+`backend/open_webui/utils/tools.py` converts methods into async callables and JSON specs. `get_tools` loads modules by id and prepares the mapping ready for the chat pipeline【F:external/open-webui/backend/open_webui/utils/tools.py†L68-L206】.
+
+### Parameter Injection
+
+`convert_function_to_pydantic_model` turns type hints and docstrings into Pydantic models at lines 264–303【F:external/open-webui/backend/open_webui/utils/tools.py†L264-L303】. Parameters such as `__event_emitter__`, `__user__` and `__metadata__` are injected only when requested, mirroring the behaviour for pipes (see [functions/pipes/README.md](../functions/pipes/README.md#parameter-injection)).
+
+### Remote Tool Servers
+
+Connections to external tool servers are listed in `TOOL_SERVER_CONNECTIONS`. The router caches the OpenAPI specs on first access【F:external/open-webui/backend/open_webui/routers/tools.py†L38-L71】 before merging them with local tools.
+
+### Events and Callbacks
+
 Tool methods can emit live updates using `__event_emitter__` or prompt the user via `__event_call__`:
+
 ```python
 async def example_tool(__event_emitter__, __event_call__):
     await __event_emitter__({"type": "status", "data": {"description": "Loading", "done": False}})
@@ -171,12 +174,19 @@ async def example_tool(__event_emitter__, __event_call__):
     if ok:
         await __event_emitter__({"type": "replace", "data": {"content": "step complete"}})
 ```
+
 `__event_call__` can also run JavaScript (`execute`) or request text (`input`). The emitter supports `message`, `replace`, `status`, `citation` and `notification` event types.
 
+## Further Reading
+
+- [TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md)
+- [PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md)
+
 ## TODO
+
 ### Research Topics
 - Document how tools are stored in the database via `ToolsTable`.
-- Add a security best practices section for third-party tools.
+- Investigate how valves are cached and refreshed.
 
 ### Example Ideas
 - Provide a full remote tool server example.
