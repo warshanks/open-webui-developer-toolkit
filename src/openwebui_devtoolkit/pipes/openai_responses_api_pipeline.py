@@ -223,16 +223,27 @@ class Pipe:
         __files__: list[dict[str, Any]],
         __metadata__: dict[str, Any],
         __tools__: dict[str, Any],
-    ) -> AsyncIterator[str | dict[str, Any]]:
-        """Stream responses from OpenAI and handle tool calls."""
+    ) -> None:
+        """Stream responses from OpenAI and handle tool calls.
+
+        Instead of yielding chunks, this version emits them via
+        ``__event_emitter__`` with the ``chat:completion`` event type.
+        """
         start_ns = time.perf_counter_ns()
         self._debug_logs.clear()
         self._apply_user_overrides(__user__.get("valves"))
 
         if __tools__ and __metadata__.get("function_calling") != "native":
-            yield (
-                "🛑 Tools detected, but native function calling is disabled.\n\n"
-                "To enable tools in this chat, switch Function Calling to 'Native'."
+            await __event_emitter__(
+                {
+                    "type": "chat:completion",
+                    "data": {
+                        "content": (
+                            "🛑 Tools detected, but native function calling is disabled.\n\n"
+                            "To enable tools in this chat, switch Function Calling to 'Native'."
+                        ),
+                    },
+                }
             )
             self.log.error("Tools present but native function calling disabled")
             return
@@ -274,6 +285,8 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
 
+        content = ""
+
         for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug("Loop iteration #%d", loop_count)
@@ -308,13 +321,22 @@ class Pipe:
                     if et == "response.reasoning_summary_part.added":
                         if not is_model_thinking:
                             is_model_thinking = True
-                            yield "<think>"
+                            content += "<think>"
+                            await __event_emitter__(
+                                {"type": "chat:completion", "data": {"content": content}}
+                            )
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        yield event.delta
+                        content += event.delta
+                        await __event_emitter__(
+                            {"type": "chat:completion", "data": {"content": content}}
+                        )
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        yield "\n\n---\n\n"
+                        content += "\n\n---\n\n"
+                        await __event_emitter__(
+                            {"type": "chat:completion", "data": {"content": content}}
+                        )
                         request_params["input"].append(
                             {
                                 "type": "reasoning",
@@ -328,10 +350,16 @@ class Pipe:
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            yield "</think>\n"
+                            content += "</think>\n"
+                            await __event_emitter__(
+                                {"type": "chat:completion", "data": {"content": content}}
+                            )
                         continue
                     if et == "response.output_text.delta":
-                        yield event.delta
+                        content += event.delta
+                        await __event_emitter__(
+                            {"type": "chat:completion", "data": {"content": content}}
+                        )
                         continue
                     if et == "response.output_text.done":
                         # TODO is this still needed now that I retain message context using previous_response_id?
@@ -400,11 +428,23 @@ class Pipe:
                         continue
                     if et == "response.completed" and event.response.usage:
                         self._update_usage(usage_total, event.response.usage, loop_count)
-                        yield {"usage": usage_total}
+                        await __event_emitter__(
+                            {
+                                "type": "chat:completion",
+                                "data": {"usage": usage_total},
+                            }
+                        )
                         continue
             except Exception as ex:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
-                yield f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}"
+                await __event_emitter__(
+                    {
+                        "type": "chat:completion",
+                        "data": {
+                            "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
+                        },
+                    }
+                )
                 break
 
             if pending_calls:
@@ -474,6 +514,13 @@ class Pipe:
             usage_total.get("input_tokens", 0),
             usage_total.get("output_tokens", 0),
             usage_total.get("total_tokens", 0),
+        )
+
+        await __event_emitter__(
+            {
+                "type": "chat:completion",
+                "data": {"done": True},
+            }
         )
 
         if last_response_id and not self.valves.STORE_RESPONSE:
