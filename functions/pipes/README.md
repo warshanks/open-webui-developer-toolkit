@@ -76,7 +76,7 @@ the module from `request.app.state.FUNCTIONS` and call the Pydantic models'
 ## Parameter injection
 
 `generate_function_chat_completion` inspects the `pipe` signature and only
-supplies the parameters it explicitly declares.  Internally the helper calls
+supplies the parameters it explicitly declares. Internally the helper calls
 `inspect.signature` inside `get_function_params` and builds a dictionary of
 arguments that exist in the function signature:
 
@@ -87,10 +87,20 @@ params = {"body": form_data} | {
 }
 ```
 
-Because of this opt-in behaviour you may freely upgrade Open WebUI without
-breaking old extensions—new context parameters are ignored unless you declare
-them in your function signature.  The available extras mirror the values added
-to `extra_params` inside `generate_function_chat_completion`【F:external/open-webui/backend/open_webui/functions.py†L204-L238】.
+The injection happens in three steps:
+
+1. `process_chat_payload` builds an `extra_params` dictionary from the request
+   metadata and user information.
+2. `generate_function_chat_completion` checks which of those keys appear in the
+   `pipe` signature.
+3. Only the matching values are passed to your function along with the request
+   `body`.
+
+This opt-in behaviour means old pipes remain compatible when new context values
+are introduced—they simply ignore extras they do not declare. Upgrading Open
+WebUI rarely breaks extensions because unrecognised parameters are silently
+discarded. The available extras mirror the values added to `extra_params`
+inside `generate_function_chat_completion`【F:external/open-webui/backend/open_webui/functions.py†L204-L238】.
 
 Any name not present in `sig.parameters` is silently discarded so a pipe can
 opt‑in to the context it needs without worrying about new parameters appearing
@@ -111,6 +121,19 @@ information before this step.  Common values include:
 |`__task__`, `__task_body__`| background task info |
 |`__id__`| sub‑pipe id when using manifolds |
 |`__request__`| the FastAPI `Request` object |
+
+### Example usage
+
+A pipe can request only the extras it cares about. The following snippet logs
+the latest user message using `__event_emitter__`:
+
+```python
+class Pipe:
+    async def pipe(self, body, __user__, __messages__, __event_emitter__):
+        text = __messages__[-1]["content"]
+        __event_emitter__("log", {"msg": f"{__user__['username']} said: {text}"})
+        return text
+```
 
 When the pipe defines a `UserValves` model the `__user__` dictionary gains a
 `valves` field populated from the database.  This lets you store per-user
