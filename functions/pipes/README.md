@@ -175,6 +175,32 @@ tool contexts are only set up when `chat_id`, `session_id` and `message_id` are
 present. See lines 200‑251 of `functions.py` for the full logic
 【F:external/open-webui/backend/open_webui/functions.py†L200-L251】.
 
+### Working with `__request__`
+
+The `__request__` argument exposes the underlying `fastapi.Request` instance.
+It arrives via the `extra_params` dictionary
+constructed in the middleware【F:external/open-webui/backend/open_webui/utils/middleware.py†L670-L679】
+and forwarded by `generate_function_chat_completion`【F:external/open-webui/backend/open_webui/functions.py†L232-L240】.
+The same pattern is used when calling action handlers inside
+`utils.chat`【F:external/open-webui/backend/open_webui/utils/chat.py†L322-L329】.
+
+Use it to read headers, query parameters or the client address.  It behaves like
+a normal FastAPI request object so all standard properties are available:
+
+```python
+class Pipe:
+    async def pipe(self, body: dict, __request__: Request) -> str:
+        ip = __request__.client.host
+        agent = __request__.headers.get("user-agent", "?")
+        debug = __request__.query_params.get("debug") == "1"
+        if debug:
+            __request__.app.logger.info("IP %s UA %s", ip, agent)
+        return f"Client {ip}"
+```
+
+The example logs additional details when a `?debug=1` query parameter is
+present and returns the caller's IP address.
+
 ### Streaming and return values
 
 When `stream=True` the middleware treats the output of `pipe()` as a server-sent event stream. `generate_function_chat_completion` handles several cases:
