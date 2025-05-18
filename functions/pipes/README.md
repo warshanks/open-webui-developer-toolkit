@@ -13,7 +13,12 @@ Pipes may call external APIs, emit additional chat messages and hold state betwe
 
 ## Loading custom pipes
 
-The loader at `backend/open_webui/utils/plugin.py` reads the file, rewrites short imports such as `from utils.chat` to `open_webui.utils.chat` and executes the content in a temporary module【F:external/PLUGIN_GUIDE.md†L18-L41】. A leading triple quoted *frontmatter* block declares metadata and optional dependencies:
+The loader at `backend/open_webui/utils/plugin.py` reads the file, rewrites
+short imports such as `from utils.chat` to `open_webui.utils.chat` and
+executes the content in a temporary module【F:external/PLUGIN_GUIDE.md†L18-L41】.
+The **frontmatter** block must be the first thing in the file – the parser only
+recognises it when the very first line contains `"""`. Use this header to store
+metadata and optional dependencies:
 
 ```python
 """
@@ -51,7 +56,11 @@ Valve values can be updated via the Functions API without re-uploading the code.
 
 ## Parameter injection
 
-`generate_function_chat_completion` inspects the `pipe` signature and only supplies the parameters it declares. Common values include:
+`generate_function_chat_completion` inspects the `pipe` signature and only
+supplies the parameters it explicitly declares. The helper uses
+`inspect.signature` inside `get_function_params` so unexpected names are simply
+ignored【F:external/open-webui/backend/open_webui/functions.py†L178-L198】.
+Common values include:
 
 - `__event_emitter__` / `__event_call__` – communicate with the browser
 - `__chat_id__`, `__session_id__`, `__message_id__` – identifiers for the conversation
@@ -65,7 +74,7 @@ Valve values can be updated via the Functions API without re-uploading the code.
 - `__id__` – sub-pipe id when using manifolds
 - `__request__` – the FastAPI `Request` object
 
-The snippet below from the upstream source shows how these extras are assembled【F:external/open-webui/backend/open_webui/functions.py†L222-L251】.
+`generate_function_chat_completion` assembles these extras using information from the request and user. Event callbacks and tool contexts are only set up when `chat_id`, `session_id` and `message_id` are present. See lines 200-251 of `functions.py` for the full logic【F:external/open-webui/backend/open_webui/functions.py†L200-L251】.
 
 ### Streaming and return values
 
