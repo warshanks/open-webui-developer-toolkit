@@ -21,9 +21,9 @@ jobs:
     - name: Copy upstream OpenWebUI
       run: |
         set -euo pipefail
-        rm -rf open-webui
-        git clone --depth 1 https://github.com/open-webui/open-webui.git open-webui
-        rm -rf open-webui/.git
+        rm -rf external/open-webui
+        git clone --depth 1 https://github.com/open-webui/open-webui.git external/open-webui
+        rm -rf external/open-webui/.git
 
     # 3 ▸ commit & push if anything changed
     - name: Commit & push branch
