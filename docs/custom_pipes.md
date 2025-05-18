@@ -29,6 +29,102 @@ other_field: example
 `plugin.py` installs these packages using `pip` and returns the metadata along
 with the pipe object. Other fields can be read inside the module if desired.
 
+
+### Loader internals
+
+The loader lives in `backend/open_webui/utils/plugin.py` and performs a few important steps:
+
+1. Retrieve the stored code and run `replace_imports` to convert short paths like `from utils.chat import ...` into absolute `open_webui` imports.
+2. Parse any frontmatter and call `install_frontmatter_requirements` so dependencies are installed before execution.
+3. Create a temporary file to populate `__file__` and execute the source inside a new module object.
+4. Return the first matching class exported by the file.
+
+The core of `load_function_module_by_id` is shown below:
+
+```python
+    def load_function_module_by_id(function_id, content=None):
+        if content is None:
+            function = Functions.get_function_by_id(function_id)
+            if not function:
+                raise Exception(f"Function not found: {function_id}")
+            content = function.content
+    
+            content = replace_imports(content)
+            Functions.update_function_by_id(function_id, {"content": content})
+        else:
+            frontmatter = extract_frontmatter(content)
+            install_frontmatter_requirements(frontmatter.get("requirements", ""))
+    
+        module_name = f"function_{function_id}"
+        module = types.ModuleType(module_name)
+        sys.modules[module_name] = module
+    
+        # Create a temporary file and use it to define `__file__` so
+        # that it works as expected from the module's perspective.
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        temp_file.close()
+        try:
+            with open(temp_file.name, "w", encoding="utf-8") as f:
+                f.write(content)
+            module.__dict__["__file__"] = temp_file.name
+    
+            # Execute the modified content in the created module's namespace
+            exec(content, module.__dict__)
+            frontmatter = extract_frontmatter(content)
+            log.info(f"Loaded module: {module.__name__}")
+    
+            # Create appropriate object based on available class type in the module
+            if hasattr(module, "Pipe"):
+                return module.Pipe(), "pipe", frontmatter
+            elif hasattr(module, "Filter"):
+                return module.Filter(), "filter", frontmatter
+            elif hasattr(module, "Action"):
+                return module.Action(), "action", frontmatter
+            else:
+                raise Exception("No Function class found in the module")
+        except Exception as e:
+            log.error(f"Error loading module: {function_id}: {e}")
+            # Cleanup by removing the module in case of error
+            del sys.modules[module_name]
+    
+            Functions.update_function_by_id(function_id, {"is_active": False})
+            raise e
+        finally:
+            os.unlink(temp_file.name)
+```
+
+
+On startup the helper `install_tool_and_function_dependencies` scans every stored extension and installs their requirements in bulk:
+
+```python
+    def install_tool_and_function_dependencies():
+        """
+        Install all dependencies for all admin tools and active functions.
+    
+        By first collecting all dependencies from the frontmatter of each tool and function,
+        and then installing them using pip. Duplicates or similar version specifications are
+        handled by pip as much as possible.
+        """
+        function_list = Functions.get_functions(active_only=True)
+        tool_list = Tools.get_tools()
+    
+        all_dependencies = ""
+        try:
+            for function in function_list:
+                frontmatter = extract_frontmatter(replace_imports(function.content))
+                if dependencies := frontmatter.get("requirements"):
+                    all_dependencies += f"{dependencies}, "
+            for tool in tool_list:
+                # Only install requirements for admin tools
+                if tool.user.role == "admin":
+                    frontmatter = extract_frontmatter(replace_imports(tool.content))
+                    if dependencies := frontmatter.get("requirements"):
+                        all_dependencies += f"{dependencies}, "
+    
+            install_frontmatter_requirements(all_dependencies.strip(", "))
+        except Exception as e:
+            log.error(f"Error installing requirements: {e}")
+```
 ## Execution flow
 
 `generate_function_chat_completion` retrieves the pipe and prepares extra parameters such as the current user, associated files and websocket callbacks. These values are only passed if the pipe declares matching arguments:
