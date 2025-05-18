@@ -8,6 +8,10 @@ types, inject system prompts and translate OpenAI style payloads to
 Ollama's format.  The goal is to accept flexible input from Open WebUI's HTTP
 API while keeping the model specific schemas consistent.
 
+The routers invoke these utilities when shaping a chat request. Model defaults
+are merged into the payload and the dictionary is gradually adapted to match the
+target backend.
+
 All helpers **mutate** the dictionary passed to them and return the same
 object.  Callers typically construct `form_data` from the HTTP request and then
 apply these functions in sequence.
@@ -126,4 +130,28 @@ accepts them.
 `convert_messages_openai_to_ollama` shortens data URLs embedded in image
 messages. Only the raw base64 string is kept which greatly reduces payload size
 when posting directly to an Ollama server.
+
+## Integration with the chat flow
+
+These helpers are called by the request routers before forwarding a chat
+completion to the upstream API. When `routers/openai.py` prepares a request the
+model parameters stored in the database are merged into the payload:
+
+```python
+params = model_info.params.model_dump()
+payload = apply_model_params_to_body_openai(params, payload)
+payload = apply_model_system_prompt_to_body(params, payload, metadata, user)
+```
+
+If the selected model is an Ollama model `utils.chat.generate_chat_completion`
+converts the request right before dispatching it:
+
+```python
+if model.get("owned_by") == "ollama":
+    form_data = convert_payload_openai_to_ollama(form_data)
+    response = await generate_ollama_chat_completion(...)
+```
+
+This step‑wise normalisation allows the incoming OpenAI style schema to be
+gradually shaped into the specific format required by each backend.
 
