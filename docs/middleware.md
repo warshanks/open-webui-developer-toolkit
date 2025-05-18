@@ -162,3 +162,39 @@ When streaming, the original generator is wrapped so extra events can be injecte
 ```
 
 The wrapper yields any queued events before forwarding chunks from the language model.  Each payload is also passed through configured outlet filters so extensions can modify the stream.
+
+## Deep dive: `chat_completion_files_handler`
+`chat_completion_files_handler` collects retrieval context from uploaded files or search results. It is called after any tool or search handlers and augments the chat payload with snippets found in those files.
+
+Steps performed:
+1. Look for a `files` list in `body['metadata']`. If absent the function simply returns.
+2. Ask the model to generate RAG queries via `generate_queries`. The JSON response is parsed, falling back to the raw text if needed.
+3. If no queries are produced, the latest user message is used instead.
+4. To avoid blocking the event loop, `get_sources_from_files` is executed in a `ThreadPoolExecutor`. This helper performs vector search and optional reranking to produce relevant snippets.
+5. The gathered `sources` are returned to be injected later by `process_chat_payload`.
+
+The offload to a worker thread is shown below:
+
+```python
+loop = asyncio.get_running_loop()
+with ThreadPoolExecutor() as executor:
+    sources = await loop.run_in_executor(
+        executor,
+        lambda: get_sources_from_files(
+            request=request,
+            files=files,
+            queries=queries,
+            embedding_function=lambda q, prefix: request.app.state.EMBEDDING_FUNCTION(
+                q, prefix=prefix, user=user
+            ),
+            k=request.app.state.config.TOP_K,
+            reranking_function=request.app.state.rf,
+            k_reranker=request.app.state.config.TOP_K_RERANKER,
+            r=request.app.state.config.RELEVANCE_THRESHOLD,
+            hybrid_search=request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
+            full_context=request.app.state.config.RAG_FULL_CONTEXT,
+        ),
+    )
+```
+
+By delegating the retrieval work to a thread, the main FastAPI server remains responsive while still making use of the synchronous `get_sources_from_files` implementation.
