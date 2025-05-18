@@ -38,3 +38,9 @@ nox -s lint tests
 `nox` uses the current Python environment, adds `src` to `PYTHONPATH` and
 executes `ruff` followed by `pytest`. Fixtures in `tests/conftest.py` stub out
 `open_webui` so tests stay fast and isolated.
+
+## Inspecting Embedded External Source Code
+When detailed understanding, debugging, or reverse-engineering of the external OpenWebUI source code is required, directly inspect the embedded source code located at:
+external/open-webui/
+Refer to [External Repositories Guide](external/EXTERNAL_REPOS_GUIDE.md) for more details about this embedded repository.
+This resource provides crucial context for how external components function and interact with our custom extensions (functions and tools).
