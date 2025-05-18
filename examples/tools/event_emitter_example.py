@@ -1,7 +1,7 @@
 """
 title: Event Emitter Example
 author: Open-WebUI Docs Team
-version: 1.4
+version: 1.5
 license: MIT
 description: |
   Demonstrates how tools can drive the WebUI in real time.
@@ -22,10 +22,15 @@ description: |
       - ``notification`` – toast (``info``/``success``/``warning``/``error``).
       - ``chat:completion`` – stream model tokens; also emits voice events
         (``chat:start`` → ``chat`` → ``chat:finish``).
+      - ``execute`` – run JavaScript (non-blocking) without waiting
+        for the result.
 
   • ``__event_call__`` – Opens a blocking modal. ``type`` values:
-      ``confirmation`` or ``input`` (returns the user response) and ``execute``
-      to run JavaScript in the browser.
+      ``confirmation`` or ``input`` (returns the user response)
+      and ``execute`` (returns the JS result).
+
+  This sample inserts a floating banner via ``execute`` and updates it
+  as work progresses. The banner is removed once processing completes.
 """
 
 from __future__ import annotations
@@ -73,6 +78,26 @@ class Tools:
         await emit({"type": "message", "data": {"content": "⏳ *Demo starting…*"}})
         # HTML is allowed inside markdown messages
         await emit({"type": "message", "data": {"content": "<b>HTML demo:</b> <em>Hello WebUI</em>"}})
+
+        # Create a floating banner that will show live progress
+        if __event_call__:
+            await __event_call__(
+                {
+                    "type": "execute",
+                    "data": {
+                        "code": """
+if (!document.getElementById('demo-banner')) {
+  const div = document.createElement('div');
+  div.id = 'demo-banner';
+  div.style.cssText = 'position:fixed;top:10px;right:10px;padding:8px;background:#ffc;border:1px solid #444;z-index:1000;';
+  div.textContent = 'Starting...';
+  document.body.appendChild(div);
+}
+return 'banner ready';
+"""
+                    },
+                }
+            )
         await emit(
             {
                 "type": "status",
@@ -88,6 +113,15 @@ class Tools:
                     "data": {"description": f"…unit {idx}/{total}", "done": False},
                 }
             )
+            if __event_call__:
+                await __event_call__(
+                    {
+                        "type": "execute",
+                        "data": {
+                            "code": f"document.getElementById('demo-banner').textContent = 'Unit {idx}/{total}';"
+                        },
+                    }
+                )
             # Stream delta text to the current bubble
             await emit({"type": "chat:message:delta", "data": {"content": f" {idx}"}})
 
@@ -160,20 +194,13 @@ class Tools:
                     }
                 )
 
-                # Inject temporary HTML into the page
+
+                # Update banner via JavaScript
                 await __event_call__(
                     {
                         "type": "execute",
                         "data": {
-                            "code": """
-const div = document.createElement('div');
-div.id = 'demo-banner';
-div.style.cssText = 'position:fixed;top:10px;right:10px;padding:8px;background:#ffc;border:1px solid #444;z-index:1000;';
-div.textContent = 'Hello from injected HTML!';
-document.body.appendChild(div);
-setTimeout(() => div.remove(), 3000);
-return 'banner added';
-"""
+                            "code": f"document.getElementById('demo-banner').textContent = 'Halfway there ({idx}/{total})';"
                         },
                     }
                 )
@@ -243,6 +270,16 @@ return 'banner added';
                 "data": {"type": "success", "content": "Demo finished"},
             }
         )
+
+        if __event_call__:
+            await __event_call__(
+                {
+                    "type": "execute",
+                    "data": {
+                        "code": "document.getElementById('demo-banner')?.remove();"
+                    },
+                }
+            )
 
         final_msg = f"🎉 Completed {total} units successfully."
         await emit({"type": "replace", "data": {"content": final_msg}})
