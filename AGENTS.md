@@ -14,6 +14,7 @@ instance.
 | **`src/openwebui_devtoolkit/filters/`** | single-file *filters* | add/fix filter files |
 | **`src/openwebui_devtoolkit/tools/`** | single-file *tools* | add/fix tool files |
 | **`scripts/publish_to_webui.py`** | uploader CLI (don’t rename) | edit if API changes |
+| **`docs/`** | notes on upstream middleware & internals | add new docs |
 
 *Codex tip:* grep for the **exact filename** you need, e.g. `grep -R openai_responses_api_pipeline.py`.
 

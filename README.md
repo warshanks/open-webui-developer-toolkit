@@ -25,3 +25,8 @@ Additional files demonstrate advanced features discovered in the
 - `tools/docstring_tools.py` builds tool specs from function docstrings.
 - `tools/universal_example.py` demonstrates valves, event emitters and
   confirmations in one tool.
+
+## Documentation
+
+Detailed notes about upstream Open WebUI internals live under `docs/`.
+See `docs/middleware.md` for an overview of the core middleware logic.
