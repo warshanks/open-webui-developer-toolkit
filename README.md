@@ -9,7 +9,9 @@ nox -s lint tests
 ```
 
 Installing the optional `dev` extras installs the Open WebUI package from the
-`external/open-webui` submodule so pipelines can import `open_webui` directly.
+`open-webui` directory so pipelines can import `open_webui` directly. This
+folder is a shallow clone of the upstream project (its `.git` directory is
+removed) and a scheduled workflow keeps it synced with the official repository.
 
 `nox` reuses the current Python environment and sets up `PYTHONPATH` so tests run
 quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
