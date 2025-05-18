@@ -30,3 +30,4 @@ Additional files demonstrate advanced features discovered in the
 
 Detailed notes about upstream Open WebUI internals live under `docs/`.
 See `docs/middleware.md` for an overview of the core middleware logic.
+Additional placeholders are collected in `docs/utils/` and `docs/custom_pipes.md`.
