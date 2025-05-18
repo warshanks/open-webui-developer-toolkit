@@ -91,7 +91,7 @@ class Tools:
 
     async def example_tool(
         self,
-        units: int | None = None,
+        units: int = None,
         __event_emitter__: Emitter | None = None,
         __event_call__: Caller | None = None,
         __user__: dict | None = None,
