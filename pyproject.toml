@@ -19,7 +19,7 @@ dev = [
   "pytest-cov",
   "pre-commit",
   "nox",
-  "open-webui @ file://./external/open-webui"
+  "open-webui @ ./external/open-webui"
 ]
 
 [build-system]
