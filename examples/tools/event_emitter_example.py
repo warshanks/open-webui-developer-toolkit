@@ -1,34 +1,24 @@
 """
 title: Event Emitter Example
 author: Open-WebUI Docs Team
-version: 4.1
+version: 4.3
 license: MIT
 description: |
-  Step‑by‑step demonstration of Open WebUI’s event system.
-  Tools emit dictionaries with a ``type`` field via ``__event_emitter__``
-  while ``__event_call__`` waits for user interaction.
+  This tool teaches how to communicate from Python to the Open WebUI chat interface using two built-in functions:
 
-  Emitted events update the current chat message after it is created.
-  Tools may also ``yield`` strings or dicts which stream directly to the
-  response area like normal model output.
+    1. __event_emitter__: sends updates directly to the chat UI (doesn't pause execution).
+        - "status": display progress messages (e.g., "loading...").
+        - "message": add plain text to the existing chat bubble.
+        - "replace": completely replace the current chat message.
+        - "citation": attach collapsible "source" information to messages.
+        - "notification": show brief popup notifications on screen.
 
-  Common event ``type`` values:
+    2. __event_call__: shows pop-up dialogs that wait for user input (pauses execution until the user responds).
+        - "confirmation": simple Yes/No dialog.
+        - "input": prompt the user to type something.
+        - "execute": run JavaScript in the user's browser and receive the result back into Python.
 
-    - ``status``       – show a progress indicator
-    - ``message``      – append raw text to the message
-    - ``chat:message`` – replace the message body and re-render Markdown
-      (``replace`` is an alias)
-    - ``citation``     – collapsible citation blocks
-    - ``notification`` – toast popup
-    - ``confirmation`` – yes/no dialog
-    - ``input``        – text entry dialog
-    - ``execute``      – run JavaScript in the browser and return the result
-
-  The ``playground`` method walks through these events in order, pausing
-  after each step with a confirmation dialog so you can watch the UI update.
-
-  TODO: investigate whether raw HTML passed via ``chat:message`` is sanitized
-  before rendering.
+    Enable the tool and ask the LLM to run the 'example_tool' to test.
 """
 
 from __future__ import annotations
@@ -52,7 +42,6 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-    # Example tool. Ask the LLM to run the 'example_tool' to test.
     async def example_tool(
         self,
         units: int = None,
@@ -72,7 +61,10 @@ class Tools:
             """Show a yes/no dialog and return ``True`` if confirmed."""
             if __event_call__:
                 return await __event_call__(
-                    {"type": "confirmation", "data": {"title": "Event Demo", "message": message}}
+                    {
+                        "type": "confirmation",
+                        "data": {"title": "Event Demo", "message": message},
+                    }
                 )
             return True
 
@@ -85,7 +77,12 @@ class Tools:
         total = units if isinstance(units, int) and units > 0 else self.valves.units
 
         # Intro notification and chat line
-        await emit({"type": "notification", "data": {"type": "info", "content": "Starting demo"}})
+        await emit(
+            {
+                "type": "notification",
+                "data": {"type": "info", "content": "Starting demo"},
+            }
+        )
         await emit({"type": "message", "data": {"content": "🧪 Beginning event demo."}})
 
         # ----- temporary banner -----
@@ -125,15 +122,29 @@ if (!document.getElementById('demo-banner')) {
             return "Demo cancelled."
 
         # ----- status events -----
-        await emit({"type": "status", "data": {"description": "Progress", "done": False}})
+        await emit(
+            {"type": "status", "data": {"description": "Progress", "done": False}}
+        )
         for idx in range(1, total + 1):
             await asyncio.sleep(self.valves.delay)
-            await emit({"type": "status", "data": {"description": f"Step {idx}/{total}", "done": False}})
+            await emit(
+                {
+                    "type": "status",
+                    "data": {"description": f"Step {idx}/{total}", "done": False},
+                }
+            )
             await run_js(
                 f"const el=document.getElementById('demo-banner-text'); if(el) el.textContent='Step {idx}/{total}';"
             )
         await emit(
-            {"type": "status", "data": {"description": "Progress complete", "done": True, "style": "success"}}
+            {
+                "type": "status",
+                "data": {
+                    "description": "Progress complete",
+                    "done": True,
+                    "style": "success",
+                },
+            }
         )
         await run_js(
             "const el=document.getElementById('demo-banner-text');"
@@ -146,16 +157,19 @@ if (!document.getElementById('demo-banner')) {
 
         note = ""
         if __event_call__:
-            note = await __event_call__(
-                {
-                    "type": "input",
-                    "data": {
-                        "title": "Optional note",
-                        "message": "Enter text to display in the chat",
-                        "placeholder": "my note",
-                    },
-                }
-            ) or ""
+            note = (
+                await __event_call__(
+                    {
+                        "type": "input",
+                        "data": {
+                            "title": "Optional note",
+                            "message": "Enter text to display in the chat",
+                            "placeholder": "my note",
+                        },
+                    }
+                )
+                or ""
+            )
 
         if note:
             await emit({"type": "message", "data": {"content": f"📝 {note}"}})
@@ -164,16 +178,10 @@ if (!document.getElementById('demo-banner')) {
             await run_js(banner_remove_js)
             return "Demo cancelled."
 
-        # ----- HTML / Markdown -----
-        html_demo = "<details><summary>Click to expand</summary><b>HTML inside details</b></details>"
-
-        # "message" events append raw text and are meant for streaming deltas.
-        # Use "chat:message" (or yield the string while generating) to re-render
-        # Markdown/HTML properly.
-        await emit({"type": "chat:message", "data": {"content": html_demo}})
-
         js_result = await run_js("return 2 + 2")
-        await emit({"type": "message", "data": {"content": f"🔢 JS result: {js_result}"}})
+        await emit(
+            {"type": "message", "data": {"content": f"🔢 JS result: {js_result}"}}
+        )
 
         if not await confirm("Show citation example?"):
             await run_js(banner_remove_js)
@@ -185,8 +193,13 @@ if (!document.getElementById('demo-banner')) {
                 "type": "citation",
                 "data": {
                     "document": ["This text came from a *citation*."],
-                    "metadata": [{"date_accessed": time.strftime("%Y-%m-%dT%H:%M:%SZ")}],
-                    "source": {"name": "Event Demo", "url": "https://github.com/open-webui/open-webui"},
+                    "metadata": [
+                        {"date_accessed": time.strftime("%Y-%m-%dT%H:%M:%SZ")}
+                    ],
+                    "source": {
+                        "name": "Event Demo",
+                        "url": "https://github.com/open-webui/open-webui",
+                    },
                 },
             }
         )
@@ -198,7 +211,12 @@ if (!document.getElementById('demo-banner')) {
         final_msg = "🎉 Event demo finished successfully."
         await emit({"type": "replace", "data": {"content": final_msg}})
 
-        await emit({"type": "notification", "data": {"type": "success", "content": "Demo finished"}})
+        await emit(
+            {
+                "type": "notification",
+                "data": {"type": "success", "content": "Demo finished"},
+            }
+        )
         await run_js(banner_remove_js)
 
         return final_msg
