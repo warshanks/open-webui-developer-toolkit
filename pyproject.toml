@@ -38,7 +38,6 @@ src = ["src", "tests", "scripts"]
 [tool.setuptools.packages.find]
 exclude = [
   "external*",
-  "open-webui*",
   "tests*"
 ]
 
