@@ -23,7 +23,7 @@ running WebUI instance.
 ---
 
 ## Upstream reference (read-only)
-If present, the `open-webui/` folder mirrors the upstream project. Use it for
+If present, the `external/open-webui/` folder mirrors the upstream project. Use it for
 reference only—do **not** edit or commit changes inside that path.
 
 ---
