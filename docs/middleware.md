@@ -90,6 +90,61 @@ This multi stage processing allows Open WebUI to offer web search, code executio
 
 Longer operations such as database updates, title generation or tag extraction are offloaded using `create_task`. This keeps the HTTP response snappy while ensuring chat history and metadata are stored reliably.
 
+## Deep dive: `process_chat_payload`
+`process_chat_payload` prepares the incoming chat payload for the model.  It
+collects knowledge sources, runs inlet filters and handles features like web
+search and tool execution before any model call is made.
+
+At the start of the function WebUI builds an `extra_params` dictionary that is
+passed to every helper:
+
+```python
+event_emitter = get_event_emitter(metadata)
+event_call = get_event_call(metadata)
+
+extra_params = {
+    "__event_emitter__": event_emitter,
+    "__event_call__": event_call,
+    "__user__": {"id": user.id, "email": user.email, "name": user.name, "role": user.role},
+    "__metadata__": metadata,
+    "__request__": request,
+    "__model__": model,
+}
+```
+
+This structure is threaded through the pipeline so other functions can emit
+events or access user and request details.
+
+When `features` are present the handler triggers optional helpers.  For example
+web search results are appended to the file list so retrieval can use them later:
+
+```python
+features = form_data.pop("features", None)
+if features:
+    if "web_search" in features and features["web_search"]:
+        form_data = await chat_web_search_handler(request, form_data, extra_params, user)
+    if "image_generation" in features and features["image_generation"]:
+        form_data = await chat_image_generation_handler(request, form_data, extra_params, user)
+```
+
+Finally the function constructs retrieval context from any collected sources and
+inserts it as a system message using `rag_template`:
+
+```python
+if len(sources) > 0:
+    context_string = ""
+    for source in sources:
+        for doc_context, _ in zip(source["document"], source["metadata"]):
+            context_string += f"{doc_context}\n"
+    form_data["messages"] = add_or_update_system_message(
+        rag_template(request.app.state.config.RAG_TEMPLATE, context_string, get_last_user_message(form_data["messages"])),
+        form_data["messages"],
+    )
+```
+
+The returned tuple `(form_data, metadata, events)` feeds directly into
+`generate_chat_completion`.
+
 ## Deep dive: `process_chat_response`
 `process_chat_response` receives the raw model output and turns it into events that the browser understands.  The function distinguishes between streaming and non‑streaming replies, spawns background tasks for post‑processing and wraps streaming generators so every chunk can be filtered and emitted to the websocket.
 
