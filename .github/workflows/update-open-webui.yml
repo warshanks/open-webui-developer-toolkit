@@ -1,26 +1,64 @@
 name: Update Open WebUI
 
 on:
-  schedule:
-    - cron: '0 7 * * 1'
-  workflow_dispatch:
+  # every Monday at 07:00 UTC (≈ midnight PT)
+  schedule: [{ cron: '0 7 * * 1' }]
+  workflow_dispatch:   # allow manual runs
+
+permissions:          # <-- job can push and open PRs
+  contents: write
+  pull-requests: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Clone upstream repository
-        run: |
-          rm -rf open-webui
-          git clone --depth 1 https://github.com/open-webui/open-webui.git open-webui
-          rm -rf open-webui/.git
-      - name: Create pull request
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: 'chore: update open-webui'
-          title: 'chore: update open-webui'
-          body: Automated update of the open-webui folder.
-          branch: update-open-webui
+    # 1. Get your repo
+    - name: Check out code
+      uses: actions/checkout@v4   # official, pinned action
+
+    # 2. Pull a fresh snapshot of OpenWebUI into a subfolder
+    - name: Copy upstream OpenWebUI
+      run: |
+        rm -rf open-webui
+        git clone --depth 1 https://github.com/open-webui/open-webui.git open-webui
+        rm -rf open-webui/.git   # keep only the files
+
+    # 3. Commit & push to a dedicated branch (if anything changed)
+    - name: Commit and push branch
+      run: |
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        # Create or reset the branch locally
+        git checkout -B update-open-webui
+
+        # Nothing to do? Exit early to save CI minutes
+        if git diff --quiet; then
+          echo "No changes – skipping commit/PR."
+          exit 0
+        fi
+
+        git add open-webui
+        git commit -m "chore: update OpenWebUI snapshot"
+        git push -u origin update-open-webui
+
+    # 4. Open or update the pull request with GitHub CLI
+    - name: Create or update PR
+      env:
+        GH_TOKEN: ${{ github.token }}   # give gh cli the job token
+      run: |
+        # GitHub CLI comes pre-installed on all GitHub-hosted runners
+        #  [oai_citation:1‡GitHub Docs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/using-github-cli-in-workflows?utm_source=chatgpt.com)
+        if gh pr view update-open-webui >/dev/null 2>&1; then
+          gh pr edit update-open-webui \
+            --title "chore: update OpenWebUI snapshot" \
+            --body  "Automated weekly sync of the OpenWebUI code."
+        else
+          gh pr create \
+            --title "chore: update OpenWebUI snapshot" \
+            --body  "Automated weekly sync of the OpenWebUI code." \
+            --head  update-open-webui \
+            --base  main
+        fi
