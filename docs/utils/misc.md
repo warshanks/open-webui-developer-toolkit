@@ -26,6 +26,18 @@ Key routines:
 
 `get_messages_content(messages)` converts a list into a single string labelled by role.
 
+Example of reconstructing a chain:
+
+```python
+history = {
+    "a": {"id": "a", "parentId": None, "role": "user", "content": "hi"},
+    "b": {"id": "b", "parentId": "a", "role": "assistant", "content": "hello"},
+    "c": {"id": "c", "parentId": "b", "role": "user", "content": "bye"},
+}
+get_message_list(history, "c")
+# -> [history["a"], history["b"], history["c"]]
+```
+
 ## OpenAI response templates
 
 `openai_chat_message_template` produces the base JSON structure returned by the OpenAI API. `openai_chat_chunk_message_template` and `openai_chat_completion_message_template` build upon it for streaming and final responses respectively.
@@ -102,6 +114,46 @@ The resulting structure is:
     },
 }
 ```
+
+## Deep dive: `parse_ollama_modelfile`
+
+Internally the parser walks through the text and converts each directive into a
+dictionary entry. At the top of the function a mapping of recognised parameters
+to their Python types is declared:
+
+```python
+355  def parse_ollama_modelfile(model_text):
+356      parameters_meta = {
+357          "mirostat": int,
+358          "mirostat_eta": float,
+359          "mirostat_tau": float,
+...
+383          "num_thread": int,
+      }
+```
+
+Every `PARAMETER` line is matched against this list. When a value is found it is
+cast using the type above, falling back to the raw string on failure. The
+routine also collects `SYSTEM` and `MESSAGE` directives so default chat context
+can be embedded directly in the file.
+
+Example usage:
+
+```python
+text = """
+FROM llama3
+PARAMETER seed 42
+PARAMETER num_thread 8
+SYSTEM """welcome"""
+MESSAGE user hi
+"""
+
+info = parse_ollama_modelfile(text)
+assert info["params"]["num_thread"] == 8
+```
+
+The dictionary returned by the function is later merged with model metadata in
+`models.py` so custom Ollama definitions behave like native models.
 
 ### Other helpers
 
