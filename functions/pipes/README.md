@@ -16,6 +16,9 @@ Pipes may call external APIs, emit additional chat messages and hold state betwe
 The loader at `backend/open_webui/utils/plugin.py` reads the file, rewrites
 short imports such as `from utils.chat` to `open_webui.utils.chat` and
 executes the content in a temporary module【F:external/PLUGIN_GUIDE.md†L18-L41】.
+Before execution it writes the source to a temporary file so `__file__` points to
+an actual path, then removes the file again once the object is loaded
+【F:external/PLUGIN_GUIDE.md†L40-L57】.
 The **frontmatter** block must be the first thing in the file – the parser only
 recognises it when the very first line contains `"""`. Use this header to store
 metadata and optional dependencies:
@@ -53,6 +56,22 @@ class Pipe:
 ```
 
 Valve values can be updated via the Functions API without re-uploading the code.
+
+### Managing valves via the API
+
+The backend exposes helper endpoints so administrators or users can adjust these
+values without editing the source file.  The relevant routes live in
+`routers/functions.py` and include:
+
+- `GET  /functions/id/{id}/valves` – fetch the current global values.
+- `POST /functions/id/{id}/valves/update` – update the global defaults.
+- `GET  /functions/id/{id}/valves/user` – return the caller's user valves.
+- `POST /functions/id/{id}/valves/user/update` – persist per-user overrides.
+
+Specs for the `Valves` and `UserValves` models can be retrieved via the matching
+`/valves/spec` and `/valves/user/spec` endpoints.  Internally these routes load
+the module from `request.app.state.FUNCTIONS` and call the Pydantic models'
+`schema()` method【F:external/open-webui/backend/open_webui/routers/functions.py†L258-L304】【F:external/open-webui/backend/open_webui/routers/functions.py†L330-L379】.
 
 ## Parameter injection
 
