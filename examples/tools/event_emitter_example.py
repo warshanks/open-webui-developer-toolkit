@@ -1,34 +1,31 @@
 """
 title: Event Emitter Example
 author: Open-WebUI Docs Team
-version: 1.3
+version: 1.4
 license: MIT
 description: |
-  This tool demonstrates how to use Open WebUI's event system. Tool
-  functions receive two injected parameters at runtime:
+  Demonstrates how tools can drive the WebUI in real time.
+  Functions receive two special parameters:
 
-  • ``__event_emitter__`` – Sends non‑blocking updates over the
-    ``chat-events`` websocket. ``Chat.svelte`` maps ``type`` values to UI actions:
-      - ``status`` – progress indicator updates.
-      - ``message`` or ``chat:message:delta`` – append text to the current
-        message bubble.
-      - ``chat:message`` or ``replace`` – replace the bubble content.
-      - ``files`` or ``chat:message:files`` – attach file metadata.
-      - ``citation`` or ``source`` – add collapsible source blocks.
-        Use ``data.type == 'code_execution'`` to show code interpreter results.
+  • ``__event_emitter__`` – Sends non-blocking UI events over the
+    ``chat-events`` websocket. ``Chat.svelte`` handles the following ``type``
+    values:
+      - ``status`` – update the progress bar.
+      - ``message`` / ``chat:message:delta`` – append text to the current
+        bubble.
+      - ``chat:message`` / ``replace`` – replace the message contents.
+      - ``files`` / ``chat:message:files`` – attach file metadata.
+      - ``citation`` / ``source`` – add collapsible source blocks (use
+        ``data.type == 'code_execution'`` for interpreter results).
       - ``chat:title`` – rename the chat.
       - ``chat:tags`` – refresh sidebar tags.
-      - ``notification`` – show a toast (``info``, ``success``, ``warning`` or
-        ``error``).
-      - ``chat:completion`` – stream model-generated tokens (advanced).
+      - ``notification`` – toast (``info``/``success``/``warning``/``error``).
+      - ``chat:completion`` – stream model tokens; also emits voice events
+        (``chat:start`` → ``chat`` → ``chat:finish``).
 
-  • ``__event_call__`` – Opens a modal and waits for user input. Supported
-    ``type`` values are ``confirmation`` and ``input`` (both return the
-    user's response) and ``execute`` to run client-side JavaScript.
-
-  ``Chat.svelte`` also exposes an ``EventTarget`` for voice features. It
-  dispatches ``chat:start``, ``chat`` and ``chat:finish`` events while streaming
-  so other components can play text-to-speech audio in real time.
+  • ``__event_call__`` – Opens a blocking modal. ``type`` values:
+      ``confirmation`` or ``input`` (returns the user response) and ``execute``
+      to run JavaScript in the browser.
 """
 
 from __future__ import annotations
@@ -74,6 +71,8 @@ class Tools:
             }
         )
         await emit({"type": "message", "data": {"content": "⏳ *Demo starting…*"}})
+        # HTML is allowed inside markdown messages
+        await emit({"type": "message", "data": {"content": "<b>HTML demo:</b> <em>Hello WebUI</em>"}})
         await emit(
             {
                 "type": "status",
@@ -89,6 +88,8 @@ class Tools:
                     "data": {"description": f"…unit {idx}/{total}", "done": False},
                 }
             )
+            # Stream delta text to the current bubble
+            await emit({"type": "chat:message:delta", "data": {"content": f" {idx}"}})
 
             # Mid-way:  input   →   confirmation
             if idx == total // 2 and __event_call__:
@@ -158,6 +159,41 @@ class Tools:
                         "data": {"content": f"🔢 JS returned: {result}"},
                     }
                 )
+
+                # Inject temporary HTML into the page
+                await __event_call__(
+                    {
+                        "type": "execute",
+                        "data": {
+                            "code": """
+const div = document.createElement('div');
+div.id = 'demo-banner';
+div.style.cssText = 'position:fixed;top:10px;right:10px;padding:8px;background:#ffc;border:1px solid #444;z-index:1000;';
+div.textContent = 'Hello from injected HTML!';
+document.body.appendChild(div);
+setTimeout(() => div.remove(), 3000);
+return 'banner added';
+"""
+                        },
+                    }
+                )
+
+        # Emit tokens one by one using chat:completion
+        stream_text = "Streaming via chat:completion"
+        for char in stream_text:
+            await asyncio.sleep(0.05)
+            await emit(
+                {
+                    "type": "chat:completion",
+                    "data": {"choices": [{"delta": {"content": char}}]},
+                }
+            )
+        await emit(
+            {
+                "type": "chat:completion",
+                "data": {"done": True, "choices": [{"message": {"content": stream_text}}]},
+            }
+        )
 
         # citation + finished bar + in-place bubble edit
         await emit(
