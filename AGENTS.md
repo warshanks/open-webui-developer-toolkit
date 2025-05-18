@@ -21,10 +21,9 @@ instance.
 ---
 
 ## Upstream reference (read-only)
-Open WebUI source is available in the `open-webui/` folder. A scheduled
-workflow refreshes this directory from the upstream repository. **Codex:**
-use it for reference only—do **not** edit or commit changes inside that
-path.
+Open WebUI source is included as a shallow submodule in `external/open-webui/`.
+**Codex:** use it for reference only—do **not** edit or commit changes
+inside that path.
 
 ---
 
