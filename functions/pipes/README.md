@@ -57,10 +57,22 @@ Valve values can be updated via the Functions API without re-uploading the code.
 ## Parameter injection
 
 `generate_function_chat_completion` inspects the `pipe` signature and only
-supplies the parameters it explicitly declares. The helper uses
-`inspect.signature` inside `get_function_params` so unexpected names are simply
-ignored【F:external/open-webui/backend/open_webui/functions.py†L178-L198】.
-Common values include:
+supplies the parameters it explicitly declares.  Internally the helper calls
+`inspect.signature` inside `get_function_params` and builds a dictionary of
+arguments that exist in the function signature:
+
+```python
+sig = inspect.signature(function_module.pipe)
+params = {"body": form_data} | {
+    k: v for k, v in extra_params.items() if k in sig.parameters
+}
+```
+
+Any name not present in `sig.parameters` is silently discarded so a pipe can
+opt‑in to the context it needs without worrying about new parameters appearing
+later【F:external/open-webui/backend/open_webui/functions.py†L178-L188】.  The
+`extra_params` dictionary is assembled from the request metadata and user
+information before this step.  Common values include:
 
 - `__event_emitter__` / `__event_call__` – communicate with the browser
 - `__chat_id__`, `__session_id__`, `__message_id__` – identifiers for the conversation
@@ -74,7 +86,19 @@ Common values include:
 - `__id__` – sub-pipe id when using manifolds
 - `__request__` – the FastAPI `Request` object
 
-`generate_function_chat_completion` assembles these extras using information from the request and user. Event callbacks and tool contexts are only set up when `chat_id`, `session_id` and `message_id` are present. See lines 200-251 of `functions.py` for the full logic【F:external/open-webui/backend/open_webui/functions.py†L200-L251】.
+When the pipe defines a `UserValves` model the `__user__` dictionary gains a
+`valves` field populated from the database.  This lets you store per-user
+configuration without changing the function signature.  Valve values are looked
+up via `Functions.get_user_valves_by_id_and_user_id` during parameter
+construction.
+
+`generate_function_chat_completion` assembles these extras using information
+from the request and user. The `process_chat_payload` middleware prepares the
+initial `extra_params` dictionary before the pipe runs so every extension sees
+the same context【F:external/MIDDLEWARE_GUIDE.md†L98-L111】. Event callbacks and
+tool contexts are only set up when `chat_id`, `session_id` and `message_id` are
+present. See lines 200‑251 of `functions.py` for the full logic
+【F:external/open-webui/backend/open_webui/functions.py†L200-L251】.
 
 ### Streaming and return values
 
