@@ -11,4 +11,5 @@ This folder tracks key helper modules found under `backend/open_webui/utils/` in
 - [models.py](models.md)
 - [middleware.py](middleware.md)
 - [auth.py](auth.md)
+- [redis.py](redis.md)
 - [oauth.md](oauth.md)
