@@ -9,3 +9,4 @@ This folder tracks key helper modules found under `backend/open_webui/utils/` in
 - [tools.py](tools.md)
 - [task.py](task.md)
 - [models.py](models.md)
+- [middleware.py](middleware.md)

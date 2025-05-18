@@ -54,7 +54,46 @@ Retrieves context from user uploaded files or search results.
 3. The function returns any extracted snippets which later become citation sources.
 
 ### `apply_params_to_form_data`
-Normalizes user supplied model parameters. It moves items from `form_data['params']` onto OpenAI/Ollama specific fields (`temperature`, `options`, etc.). `logit_bias` strings are converted to JSON when possible.
+Extracts optional parameters supplied by the client and merges them into the
+top‑level payload. The helper understands both OpenAI and Ollama style models.
+
+```python
+form_data = {
+    "model": "gpt-3.5-turbo",
+    "params": {"temperature": 0.5, "max_tokens": 100},
+}
+model = {"id": "gpt-3.5-turbo"}
+
+apply_params_to_form_data(form_data, model)
+print(form_data)
+# {
+#   "model": "gpt-3.5-turbo",
+#   "temperature": 0.5,
+#   "max_tokens": 100
+# }
+```
+
+For Ollama models the parameters are stored under `options` and a few keys
+(`format`, `keep_alive`) are mirrored at the root:
+
+```python
+form_data = {
+    "model": "llama2",
+    "params": {"temperature": 0.7, "format": "json"},
+}
+model = {"id": "llama2", "ollama": True}
+
+apply_params_to_form_data(form_data, model)
+print(form_data)
+# {
+#   "model": "llama2",
+#   "options": {"temperature": 0.7, "format": "json"},
+#   "format": "json"
+# }
+```
+
+Any `logit_bias` value is normalized through
+`convert_logit_bias_input_to_json` so callers may provide shorthand strings.
 
 ### `process_chat_payload`
 Orchestrates the full inbound flow.
