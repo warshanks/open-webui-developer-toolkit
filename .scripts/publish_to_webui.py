@@ -6,7 +6,7 @@ The script works with standard library modules only.  A minimal example:
 ```bash
 WEBUI_URL=https://localhost:8080 \
 WEBUI_KEY=sk_... \
-python scripts/publish_to_webui.py \
+python .scripts/publish_to_webui.py \
     functions/pipes/openai_responses_api_pipeline.py
 ```
 

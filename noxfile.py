@@ -4,7 +4,7 @@ nox.options.sessions = ["lint", "tests"]
 
 @nox.session(venv_backend="none")
 def lint(session):
-    session.run("ruff", "check", "src", "tests", "scripts")
+    session.run("ruff", "check", "functions", "tools", ".tests", ".scripts")
 
 @nox.session(venv_backend="none")
 def tests(session):

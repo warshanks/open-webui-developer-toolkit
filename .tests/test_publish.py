@@ -4,12 +4,21 @@ from urllib.error import HTTPError
 import pytest
 from unittest.mock import patch
 
-from scripts.publish_to_webui import (
-    _detect_type,
-    _extract_metadata,
-    _build_payload,
-    _post,
+from importlib.util import spec_from_file_location, module_from_spec
+import sys
+
+_spec = spec_from_file_location(
+    "publish_to_webui",
+    Path(__file__).resolve().parents[1] / ".scripts" / "publish_to_webui.py",
 )
+publish_mod = module_from_spec(_spec)
+sys.modules[_spec.name] = publish_mod
+_spec.loader.exec_module(publish_mod)
+
+_detect_type = publish_mod._detect_type
+_extract_metadata = publish_mod._extract_metadata
+_build_payload = publish_mod._build_payload
+_post = publish_mod._post
 
 
 def test_detect_type_from_path():
@@ -56,7 +65,7 @@ def test_post_success():
     def mock_urlopen(req, timeout=30):
         return DummyResp(201)
 
-    with patch("scripts.publish_to_webui.urlopen", mock_urlopen):
+    with patch.object(publish_mod, "urlopen", mock_urlopen):
         status = _post("http://x", "k", "/create", {"a": 1})
     assert status == 201
 
@@ -65,6 +74,6 @@ def test_post_http_error():
     def mock_urlopen(req, timeout=30):
         raise HTTPError(req.full_url, 400, "oops", hdrs=None, fp=None)
 
-    with patch("scripts.publish_to_webui.urlopen", mock_urlopen):
+    with patch.object(publish_mod, "urlopen", mock_urlopen):
         status = _post("http://x", "k", "/create", {"a": 1})
     assert status == 400
