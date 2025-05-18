@@ -101,3 +101,14 @@ for path, methods in openapi_spec.get("paths", {}).items():
 
 These lines continue by resolving request body schemas and appending the final
 tool object to the list returned by the function.
+
+### Configuration and caching
+
+Connections to tool servers are defined in the `TOOL_SERVER_CONNECTIONS`
+environment variable. `config.py` loads this JSON list at startup and stores it
+as a persistent setting【F:external/open-webui/backend/open_webui/config.py†L884-L897】.
+When the `/tools` endpoint is first called the router fetches each server's
+OpenAPI spec via `get_tool_servers_data` and caches the result in
+`app.state.TOOL_SERVERS`【F:external/open-webui/backend/open_webui/routers/tools.py†L38-L45】.
+The returned list of tools includes these remote operations by enumerating each
+server with an index before merging the specs with local tools【F:external/open-webui/backend/open_webui/routers/tools.py†L48-L71】.

@@ -90,6 +90,9 @@ class Pipe:
 ```
 
 `get_tools()` builds this mapping and handles valve hydration for tools. See `tools/README.md` for more details.
+Remote entries starting with `server:` are generated from OpenAPI specs and
+behave like local tools. They are configured through
+`TOOL_SERVER_CONNECTIONS` and cached in `app.state.TOOL_SERVERS`.
 
 ## Pipe lifecycle
 
