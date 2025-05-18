@@ -4,6 +4,9 @@ A **pipe** is a single Python file that exposes a `Pipe` class. Open WebUI loads
 these modules dynamically and executes the pipe when a user selects it as a chat
 model.
 
+Each chat request flows through any configured filters before hitting your pipe.
+The pipe generates the main response and can call tools for additional work.
+
 ```python
 # minimal pipe structure
 class Pipe:

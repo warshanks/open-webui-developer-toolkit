@@ -18,6 +18,10 @@ async def invoke(args: dict) -> str:
 Pipes register tools so they can be called using Open WebUI's native tool system.
 Place new tool modules in this folder.
 
+The backend keeps a registry mapping each tool's name to its specification and
+`invoke()` coroutine. When a pipe needs a tool it looks it up in this registry
+and awaits the `invoke()` function with the provided arguments.
+
 ## Events and callbacks
 
 Tools may send updates to the browser while running. Two helpers are injected

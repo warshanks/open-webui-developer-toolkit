@@ -29,9 +29,31 @@ Additional files demonstrate advanced features discovered in the
 - `tools/universal_example.py` demonstrates valves, event emitters and
   confirmations in one tool.
 
-## Documentation
+## Open WebUI Architecture
 
+Open WebUI is built on a **FastAPI** backend with a **React** front end. The
+backend exposes a chat *pipeline* where requests pass through **filters** and a
+final **pipe**. Filters can mutate the input and output while the pipe generates
+the main response and may invoke tools. The server emits events such as
+`message_created` or `tool_started` so the UI can update live. Extensions can
+hook into this event system to provide custom behaviour.
+
+Requests and responses are exchanged as JSON. A typical payload sent to a pipe
+looks like:
+
+```json
+{"chat_id": "123", "message": "hello"}
+```
+
+The pipe returns a JSON object such as:
+
+```json
+{"message": "hi there"}
+```
+
+Additional fields may appear depending on the tool and event systems.
+
+## Documentation
 Detailed notes about upstream Open WebUI internals live under `external/`.
 See `external/MIDDLEWARE_GUIDE.md` for an overview of the core middleware logic.
-Additional placeholders are collected in the other `*_GUIDE.md` files and the
-expanded notes in `functions/pipes/README.md`.
+The other `*_GUIDE.md` files summarise helper modules from the upstream source.
