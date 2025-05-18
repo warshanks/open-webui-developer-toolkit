@@ -1,32 +1,34 @@
 """
 title: Event Emitter Example
 author: Open-WebUI Docs Team
-version: 4.0
+version: 4.1
 license: MIT
 description: |
-  Guided tour of the front‑end event system. Tools emit dictionaries via
-  ``__event_emitter__`` while ``__event_call__`` waits for user input.
+  Step‑by‑step demonstration of Open WebUI’s event system.
+  Tools emit dictionaries with a ``type`` field via ``__event_emitter__``
+  while ``__event_call__`` waits for user interaction.
 
-  ``__event_emitter__`` sends one-way events over WebSockets.  ``__event_call__``
-  performs a request/response handshake and waits for the UI to return a value.
-  Tools may also *yield* strings or dictionaries.  Yielded values are streamed
-  directly to the chat like model output, whereas emitted events modify the
-  existing message after it has been created.
+  Emitted events update the current chat message after it is created.
+  Tools may also ``yield`` strings or dicts which stream directly to the
+  response area like normal model output.
 
-  Supported event ``type`` values include:
+  Common event ``type`` values:
 
-    - ``status``       – progress indicator shown above a message
-    - ``message``      – append raw text to the current response
-    - ``chat:message`` – replace the message body entirely (re-renders Markdown)
-    - ``replace``      – synonym for ``chat:message``
+    - ``status``       – show a progress indicator
+    - ``message``      – append raw text to the message
+    - ``chat:message`` – replace the message body and re-render Markdown
+      (``replace`` is an alias)
     - ``citation``     – collapsible citation blocks
     - ``notification`` – toast popup
     - ``confirmation`` – yes/no dialog
     - ``input``        – text entry dialog
-    - ``execute``      – run a JavaScript snippet in the browser
+    - ``execute``      – run JavaScript in the browser and return the result
 
-  The ``playground`` method emits each of these events in sequence and uses
-  confirmation dialogs so you can observe the UI updates step by step.
+  The ``playground`` method walks through these events in order, pausing
+  after each step with a confirmation dialog so you can watch the UI update.
+
+  TODO: investigate whether raw HTML passed via ``chat:message`` is sanitized
+  before rendering.
 """
 
 from __future__ import annotations
@@ -62,12 +64,12 @@ class Tools:
         # ``__event_call__`` waits for a response from the user interface.
 
         async def emit(evt: Dict) -> None:
-            """Send an event to the front‑end if possible."""
+            """Send ``evt`` to the UI if possible."""
             if __event_emitter__:
                 await __event_emitter__(evt)
 
         async def confirm(message: str) -> bool:
-            """Block until the user clicks OK/Cancel."""
+            """Show a yes/no dialog and return ``True`` if confirmed."""
             if __event_call__:
                 return await __event_call__(
                     {"type": "confirmation", "data": {"title": "Event Demo", "message": message}}
@@ -87,8 +89,7 @@ class Tools:
         await emit({"type": "message", "data": {"content": "🧪 Beginning event demo."}})
 
         # ----- temporary banner -----
-        await run_js(
-            """
+        banner_add_js = """
 if (!document.getElementById('demo-banner')) {
   const div = document.createElement('div');
   div.id = 'demo-banner';
@@ -99,25 +100,28 @@ if (!document.getElementById('demo-banner')) {
     'left:50%',
     'transform:translateX(-50%)',
     'padding:8px 16px',
-    'background:linear-gradient(90deg,#6366f1,#8b5cf6)',
+    'background:linear-gradient(90deg,#6366f1,#9333ea)',
     'color:white',
     'border-radius:8px',
     'font-weight:600',
+    'box-shadow:0 2px 8px rgba(0,0,0,.2)',
     'z-index:9999',
     'opacity:0',
-    'transition:opacity 0.5s'
+    'transition:opacity 0.3s'
   ].join(';');
   document.body.appendChild(div);
   requestAnimationFrame(() => { div.style.opacity = '1'; });
 }
 """
+        banner_remove_js = (
+            "const b=document.getElementById('demo-banner');"
+            "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),300);}"
         )
 
+        await run_js(banner_add_js)
+
         if not await confirm("Banner added. Continue to progress demo?"):
-            await run_js(
-                "const b=document.getElementById('demo-banner');"
-                "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),500);}"
-            )
+            await run_js(banner_remove_js)
             return "Demo cancelled."
 
         # ----- status events -----
@@ -133,14 +137,11 @@ if (!document.getElementById('demo-banner')) {
         )
         await run_js(
             "const el=document.getElementById('demo-banner-text');"
-            "if(el){el.textContent='Progress finished ✓';}"
+            "if(el){el.textContent='Progress finished \u2713';}"
         )
 
         if not await confirm("Progress complete. Provide a note?"):
-            await run_js(
-                "const b=document.getElementById('demo-banner');"
-                "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),500);}"
-            )
+            await run_js(banner_remove_js)
             return "Demo cancelled."
 
         note = ""
@@ -160,10 +161,7 @@ if (!document.getElementById('demo-banner')) {
             await emit({"type": "message", "data": {"content": f"📝 {note}"}})
 
         if not await confirm("Show markup/HTML example?"):
-            await run_js(
-                "const b=document.getElementById('demo-banner');"
-                "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),500);}"
-            )
+            await run_js(banner_remove_js)
             return "Demo cancelled."
 
         # ----- HTML / Markdown -----
@@ -178,10 +176,7 @@ if (!document.getElementById('demo-banner')) {
         await emit({"type": "message", "data": {"content": f"🔢 JS result: {js_result}"}})
 
         if not await confirm("Show citation example?"):
-            await run_js(
-                "const b=document.getElementById('demo-banner');"
-                "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),500);}"
-            )
+            await run_js(banner_remove_js)
             return "Demo cancelled."
 
         # ----- citation -----
@@ -197,19 +192,13 @@ if (!document.getElementById('demo-banner')) {
         )
 
         if not await confirm("Replace the final message and finish demo?"):
-            await run_js(
-                "const b=document.getElementById('demo-banner');"
-                "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),500);}"
-            )
+            await run_js(banner_remove_js)
             return "Demo cancelled."
 
         final_msg = "🎉 Event demo finished successfully."
         await emit({"type": "replace", "data": {"content": final_msg}})
 
         await emit({"type": "notification", "data": {"type": "success", "content": "Demo finished"}})
-        await run_js(
-            "const b=document.getElementById('demo-banner');"
-            "if(b){b.style.opacity='0';setTimeout(()=>b.remove(),500);}"
-        )
+        await run_js(banner_remove_js)
 
         return final_msg
