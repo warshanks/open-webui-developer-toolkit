@@ -74,8 +74,24 @@ requests. Useful values include:
 - `__user__` – user info and optional `UserValves`
 - `__tools__` – mapping of registered tools
 - `__messages__` – raw message history
+- `__model__` – current model definition
+- `__metadata__` – metadata dictionary attached to the request
+- `__request__` – the FastAPI `Request` object
 
 Extra context can be passed using the same names.
+
+### Streaming and return values
+
+When `stream=True` the middleware treats the pipe output as a server-sent event
+stream. A pipe may:
+
+- return a `StreamingResponse` to proxy another generator directly,
+- yield text or preformatted `data:` lines from a (async) generator, or
+- return a plain string to emit a single chunk followed by `[DONE]`.
+
+For non streaming requests the pipe can return a string, `dict` or Pydantic
+model. Dictionaries are forwarded as-is while models are converted with
+`model_dump()`.
 
 ## Invoking tools from a pipe
 
@@ -104,3 +120,29 @@ res = await execute_pipe(pipe, params)
 ```
 
 Reload the server or update the valves to pick up changes.
+
+## Manifold pipes
+
+A single file can expose multiple sub‑pipes by defining a `pipes` attribute.
+This may be a list of dictionaries or a callable returning that list. Each entry
+describes an additional model shown in the UI:
+
+```python
+class Pipe:
+    name = "demo:"
+
+    def pipes(self):
+        return [
+            {"id": "fast", "name": "Fast mode"},
+            {"id": "slow", "name": "Slow mode"},
+        ]
+
+    async def pipe(self, body, __id__):
+        if __id__.endswith("fast"):
+            return "fast reply"
+        return "slow reply"
+```
+
+Selecting `demo:fast` or `demo:slow` in WebUI calls the same module with the
+given id suffix. The main `Pipe` class is shared and can inspect `__id__` to
+change behaviour.
