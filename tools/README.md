@@ -1,17 +1,32 @@
 # Tools Guide
 
-Standalone tools expose additional functionality that pipes can call. Each tool
-is a **single Python file** containing a `Tools` class. Every method of the
-class becomes an individual tool. Methods may be synchronous or `async` – the
-loader wraps them so every tool is awaitable. When the file is uploaded the
-server executes it via `plugin.load_tool_module_by_id` which rewrites short
-imports, installs any dependencies and instantiates the class. The helper then
-builds an OpenAI style JSON spec for each method so the tooling can be used with
-function calling.
+Tools are small Python scripts that give your model superpowers such as web
+search, image generation or voice output. Each script defines a `Tools` class
+whose methods become individual tools. Methods may be synchronous or `async` –
+the loader wraps them so every tool is awaitable. When uploaded the server
+executes the file via `plugin.load_tool_module_by_id`, rewriting short imports,
+installing any dependencies and building an OpenAI‑style JSON spec so the tools
+can be called through function calling.
 
-This folder complements the guides for [pipes](../functions/pipes/README.md) and
-[filters](../functions/filters/README.md). A tool provides standalone functions
-that a pipe can invoke during a chat request.
+Typical capabilities include:
+
+- **Web search** for real‑time answers
+- **Image generation** from text prompts
+- **Voice output** using ElevenLabs or similar services
+
+This folder complements the guides for
+[pipes](../functions/pipes/README.md) and
+[filters](../functions/filters/README.md). Tools provide standalone functions
+that pipes can invoke during a chat request.
+
+## Installing Tools
+
+You can install tools from the **Community Tool Library** or by uploading a
+Python file directly. Click *Get* in the library, enter your WebUI address and
+use “Import to WebUI”.
+
+**Safety tip:** Only import tools from sources you trust as they execute Python
+code on your server.
 
 ```python
 """
@@ -26,6 +41,41 @@ class Tools:
         """
         return {"message": f"Hello {name}"}
 ```
+
+## Using Tools
+
+Tools can be enabled per chat or per model. While chatting click the ➕ icon in
+the input box to toggle individual tools. For frequent use open **Workspace ▸
+Models**, edit the model and check the tools you want enabled by default.
+
+The optional **AutoTool Filter** can help your LLM pick the right tool when
+multiple are available.
+
+### Default vs Native Function Calling
+
+Tools work with any model using a prompt based helper, but models with built in
+function calling can choose and chain tools natively. Open WebUI detects this via
+the `function_calling` metadata field. When a pipe notices tools but native mode
+is disabled it warns the user:
+
+```python
+if __tools__ and __metadata__.get("function_calling") != "native":
+    await __event_emitter__(
+        {
+            "type": "chat:completion",
+            "data": {
+                "content": (
+                    "🛑 Tools detected, but native function calling is disabled.\n\n"
+                    "To enable tools in this chat, switch Function Calling to 'Native'."
+                ),
+            },
+        }
+    )
+```
+
+Switch modes from **Chat Controls ▸ Advanced Params**. Native calling is faster
+and more reliable when chaining multiple tools, but only works with models that
+support the feature.
 
 When a file is uploaded via the admin UI the loader installs any packages listed
 in the optional **frontmatter** block (`requirements:` in the example above).
