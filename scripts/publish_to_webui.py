@@ -32,8 +32,11 @@ from typing import Final
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+
 CREATE: Final = "/api/v1/functions/create"
 UPDATE: Final = "/api/v1/functions/id/{id}/update"
+TOGGLE: Final = "/api/v1/functions/id/{id}/toggle"
 
 
 def _post(base_url: str, api_key: str, path: str, payload: dict) -> int:
@@ -56,6 +59,11 @@ def _post(base_url: str, api_key: str, path: str, payload: dict) -> int:
             return resp.getcode()
     except HTTPError as exc:
         return exc.code
+
+
+def _activate(base_url: str, api_key: str, plugin_id: str) -> int:
+    """Toggle activation state for a plugin."""
+    return _post(base_url, api_key, TOGGLE.format(id=plugin_id), {})
 
 
 def _parse_args() -> argparse.Namespace:
@@ -142,14 +150,16 @@ def main() -> None:
     payload = _build_payload(plugin_id, plugin_type, code, description)
 
     status = _post(args.url, args.key, CREATE, payload)
-    if status == 200:
+    if status in (200, 201):
         logging.info("Created '%s' on %s", plugin_id, args.url)
+        _activate(args.url, args.key, plugin_id)
         return
 
     if status == 400:
         status = _post(args.url, args.key, UPDATE.format(id=plugin_id), payload)
-        if status == 200:
+        if status in (200, 201):
             logging.info("Updated '%s' on %s", plugin_id, args.url)
+            _activate(args.url, args.key, plugin_id)
             return
 
     sys.exit(f"❌  WebUI returned HTTP {status}")
