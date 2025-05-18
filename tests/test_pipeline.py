@@ -187,7 +187,6 @@ async def test_pipe_stream_loop(dummy_chat):
         for e in events:
             yield e
 
-    out_chunks: list[object] = []
     emitted: list[dict] = []
 
     async def emitter(evt: dict):
@@ -196,7 +195,7 @@ async def test_pipe_stream_loop(dummy_chat):
     with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
-        async for chunk in pipe.pipe(
+        await pipe.pipe(
             {},
             {},
             None,
@@ -205,18 +204,19 @@ async def test_pipe_stream_loop(dummy_chat):
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
             {},
-        ):
-            out_chunks.append(chunk)
+        )
     await pipe.on_shutdown()
 
-    assert out_chunks == [
-        "<think>",
-        "t",
-        "\n\n---\n\n",
-        "</think>\n",
-        "hi",
+    assert [e["data"] for e in emitted if e["type"] == "chat:completion"] == [
+        {"content": "<think>"},
+        {"content": "<think>t"},
+        {"content": "<think>t\n\n---\n\n"},
+        {"content": "<think>t\n\n---\n\n</think>\n"},
+        {"content": "<think>t\n\n---\n\n</think>\nhi"},
         {"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "loops": 1}},
+        {"done": True},
     ]
+    assert emitted[-2]["type"] == "chat:completion"  # done event
     assert emitted[-1]["type"] == "status"
 
 
@@ -241,7 +241,7 @@ async def test_pipe_deletes_response(dummy_chat):
     with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
         pipeline, "delete_response", AsyncMock()
     ) as del_mock, patch.object(pipe, "get_http_client", AsyncMock(return_value=object())):
-        async for _ in pipe.pipe(
+        await pipe.pipe(
             {},
             {},
             None,
@@ -250,8 +250,7 @@ async def test_pipe_deletes_response(dummy_chat):
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
             {},
-        ):
-            pass
+        )
     await pipe.on_shutdown()
 
     del_mock.assert_awaited_once()
@@ -292,7 +291,7 @@ async def test_debug_logs_citation_emitted(dummy_chat):
     with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
-        async for _ in pipe.pipe(
+        await pipe.pipe(
             {},
             user,
             None,
@@ -301,8 +300,7 @@ async def test_debug_logs_citation_emitted(dummy_chat):
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
             {},
-        ):
-            pass
+        )
     await pipe.on_shutdown()
 
     assert emitted[-1]["type"] == "citation"
