@@ -1,8 +1,9 @@
 # redis.py
 
 `backend/open_webui/utils/redis.py` collects helper functions for working with Redis.
-It supports both direct connections and [Sentinel](https://redis.io/docs/interact/sentinel/) clusters.
-These helpers are used by `AppConfig` when initialising the global cache.
+It supports both direct connections and [Sentinel](https://redis.io/docs/interact/sentinel/) clusters and
+is pulled in by `AppConfig` when initialising the global cache.  All processes
+can therefore share configuration through a single Redis instance.
 
 ## `parse_redis_service_url`
 
@@ -25,8 +26,11 @@ The service portion doubles as the Sentinel *master name* when Sentinel is used.
 
 ## `get_redis_connection`
 
-Creates a `redis.Redis` connection. When Sentinel hosts are supplied it builds a
-`redis.sentinel.Sentinel` instance and obtains the master connection:
+Creates a `redis.Redis` connection.  When a list of sentinels is supplied it
+first constructs a `redis.sentinel.Sentinel` object and obtains the master
+connection.  Otherwise `redis.Redis.from_url` is used directly.
+
+Example connecting to a Sentinel cluster:
 
 ```python
 sentinel = redis.sentinel.Sentinel(
@@ -40,22 +44,50 @@ sentinel = redis.sentinel.Sentinel(
 return sentinel.master_for(cfg["service"])
 ```
 
-If no sentinel hosts are provided it falls back to `redis.Redis.from_url`.
+Direct connection example:
+
+```python
+cache = get_redis_connection("redis://localhost:6379/0", [])
+```
 
 ## Environment helpers
 
 `get_sentinels_from_env` turns comma separated hostnames and a port number into
-the list of `(host, port)` tuples expected by `Sentinel`. `get_sentinel_url_from_env`
-constructs a usable `redis+sentinel://` URL from the same data.
+the list of `(host, port)` tuples expected by `Sentinel`.  `get_sentinel_url_from_env`
+constructs a usable `redis+sentinel://` URL from the same data.  They are
+typically fed values from the `REDIS_SENTINEL_HOSTS` and `REDIS_SENTINEL_PORT`
+environment variables.
 
 ```python
-hosts = get_sentinels_from_env("s1.example.com,s2.example.com", "26379")
+import os
+hosts = get_sentinels_from_env(
+    os.getenv("REDIS_SENTINEL_HOSTS"),
+    os.getenv("REDIS_SENTINEL_PORT"),
+)
 url = get_sentinel_url_from_env(
-    "redis://user:pass@mymaster/0",
-    "s1.example.com,s2.example.com",
-    "26379",
+    os.getenv("REDIS_URL"),
+    os.getenv("REDIS_SENTINEL_HOSTS"),
+    os.getenv("REDIS_SENTINEL_PORT"),
 )
 ```
 
 These helpers normalise environment configuration before it reaches `redis-py`.
+
+### Using in `AppConfig`
+
+The application configuration object stores values in Redis when a URL is
+provided.  This allows multiple worker processes to keep their settings in sync.
+
+```python
+app.state.config = AppConfig(
+    redis_url=REDIS_URL,
+    redis_sentinels=get_sentinels_from_env(
+        REDIS_SENTINEL_HOSTS,
+        REDIS_SENTINEL_PORT,
+    ),
+)
+```
+
+With this setup one instance changing a value will cause the others to pick it
+up the next time `AppConfig.__getattr__` fetches the key from Redis.
 
