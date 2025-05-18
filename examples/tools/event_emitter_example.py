@@ -1,27 +1,28 @@
 """
 title: Event Emitter Example
 author: Open-WebUI Docs Team
-version: 1.2
+version: 1.3
 license: MIT
 description: |
-  This tool demonstrates how to use Open WebUI's event system.  Tool
+  This tool demonstrates how to use Open WebUI's event system. Tool
   functions receive two injected parameters at runtime:
 
   • ``__event_emitter__`` – Sends non‑blocking updates over the
-    ``chat-events`` websocket.  ``Chat.svelte`` maps the ``type`` field of each
-    event to UI actions:
+    ``chat-events`` websocket. ``Chat.svelte`` maps ``type`` values to UI actions:
       - ``status`` – progress indicator updates.
       - ``message`` or ``chat:message:delta`` – append text to the current
         message bubble.
       - ``chat:message`` or ``replace`` – replace the bubble content.
       - ``files`` or ``chat:message:files`` – attach file metadata.
       - ``citation`` or ``source`` – add collapsible source blocks.
+        Use ``data.type == 'code_execution'`` to show code interpreter results.
       - ``chat:title`` – rename the chat.
       - ``chat:tags`` – refresh sidebar tags.
       - ``notification`` – show a toast (``info``, ``success``, ``warning`` or
         ``error``).
+      - ``chat:completion`` – stream model-generated tokens (advanced).
 
-  • ``__event_call__`` – Opens a modal and waits for user input.  Supported
+  • ``__event_call__`` – Opens a modal and waits for user input. Supported
     ``type`` values are ``confirmation`` and ``input`` (both return the
     user's response) and ``execute`` to run client-side JavaScript.
 
@@ -31,7 +32,8 @@ description: |
 """
 
 from __future__ import annotations
-import asyncio, time
+import asyncio
+import time
 from typing import Awaitable, Callable, Dict
 
 from pydantic import BaseModel, Field
@@ -143,6 +145,20 @@ class Tools:
                         }
                     )
 
+                # Execute arbitrary JavaScript in the user's browser
+                result = await __event_call__(
+                    {
+                        "type": "execute",
+                        "data": {"code": "return 2 + 2"},
+                    }
+                )
+                await emit(
+                    {
+                        "type": "message",
+                        "data": {"content": f"🔢 JS returned: {result}"},
+                    }
+                )
+
         # citation + finished bar + in-place bubble edit
         await emit(
             {
@@ -156,6 +172,21 @@ class Tools:
                         "name": "Event Playground Tool",
                         "url": "https://github.com/open-webui/open-webui",
                     },
+                },
+            }
+        )
+
+        # Example code execution block attached to the message
+        await emit(
+            {
+                "type": "source",
+                "data": {
+                    "type": "code_execution",
+                    "id": "calc",
+                    "name": "2 + 2",
+                    "code": "print(2 + 2)",
+                    "language": "python",
+                    "result": {"output": "4"},
                 },
             }
         )
