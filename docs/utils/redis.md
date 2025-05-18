@@ -91,3 +91,58 @@ app.state.config = AppConfig(
 With this setup one instance changing a value will cause the others to pick it
 up the next time `AppConfig.__getattr__` fetches the key from Redis.
 
+## Redis backed helper classes
+
+Two small utilities under `backend/open_webui/socket/utils.py` rely on the
+connection helpers above to coordinate websocket state across processes.
+
+### `RedisDict`
+
+`RedisDict` exposes a dictionary-like interface backed by a Redis hash.  Each
+operation simply delegates to `hset`, `hget` and related commands while
+serialising values to JSON.
+
+```python
+from open_webui.socket.utils import RedisDict
+from open_webui.utils.redis import get_sentinels_from_env
+
+pool = RedisDict(
+    "open-webui:session_pool",
+    redis_url=WEBSOCKET_REDIS_URL,
+    redis_sentinels=get_sentinels_from_env(
+        WEBSOCKET_SENTINEL_HOSTS,
+        WEBSOCKET_SENTINEL_PORT,
+    ),
+)
+
+pool["abc"] = {"id": 1}
+assert "abc" in pool
+```
+
+### `RedisLock`
+
+`RedisLock` provides a simple distributed mutex using `SET` with `nx=True` and
+an expiry.  The websocket cleanup task uses it so that only one worker removes
+stale usage entries.
+
+```python
+from open_webui.socket.utils import RedisLock
+from open_webui.utils.redis import get_sentinels_from_env
+
+cleanup_lock = RedisLock(
+    redis_url=WEBSOCKET_REDIS_URL,
+    lock_name="usage_cleanup_lock",
+    timeout_secs=WEBSOCKET_REDIS_LOCK_TIMEOUT,
+    redis_sentinels=get_sentinels_from_env(
+        WEBSOCKET_SENTINEL_HOSTS,
+        WEBSOCKET_SENTINEL_PORT,
+    ),
+)
+
+if cleanup_lock.aquire_lock():
+    try:
+        perform_cleanup()
+    finally:
+        cleanup_lock.release_lock()
+```
+
