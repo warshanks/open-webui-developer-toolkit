@@ -10,7 +10,7 @@ lightweight Python modules that can be copy–pasted into a WebUI instance.
 
 Each subfolder contains a dedicated guide:
 
-- [`pipes/PIPES_GUIDE.md`](pipes/PIPES_GUIDE.md) – how to implement and use
+- [`pipes/README.md`](pipes/README.md) – how to implement and use
   pipes.
-- [`filters/FILTERS_GUIDE.md`](filters/FILTERS_GUIDE.md) – how to implement and
+- [`filters/README.md`](filters/README.md) – how to implement and
   use filters.

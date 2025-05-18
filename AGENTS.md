@@ -38,3 +38,12 @@ nox -s lint tests
 `nox` uses the current Python environment, adds `src` to `PYTHONPATH` and
 executes `ruff` followed by `pytest`. Fixtures in `tests/conftest.py` stub out
 `open_webui` so tests stay fast and isolated.
+
+---
+
+## Documentation
+Every top-level folder contains a small `README.md` explaining what lives in that
+directory. Update these docs whenever you learn something new about how the
+extensions work or notice behaviour changes. Keep the notes brief so future
+agents can scan them quickly. For upstream insights, edit the matching
+`*_GUIDE.md` file under `external/`.
