@@ -18,7 +18,8 @@ dev = [
   "pytest",
   "pytest-cov",
   "pre-commit",
-  "nox"
+  "nox",
+  { path = "external/open-webui", develop = true }
 ]
 
 [build-system]
