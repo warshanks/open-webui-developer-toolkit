@@ -1,80 +1,41 @@
-# .github/workflows/update-open-webui.yml
-name: Update Open WebUI
+# .github/workflows/sync-openwebui.yml
+name: Weekly OpenWebUI sync
 
 on:
-  schedule:
-    - cron: "0 7 * * 1"   # Every Monday at 07:00 UTC
+  schedule: [{ cron: "0 7 * * 1" }]          # every Monday 07:00 UTC
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write          # the bot may push to the repo
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
-      # Step 1 ▸ Checkout your repository
+      # 1. check out the default branch (main)
       - uses: actions/checkout@v4
 
-      # Step 2 ▸ Clone upstream OpenWebUI into external/open-webui
-      - name: Clone upstream OpenWebUI
+      # 2. refresh the vendor folder
+      - name: Update external copy
         run: |
           set -euo pipefail
           rm -rf external/open-webui
           git clone --depth 1 https://github.com/open-webui/open-webui.git external/open-webui
-          rm -rf external/open-webui/.git
+          rm -rf external/open-webui/.git   # keep files, drop their .git dir
 
-      # Step 3 ▸ Commit & push changes safely
-      - name: Commit & push branch
-        id: push
+      # 3. commit & push only when there’s a change
+      - name: Commit to main if needed
+        env:
+          GIT_AUTHOR_NAME:  github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME:  github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git fetch origin update-open-webui || true
-          git checkout -B update-open-webui origin/update-open-webui || git checkout -B update-open-webui
-
           git add -A
-
-          if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+          if git diff --cached --quiet ; then
+            echo "No updates – nothing to commit."
             exit 0
           fi
-
-          git commit -m "chore: update OpenWebUI snapshot"
-          git push -u origin update-open-webui --force-with-lease
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      # Step 4 ▸ Create or update PR
-      - name: Create or update PR
-        if: steps.push.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          if gh pr view update-open-webui >/dev/null 2>&1; then
-            gh pr edit update-open-webui \
-              --title "chore: update OpenWebUI snapshot" \
-              --body  "Automated weekly sync of the OpenWebUI code."
-          else
-            gh pr create \
-              --title "chore: update OpenWebUI snapshot" \
-              --body  "Automated weekly sync of the OpenWebUI code." \
-              --head  update-open-webui \
-              --base  "$BASE_BRANCH"
-          fi
-
-      # Step 5 ▸ Merge & delete branch immediately, correctly handling non-interactive execution
-      - name: Merge & delete branch
-        if: steps.push.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Attempt immediate merge with admin rights first
-          gh pr merge update-open-webui --merge --delete-branch --admin \
-          || gh pr merge update-open-webui --merge --auto --delete-branch
+          git commit -m "chore: weekly OpenWebUI snapshot (auto-sync)"
+          git push origin HEAD
