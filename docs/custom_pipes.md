@@ -122,3 +122,46 @@ class Pipe:
 `get_function_models` expands these entries so users can select `pipe_id.sub_id` as a normal model id.
 
 Pipes integrate with filters and tools just like built‑in models, making them a powerful extension mechanism.
+
+## Valve configuration
+
+Pipes may define a `Valves` class to describe adjustable settings. When present
+the server stores these values and hydrates `function_module.valves` before each
+execution.  A complementary `UserValves` model provides per‑user overrides via
+`__user__["valves"]`.
+
+```python
+from pydantic import BaseModel
+
+class Valves(BaseModel):
+    prefix: str = ">>"
+
+class UserValves(BaseModel):
+    shout: bool = False
+
+class Pipe:
+    def pipe(self, body, __user__, valves):
+        msg = body["messages"][-1]["content"]
+        if __user__.valves.shout:
+            msg = msg.upper()
+        return f"{valves.prefix} {msg}"
+```
+
+The functions router exposes `/id/{id}/valves` and `/id/{id}/valves/user` so
+administrators can update these values without re-uploading the code.
+
+## Invoking tools from a pipe
+
+When a chat request specifies tool IDs they are resolved to callables and passed
+via the `__tools__` dictionary. A pipe can run them directly:
+
+```python
+class Pipe:
+    async def pipe(self, body, __tools__):
+        add = __tools__["add"]["callable"]
+        result = await add(a=1, b=2)
+        return str(result)
+```
+
+`get_tools` in `utils.tools` handles the conversion and provides each function's
+OpenAI-style spec under `spec`.
