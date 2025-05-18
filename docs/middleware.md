@@ -198,3 +198,147 @@ with ThreadPoolExecutor() as executor:
 ```
 
 By delegating the retrieval work to a thread, the main FastAPI server remains responsive while still making use of the synchronous `get_sources_from_files` implementation.
+## Deep dive: `chat_completion_tools_handler`
+`chat_completion_tools_handler` orchestrates manual tool invocation when the underlying model lacks native function calling. It crafts a tool request prompt, parses the result and executes each selected tool.
+
+The helper first builds a secondary payload aimed at the task model:
+```python
+def get_tools_function_calling_payload(messages, task_model_id, content):
+        user_message = get_last_user_message(messages)
+        history = "\n".join(
+            f"{message['role'].upper()}: \"\"\"{message['content']}\"\"\""
+            for message in messages[::-1][:4]
+        )
+
+        prompt = f"History:\n{history}\nQuery: {user_message}"
+
+        return {
+            "model": task_model_id,
+            "messages": [
+                {"role": "system", "content": content},
+                {"role": "user", "content": f"Query: {prompt}"},
+            ],
+            "stream": False,
+            "metadata": {"task": str(TASKS.FUNCTION_CALLING)},
+        }
+
+```
+This payload contains a history summary and instructs the task model to return JSON describing which tools to call.
+
+When the response arrives each tool is executed in turn. The logic validates parameters, dispatches direct tools via the event system and captures outputs for use as context or citations:
+```python
+            async def tool_call_handler(tool_call):
+                nonlocal skip_files
+
+                log.debug(f"{tool_call=}")
+
+                tool_function_name = tool_call.get("name", None)
+                if tool_function_name not in tools:
+                    return body, {}
+
+                tool_function_params = tool_call.get("parameters", {})
+
+                try:
+                    tool = tools[tool_function_name]
+
+                    spec = tool.get("spec", {})
+                    allowed_params = (
+                        spec.get("parameters", {}).get("properties", {}).keys()
+                    )
+                    tool_function_params = {
+                        k: v
+                        for k, v in tool_function_params.items()
+                        if k in allowed_params
+                    }
+
+                    if tool.get("direct", False):
+                        tool_result = await event_caller(
+                            {
+                                "type": "execute:tool",
+                                "data": {
+                                    "id": str(uuid4()),
+                                    "name": tool_function_name,
+                                    "params": tool_function_params,
+                                    "server": tool.get("server", {}),
+                                    "session_id": metadata.get("session_id", None),
+                                },
+                            }
+                        )
+                    else:
+                        tool_function = tool["callable"]
+                        tool_result = await tool_function(**tool_function_params)
+
+                except Exception as e:
+                    tool_result = str(e)
+
+                tool_result_files = []
+                if isinstance(tool_result, list):
+                    for item in tool_result:
+                        # check if string
+                        if isinstance(item, str) and item.startswith("data:"):
+                            tool_result_files.append(item)
+                            tool_result.remove(item)
+
+                if isinstance(tool_result, dict) or isinstance(tool_result, list):
+                    tool_result = json.dumps(tool_result, indent=2)
+
+                if isinstance(tool_result, str):
+                    tool = tools[tool_function_name]
+                    tool_id = tool.get("tool_id", "")
+
+                    tool_name = (
+                        f"{tool_id}\/{tool_function_name}"
+                        if tool_id
+                        else f"{tool_function_name}"
+                    )
+                    if tool.get("metadata", {}).get("citation", False) or tool.get(
+                        "direct", False
+                    ):
+                        # Citation is enabled for this tool
+                        sources.append(
+                            {
+                                "source": {
+                                    "name": (f"TOOL:{tool_name}"),
+                                },
+                                "document": [tool_result],
+                                "metadata": [{"source": (f"TOOL:{tool_name}")}],
+                            }
+                        )
+                    else:
+                        # Citation is not enabled for this tool
+                        body["messages"] = add_or_update_user_message(
+                            f"\\nTool `{tool_name}` Output: {tool_result}",
+                            body["messages"],
+                        )
+
+                    if (
+                        tools[tool_function_name]
+                        .get("metadata", {})
+                        .get("file_handler", False)
+                    ):
+                        skip_files = True
+
+            # check if "tool_calls" in result
+            if result.get("tool_calls"):
+                for tool_call in result.get("tool_calls"):
+                    await tool_call_handler(tool_call)
+            else:
+                await tool_call_handler(result)
+
+        except Exception as e:
+            log.debug(f"Error: {e}")
+            content = None
+    except Exception as e:
+        log.debug(f"Error: {e}")
+        content = None
+
+    log.debug(f"tool_contexts: {sources}")
+
+    if skip_files and "files" in body.get("metadata", {}):
+        del body["metadata"]["files"]
+
+    return body, {"sources": sources}
+
+
+```
+The handler also removes `metadata['files']` when a tool reports it handled uploads itself. The function returns the updated chat body and any source snippets so later stages can inject them into the conversation.
