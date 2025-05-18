@@ -4,12 +4,13 @@ Tools are single-file Python modules that teach Open WebUI new actions. Each fil
 
 ## Table of Contents
 - [Introduction](#introduction)
-- [Getting Started](#getting-started)
+- [Quick Start](#quick-start)
   - [Hello Tool Example](#hello-tool-example)
-  - [Installing Tools](#installing-tools)
-- [Tool Structure](#tool-structure)
-  - [Frontmatter](#frontmatter)
-  - [Methods and Type Hints](#methods-and-type-hints)
+  - [Installing Your Tool](#installing-your-tool)
+- [Anatomy of a Tool](#anatomy-of-a-tool)
+  - [File Layout](#file-layout)
+  - [Frontmatter Fields](#frontmatter-fields)
+  - [Writing Tool Methods](#writing-tool-methods)
   - [Valves and UserValves](#valves-and-uservalves)
 - [Using Tools in WebUI](#using-tools-in-webui)
   - [Enabling Tools](#enabling-tools)
@@ -26,10 +27,14 @@ Tools are single-file Python modules that teach Open WebUI new actions. Each fil
   - [Research Topics](#research-topics)
   - [Example Ideas](#example-ideas)
   - [Documentation Placeholders](#documentation-placeholders)
+  - [Field Reference TODO](#field-reference-todo)
 
 ## Introduction
 
-Tools let you extend WebUI with Python code or remote APIs. They complement the [pipes](../functions/pipes/README.md) and [filters](../functions/filters/README.md) guides. A pipe can call any enabled tool during a chat request.
+Tools teach WebUI new actions. Each Python file exposes a `Tools` class and every
+method becomes an OpenAI function definition. The loader reads the method name,
+type hints and docstring to create the JSON schema that tells the LLM which
+parameters to send.
 
 Typical uses include:
 
@@ -37,7 +42,7 @@ Typical uses include:
 - **Image generation** from text prompts
 - **Voice output** using text-to-speech services
 
-## Getting Started
+## Quick Start
 
 ### Hello Tool Example
 
@@ -56,15 +61,17 @@ class Tools:
 
 Upload the file through the **Community Tool Library** or the API and enable it for your chat. The method will appear as an OpenAI function named `hello`.
 
-### Installing Tools
+### Installing Your Tool
 
 You can install tools from the library or upload a Python file directly. Click *Get* in the library, enter your WebUI address and choose *Import to WebUI*. Only import tools from sources you trust as they execute Python code on your server.
 
-## Tool Structure
+## Anatomy of a Tool
+
+### File Layout
 
 Each tool file begins with a frontmatter block followed by the `Tools` class.
 
-### Frontmatter
+### Frontmatter Fields
 
 ```python
 """
@@ -81,9 +88,20 @@ licence: MIT
 """
 ```
 
-Only `id` is required. The loader installs any `requirements` before executing the file ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L5-L29)).
+Only `id` is required. The loader installs any `requirements` before executing
+the file ([PLUGIN_GUIDE.md](../external/PLUGIN_GUIDE.md#L5-L29)). Other common
+fields are:
 
-### Methods and Type Hints
+- `title` – human friendly name shown in WebUI
+- `author` / `author_url` – attribution displayed in the library
+- `git_url` – optional repository link
+- `description` – short explanation for the LLM and users
+- `required_open_webui_version` – minimum WebUI version
+- `requirements` – Python packages installed before loading
+- `version` – your tool version string
+- `licence` – licence identifier
+
+### Writing Tool Methods
 
 ```python
 class Tools:
@@ -103,7 +121,10 @@ class Tools:
         return string[::-1]
 ```
 
-Type hints are mandatory so the loader can build the JSON schema for function calling. Nested hints such as `list[tuple[str, int]]` are supported.
+The method name becomes the function name. Parameter names and `:param` blocks
+populate the tool schema. Type hints are mandatory so the loader can build the
+JSON schema for function calling. Nested hints such as `list[tuple[str, int]]`
+are supported.
 
 ### Valves and UserValves
 
@@ -195,3 +216,6 @@ async def example_tool(__event_emitter__, __event_call__):
 ### Documentation Placeholders
 - TODO: describe how to bundle multiple tools in one file.
 - TODO: show best practices for unit testing tools.
+
+### Field Reference TODO
+- TODO: compile a table of all frontmatter fields and their meanings.
