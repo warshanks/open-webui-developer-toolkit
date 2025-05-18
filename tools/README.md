@@ -27,20 +27,53 @@ use “Import to WebUI”.
 
 **Safety tip:** Only import tools from sources you trust as they execute Python
 code on your server.
+## Writing a Custom Toolkit
+
+A toolkit lives in a single Python file. Start with a metadata block:
 
 ```python
 """
-requirements: httpx
+id: string_inverse
+title: String Inverse
+author: Your Name
+author_url: https://website.com
+git_url: https://github.com/username/string-reverse.git
+description: This tool calculates the inverse of a string
+required_open_webui_version: 0.4.0
+requirements: langchain-openai, langgraph, ollama, langchain_ollama
+version: 0.4.0
+licence: MIT
 """
-
-class Tools:
-    def hello(self, name: str):
-        """Return a friendly greeting.
-
-        :param name: User name
-        """
-        return {"message": f"Hello {name}"}
 ```
+
+Only `id` is required but the extra fields make maintenance easier.
+
+Define a `Tools` class. Each method becomes an individual callable:
+
+```python
+class Tools:
+    def __init__(self):
+        self.valves = self.Valves()
+
+    class Valves(BaseModel):
+        api_key: str = Field("", description="Your API key here")
+
+    def reverse_string(self, string: str) -> str:
+        """Reverses the input string.
+
+        :param string: The string to reverse
+        """
+        if self.valves.api_key != "42":
+            return "Wrong API key"
+        return string[::-1]
+```
+
+Type hints are mandatory so the loader can build the JSON schema for function calling. Nested hints such as `list[tuple[str, int]]` also work.
+
+### Valves and UserValves
+
+`Valves` define global settings while `UserValves` allow per-user overrides. The loader hydrates them from the database before each call so administrators can set defaults and users can tweak values【F:external/FILTER_GUIDE.md†L120-L145】.
+
 
 ## Using Tools
 
