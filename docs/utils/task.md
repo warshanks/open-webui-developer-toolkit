@@ -141,3 +141,44 @@ def title_generation_template(
     return template
 ```
 Together these utilities standardize how background tasks are prompted across the codebase.
+
+## `rag_template` in depth
+
+`rag_template` crafts the prompt used when performing Retrieval Augmented
+Generation (RAG).  If the provided template is empty the helper falls back to
+`DEFAULT_RAG_TEMPLATE` from `open_webui.config`.  The function expands any date
+placeholders via `prompt_template` and performs several safety checks:
+
+- Logs a warning when the template does not include `[context]` or
+  `{{CONTEXT}}` – these markers are required so the retrieved documents are
+  injected into the prompt.
+- Warns if the supplied `context` already contains `<context>` and `</context>`
+  tags which might indicate a prompt injection attempt.
+
+To avoid conflicts when the context itself contains `[query]` or `{{QUERY}}`,
+the original placeholder in the template is temporarily replaced with a unique
+token using `uuid.uuid4()`.  Once the context and query text have been inserted
+the token is swapped back to the actual query string.
+
+Example usage:
+
+```python
+from open_webui.utils import task
+
+template = "[context]\n\nQ: [query]"
+context = "Info about [query] <context> tags</context>"
+query = "How does it work?"
+
+print(task.rag_template(template, context, query))
+```
+
+Which prints something similar to:
+
+```
+Info about How does it work? <context> tags</context>
+
+Q: How does it work?
+```
+
+Even when the context already contains `[query]` the placeholder in the template
+is expanded correctly without losing the original context text.
