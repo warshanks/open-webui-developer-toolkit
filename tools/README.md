@@ -86,7 +86,7 @@ When a file is uploaded the loader applies `replace_imports`, installs `requirem
 `backend/open_webui/utils/tools.py` turns each method into an async callable and a JSON spec. `convert_function_to_pydantic_model` parses the signature and docstring while `convert_pydantic_model_to_openai_function_spec` produces the final format【F:external/open-webui/backend/open_webui/utils/tools.py†L49-L65】【F:external/TOOLS_GUIDE.md†L3-L10】. `get_tools()` assembles the mapping ready for the chat pipeline【F:external/TOOLS_GUIDE.md†L12-L28】.
 
 ### Parameter injection
-`get_tools()` only passes parameters requested in the signature. Useful names mirror those available to pipes and filters such as `__event_emitter__`, `__user__` and `__metadata__`【F:functions/pipes/README.md†L66-L78】.
+`get_tools()` only passes parameters requested in the signature. Useful names mirror those available to pipes and filters such as `__event_emitter__`, `__user__` and `__metadata__`【F:functions/pipes/README.md†L97-L110】.
 
 ### Calling tools from a pipe
 ```python
