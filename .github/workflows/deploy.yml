@@ -6,7 +6,7 @@ on:
     paths:
       - 'functions/**.py'
       - 'tools/**.py'
-      - 'scripts/publish_to_webui.py'
+      - '.scripts/publish_to_webui.py'
   workflow_dispatch:
 
 jobs:
@@ -52,7 +52,7 @@ jobs:
             else
               type=pipe
             fi
-            python scripts/publish_to_webui.py "$file" --type "$type"
+            python .scripts/publish_to_webui.py "$file" --type "$type"
           done
 
 # ───────────────────────────────────────────
@@ -96,5 +96,5 @@ jobs:
             else
               type=pipe
             fi
-            python scripts/publish_to_webui.py "$file" --type "$type"
+            python .scripts/publish_to_webui.py "$file" --type "$type"
           done

@@ -14,7 +14,7 @@ scheduled workflow keeps this folder synced with the upstream repository.
 
 `nox` reuses the current Python environment and sets up `PYTHONPATH` so tests run
 quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
-checks so you get fast feedback before committing. Fixtures under `tests/` stub
+checks so you get fast feedback before committing. Fixtures under `.tests/` stub
 out `open_webui` so the suite can run without the external project.
 
 ## Examples
