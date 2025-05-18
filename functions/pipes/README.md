@@ -1,4 +1,21 @@
 # Pipes Guide
+## Table of Contents
+- [Overview](#overview)
+- [Quick example](#quick-example)
+- [Loading custom pipes](#loading-custom-pipes)
+- [Valves](#valves)
+  - [Managing valves via the API](#managing-valves-via-the-api)
+- [Parameter injection](#parameter-injection)
+  - [Example usage](#example-usage)
+  - [Deep dive: `__metadata__`](#deep-dive-__metadata__)
+  - [Working with `__request__`](#working-with-__request__)
+  - [Streaming and return values](#streaming-and-return-values)
+- [Invoking tools from a pipe](#invoking-tools-from-a-pipe)
+- [Pipe lifecycle](#pipe-lifecycle)
+- [Manifold pipes](#manifold-pipes)
+- [Using internal Open WebUI functions](#using-internal-open-webui-functions)
+- [Future research](#future-research)
+
 
 ## Overview
 
@@ -24,10 +41,10 @@ Pipes may call external APIs, emit additional chat messages and hold state betwe
 
 The loader at `backend/open_webui/utils/plugin.py` reads the file, rewrites
 short imports such as `from utils.chat` to `open_webui.utils.chat` and
-executes the content in a temporary module【F:external/PLUGIN_GUIDE.md†L18-L41】.
+executes the content in a temporary module[external/PLUGIN_GUIDE.md#L18-L41](../../external/PLUGIN_GUIDE.md#L18-L41).
 Before execution it writes the source to a temporary file so `__file__` points to
 an actual path, then removes the file again once the object is loaded
-【F:external/PLUGIN_GUIDE.md†L40-L57】.
+[external/PLUGIN_GUIDE.md#L40-L57](../../external/PLUGIN_GUIDE.md#L40-L57).
 The **frontmatter** block must be the first thing in the file – the parser only
 recognises it when the very first line contains `"""`. Use this header to store
 metadata and optional dependencies:
@@ -41,7 +58,7 @@ id: demo_pipe
 
 `install_frontmatter_requirements` installs the `requirements` list before the pipe runs. Other fields are stored as metadata.
 
-If the executed module exposes `Pipe`, the loader returns an instance and caches it in `request.app.state.FUNCTIONS` for reuse【F:external/open-webui/backend/open_webui/functions.py†L60-L66】.
+If the executed module exposes `Pipe`, the loader returns an instance and caches it in `request.app.state.FUNCTIONS` for reuse[functions.py lines 60-66](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L60-L66).
 
 ### Valves
 
@@ -93,7 +110,7 @@ file.  WebUI exposes helper endpoints under `routers/functions.py`:
 Specs for the `Valves` and `UserValves` models can be retrieved via the matching
 `/valves/spec` and `/valves/user/spec` endpoints.  Internally these routes load
 the module from `request.app.state.FUNCTIONS` and call the Pydantic models'
-`schema()` method【F:external/open-webui/backend/open_webui/routers/functions.py†L258-L304】【F:external/open-webui/backend/open_webui/routers/functions.py†L330-L379】.
+`schema()` method[routers/functions.py lines 258-304](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/routers/functions.py#L258-L304)[routers/functions.py lines 330-379](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/routers/functions.py#L330-L379).
 
 ## Parameter injection
 
@@ -122,11 +139,11 @@ This opt-in behaviour means old pipes remain compatible when new context values
 are introduced—they simply ignore extras they do not declare. Upgrading Open
 WebUI rarely breaks extensions because unrecognised parameters are silently
 discarded. The available extras mirror the values added to `extra_params`
-inside `generate_function_chat_completion`【F:external/open-webui/backend/open_webui/functions.py†L204-L238】.
+inside `generate_function_chat_completion`[functions.py lines 204-238](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L204-L238).
 
 Any name not present in `sig.parameters` is silently discarded so a pipe can
 opt‑in to the context it needs without worrying about new parameters appearing
-later【F:external/open-webui/backend/open_webui/functions.py†L178-L188】.  The
+later[functions.py lines 178-188](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L178-L188).  The
 `extra_params` dictionary is assembled from the request metadata and user
 information before this step.  Common values include:
 
@@ -170,10 +187,10 @@ construction.
 `generate_function_chat_completion` assembles these extras using information
 from the request and user. The `process_chat_payload` middleware prepares the
 initial `extra_params` dictionary before the pipe runs so every extension sees
-the same context【F:external/MIDDLEWARE_GUIDE.md†L98-L111】. Event callbacks and
+the same context[MIDDLEWARE_GUIDE.md#L98-L111](../../external/MIDDLEWARE_GUIDE.md#L98-L111). Event callbacks and
 tool contexts are only set up when `chat_id`, `session_id` and `message_id` are
 present. See lines 200‑251 of `functions.py` for the full logic
-【F:external/open-webui/backend/open_webui/functions.py†L200-L251】.
+[functions.py lines 200-251](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L200-L251).
 
 ### Deep dive: `__metadata__`
 
@@ -205,15 +222,15 @@ metadata = {
     ),
 }
 ```
-【F:external/open-webui/backend/open_webui/main.py†L1165-L1187】
+[main.py lines 1165-1187](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/main.py#L1165-L1187)
 
 Pipeline middleware may extend it with `tool_ids` and unique `files`
-before invoking the pipe【F:external/open-webui/backend/open_webui/utils/middleware.py†L790-L801】.
+before invoking the pipe[utils/middleware.py lines 790-801](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/utils/middleware.py#L790-L801).
 Task endpoints add their own fields such as `task` and `task_body` when
-generating titles or tags【F:external/open-webui/backend/open_webui/routers/tasks.py†L206-L214】.
+generating titles or tags[routers/tasks.py lines 206-214](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/routers/tasks.py#L206-L214).
 
 `generate_function_chat_completion` forwards this dictionary to your pipe as
-`__metadata__` along with the other extras【F:external/open-webui/backend/open_webui/functions.py†L216-L239】.
+`__metadata__` along with the other extras[functions.py lines 216-239](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L216-L239).
 
 Typical entries include `chat_id`, `message_id`, `user_id`, feature flags,
 file metadata and the resolved `model` object.  Use the dictionary like any
@@ -244,10 +261,10 @@ class Pipe:
 
 The `__request__` argument exposes the underlying `fastapi.Request` instance.
 It arrives via the `extra_params` dictionary
-constructed in the middleware【F:external/open-webui/backend/open_webui/utils/middleware.py†L670-L679】
-and forwarded by `generate_function_chat_completion`【F:external/open-webui/backend/open_webui/functions.py†L232-L240】.
+constructed in the middleware[utils/middleware.py lines 670-679](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/utils/middleware.py#L670-L679)
+and forwarded by `generate_function_chat_completion`[functions.py lines 232-240](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L232-L240).
 The same pattern is used when calling action handlers inside
-`utils.chat`【F:external/open-webui/backend/open_webui/utils/chat.py†L322-L329】.
+`utils.chat`[utils/chat.py lines 322-329](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/utils/chat.py#L322-L329).
 
 Use it to read headers, query parameters or the client address.  It behaves like
 a normal FastAPI request object so all standard properties are available:
@@ -274,7 +291,7 @@ When `stream=True` the middleware treats the output of `pipe()` as a server-sent
 - yielding strings or `data:` lines from a generator produces streamed chunks;
 - returning a plain string sends one chunk followed by `[DONE]`.
 
-Relevant logic appears around lines 267‑307 of `functions.py`【F:external/open-webui/backend/open_webui/functions.py†L267-L307】. For non streaming requests the pipe may return a string, a `dict` or any Pydantic model. Dictionaries are forwarded as-is while models are converted using `model_dump()`.
+Relevant logic appears around lines 267‑307 of `functions.py`[functions.py lines 267-307](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L267-L307). For non streaming requests the pipe may return a string, a `dict` or any Pydantic model. Dictionaries are forwarded as-is while models are converted using `model_dump()`.
 
 ## Invoking tools from a pipe
 
@@ -295,7 +312,7 @@ behave like local tools. They are configured through
 
 ## Pipe lifecycle
 
-Pipes are loaded once per process and cached. Subsequent requests reuse the same object from `request.app.state.FUNCTIONS`【F:external/open-webui/backend/open_webui/functions.py†L57-L66】. Before each execution valve values and user settings are hydrated and the function parameters are assembled:
+Pipes are loaded once per process and cached. Subsequent requests reuse the same object from `request.app.state.FUNCTIONS`[functions.py lines 57-66](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L57-L66). Before each execution valve values and user settings are hydrated and the function parameters are assembled:
 
 ```python
 pipe = function_module.pipe
@@ -307,7 +324,7 @@ Reload the server or update valve settings to pick up changes.
 
 ## Manifold pipes
 
-A single file can expose multiple sub‑pipes by defining a `pipes` attribute. This can be a list or a callable (sync or async) returning that list. `generate_function_models` iterates over these values to build the model list【F:external/open-webui/backend/open_webui/functions.py†L72-L110】. Each entry describes an additional model shown in the UI:
+A single file can expose multiple sub‑pipes by defining a `pipes` attribute. This can be a list or a callable (sync or async) returning that list. `generate_function_models` iterates over these values to build the model list[functions.py lines 72-110](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/functions.py#L72-L110). Each entry describes an additional model shown in the UI:
 
 ```python
 class Pipe:
@@ -333,7 +350,7 @@ Sometimes a pipe only needs a bit of custom pre‑ or post‑processing and can
 delegate the heavy lifting back to Open WebUI.  You can import and call internal
 helpers directly from the `open_webui` package.  The chat routing logic is
 implemented in
-`open_webui.utils.chat.generate_chat_completion`【F:external/CHAT_GUIDE.md†L10-L24】
+`open_webui.utils.chat.generate_chat_completion`[CHAT_GUIDE.md#L10-L24](../../external/CHAT_GUIDE.md#L10-L24)
 and exposes the same behaviour used by the built‑in models.  Calling it from
 your pipe reuses the platform's model switching, tool handling and streaming
 mechanism.
@@ -368,10 +385,18 @@ Key points:
   `generate_chat_completion` drives the standard chat pipeline.
 - **Parameters** – pass the FastAPI `Request`, incoming `body` and the full
   user instance.  The helper accepts optional flags such as `bypass_filter`
-  【F:external/open-webui/backend/open_webui/utils/chat.py†L158-L166】.
+  [utils/chat.py lines 158-166](https://github.com/open-webui/open-webui/blob/f5541bf1595805aff5a91dc42a9a7bcc033faf7b/backend/open_webui/utils/chat.py#L158-L166).
 - **Stability** – internal functions may change as Open WebUI evolves. Always
   verify the signature in the upstream repository and handle errors
   gracefully.
 
 Use this approach when you want to re-use WebUI's streaming behaviour and tool
 integration while adding your own transformations.
+
+## Future research
+
+TODO:
+- Explore advanced streaming patterns.
+- Document authentication strategies.
+- Add real world examples using `__metadata__`.
+
