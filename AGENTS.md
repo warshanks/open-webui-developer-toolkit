@@ -1,8 +1,9 @@
 # open-webui-developer-toolkit • Contributor & Agent Guide
+
 Welcome! This repo contains **extensions (pipes, filters, tools)** for
-[Open WebUI](https://github.com/open-webui/open-webui). The codebase is intentionally
-thin: one file per extension, with a small helper script to publish to any WebUI
-instance.
+[Open WebUI](https://github.com/open-webui/open-webui). Each extension is a
+single Python file. A helper script under `scripts/` publishes the files to a
+running WebUI instance.
 
 ---
 
@@ -10,31 +11,30 @@ instance.
 
 | Path | What lives here | Agent-safe actions |
 |------|-----------------|--------------------|
-| **`src/openwebui_devtoolkit/pipes/`** | single-file *pipes* (Python) | add/fix pipe files |
-| **`src/openwebui_devtoolkit/filters/`** | single-file *filters* | add/fix filter files |
-| **`src/openwebui_devtoolkit/tools/`** | single-file *tools* | add/fix tool files |
+| **`functions/pipes/`** | single-file *pipes* (Python) | add/fix pipe files |
+| **`functions/filters/`** | single-file *filters* | add/fix filter files |
+| **`tools/`** | standalone *tools* | add/fix tool files |
+| **`open-webui-reference/`** | upstream architecture notes | add new docs |
 | **`scripts/publish_to_webui.py`** | uploader CLI (don’t rename) | edit if API changes |
-| **`docs/`** | notes on upstream middleware & internals | add new docs |
+| **`docs/`** | additional internal notes | add new docs |
 
 *Codex tip:* grep for the **exact filename** you need, e.g. `grep -R openai_responses_api_pipeline.py`.
 
 ---
 
 ## Upstream reference (read-only)
-Open WebUI source is available in the `open-webui/` folder. A scheduled
-workflow refreshes this directory from the upstream repository. **Codex:**
-use it for reference only—do **not** edit or commit changes inside that
-path.
+If present, the `open-webui/` folder mirrors the upstream project. Use it for
+reference only—do **not** edit or commit changes inside that path.
 
 ---
 
 ## Tests
-Run linting and tests with ``nox``:
+Run linting and tests with `nox`:
 
 ```bash
 nox -s lint tests
 ```
 
-``nox`` uses the current Python environment, adds ``src`` to ``PYTHONPATH``
-and executes ``ruff`` followed by ``pytest``. Fixtures in ``tests/conftest.py``
-stub out ``open_webui`` so tests stay fast and isolated.
+`nox` uses the current Python environment, adds `src` to `PYTHONPATH` and
+executes `ruff` followed by `pytest`. Fixtures in `tests/conftest.py` stub out
+`open_webui` so tests stay fast and isolated.

@@ -1,5 +1,7 @@
 import types
 import sys
+from importlib.util import spec_from_file_location, module_from_spec
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -24,9 +26,10 @@ def dummy_chat(monkeypatch):
     }
 
     with patch.dict(sys.modules, modules):
-        monkeypatch.setattr(
-            "openwebui_devtoolkit.pipes.openai_responses_api_pipeline.Chats",
-            chats_mod.Chats,
-            raising=False,
-        )
+        path = Path(__file__).resolve().parents[1] / "functions" / "pipes" / "openai_responses_api_pipeline.py"
+        spec = spec_from_file_location("openai_responses_api_pipeline", path)
+        pipeline = module_from_spec(spec)
+        sys.modules[spec.name] = pipeline
+        spec.loader.exec_module(pipeline)
+        monkeypatch.setattr(pipeline, "Chats", chats_mod.Chats, raising=False)
         yield chat

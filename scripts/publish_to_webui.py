@@ -7,7 +7,7 @@ The script works with standard library modules only.  A minimal example:
 WEBUI_URL=https://localhost:8080 \
 WEBUI_KEY=sk_... \
 python scripts/publish_to_webui.py \
-    src/openwebui_devtoolkit/pipes/openai_responses_api_pipeline.py
+    functions/pipes/openai_responses_api_pipeline.py
 ```
 
 Flags override the corresponding environment variables.  The plugin type is
