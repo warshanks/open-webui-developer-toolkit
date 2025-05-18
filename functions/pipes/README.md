@@ -1,6 +1,11 @@
 # Pipes Guide
 
-A **pipe** is a single Python file exposing a `Pipe` class. When a chat model id points to that file, Open WebUI loads the module and executes `Pipe.pipe()` to generate the assistant reply. Requests travel through any configured filters first so a pipe usually only implements the core response logic.
+Pipes let you plug custom logic or whole model APIs into Open WebUI. Think of a
+pipe as a miniature "agent" that decides how to handle a chat request. Each pipe
+is a single Python file exposing a `Pipe` class. When a chat model id is mapped
+to that file, Open WebUI loads the module and executes `Pipe.pipe()` to generate
+the assistant response. Requests travel through any configured filters before
+they reach the pipe so most files only implement the core reply logic.
 
 ```python
 # minimal pipe structure
@@ -36,7 +41,16 @@ If the executed module exposes `Pipe`, the loader returns an instance and caches
 
 ### Valves
 
-A pipe can define `Valves` and `UserValves` Pydantic models to expose adjustable settings. The server stores these values and injects them on each call:
+Pipes often need configuration.  "Valves" are persistent parameters stored in the
+database and injected whenever the pipe runs.  They come in two flavours:
+
+* **`Valves`** – global settings shared by all users.
+* **`UserValves`** – per‑user overrides stored alongside the account.
+
+Both are optional `pydantic` models.  Any fields you define here become knobs in
+the web interface and can be adjusted through the Functions API without
+re‑uploading the code.  At runtime WebUI reads the stored values, instantiates
+these models and passes them to your handler:
 
 ```python
 from pydantic import BaseModel
@@ -55,13 +69,17 @@ class Pipe:
         return f"{valves.prefix} {msg}"
 ```
 
-Valve values can be updated via the Functions API without re-uploading the code.
+`__user__` automatically includes a `valves` attribute when `UserValves` exists
+so you can read per‑user settings without changing the function signature.
+Global `Valves` are injected as a separate argument.  Both models support
+default values and validation thanks to Pydantic.
 
-### Managing valves via the API
+Valve values can be updated via the Functions API without re‑uploading the code.
 
-The backend exposes helper endpoints so administrators or users can adjust these
-values without editing the source file.  The relevant routes live in
-`routers/functions.py` and include:
+#### Managing valves via the API
+
+Administrators and end users can change valve values without editing the source
+file.  WebUI exposes helper endpoints under `routers/functions.py`:
 
 - `GET  /functions/id/{id}/valves` – fetch the current global values.
 - `POST /functions/id/{id}/valves/update` – update the global defaults.
@@ -121,6 +139,10 @@ information before this step.  Common values include:
 |`__task__`, `__task_body__`| background task info |
 |`__id__`| sub‑pipe id when using manifolds |
 |`__request__`| the FastAPI `Request` object |
+
+When `Valves` is defined, its instance is passed as the final positional
+argument after `body`.  `UserValves` settings are available under
+`__user__.valves`.
 
 ### Example usage
 
