@@ -15,7 +15,8 @@ dependencies = [
   "peewee",
   "peewee-migrate",
   "SQLAlchemy",
-  "asyncio"
+  "asyncio",
+  "cached"
 ]
 
 [project.optional-dependencies]
