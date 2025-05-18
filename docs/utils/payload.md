@@ -116,3 +116,14 @@ openai_payload = {
 ollama_payload = convert_payload_openai_to_ollama(openai_payload)
 ```
 
+When translating the payload the helper remaps several fields. `max_tokens`
+becomes `num_predict` under `options`, any `system` prompt is copied to the
+top level and values like `keep_alive` or `format` are mirrored so Ollama
+accepts them.
+
+### Base64 image trimming
+
+`convert_messages_openai_to_ollama` shortens data URLs embedded in image
+messages. Only the raw base64 string is kept which greatly reduces payload size
+when posting directly to an Ollama server.
+
