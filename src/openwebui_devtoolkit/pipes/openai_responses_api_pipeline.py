@@ -79,11 +79,22 @@ import traceback
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
+import inspect
+import uuid
 
 import httpx
 from fastapi import Request
 from open_webui.models.chats import Chats
 from pydantic import BaseModel, Field
+
+try:  # open_webui may not be installed during unit tests
+    from open_webui.socket.main import get_event_emitter
+except Exception:  # pragma: no cover - fallback for tests
+    def get_event_emitter(*_, **__):
+        async def _noop(_):
+            return None
+
+        return _noop
 
 EMOJI_LEVELS = {
     logging.DEBUG: "\U0001F50D",
@@ -408,7 +419,13 @@ class Pipe:
                 break
 
             if pending_calls:
-                results = await self._execute_tools(pending_calls, __tools__)
+                results = await self._execute_tools(
+                    pending_calls,
+                    __tools__,
+                    __event_emitter__,
+                    __user__,
+                    __metadata__,
+                )
                 for call, result in zip(pending_calls, results):
                     call_entry = {
                         "type": "function_call",
@@ -488,20 +505,82 @@ class Pipe:
                 self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
 
     async def _execute_tools(
-        self, calls: list[SimpleNamespace], registry: dict[str, Any]
+        self,
+        calls: list[SimpleNamespace],
+        registry: dict[str, Any],
+        emitter: Callable[[dict[str, Any]], Awaitable[None]],
+        user: dict[str, Any],
+        metadata: dict[str, Any],
     ) -> list[Any]:
-        """Run tool calls asynchronously and return their results."""
+        """Run tool calls asynchronously and return their results.
+
+        This wraps each tool's ``__event_emitter__`` so that ``message`` and
+        ``replace`` events are persisted using a fresh ``message_id``. The
+        original emitter still receives the event so interim output appears in
+        real time, but the additional chat message ensures the content isn't
+        overwritten when the final assistant reply streams.
+        """
+
+        async def persist_message(content: str) -> None:
+            mid = str(uuid.uuid4())
+            Chats.upsert_message_to_chat_by_id_and_message_id(
+                metadata["chat_id"],
+                mid,
+                {
+                    "role": "assistant",
+                    "parentId": metadata.get("message_id"),
+                    "content": content,
+                },
+            )
+            new_emitter = get_event_emitter(
+                {
+                    "user_id": user["id"],
+                    "chat_id": metadata["chat_id"],
+                    "message_id": mid,
+                    "session_id": metadata.get("session_id"),
+                }
+            )
+            await new_emitter(
+                {
+                    "type": "chat:message",
+                    "data": {
+                        "chat_id": metadata["chat_id"],
+                        "message_id": mid,
+                        "content": content,
+                    },
+                }
+            )
+
         tasks = []
         for call in calls:
             entry = registry.get(call.name)
             if entry is None:
                 tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
-            else:
-                args = json.loads(call.arguments or "{}")
-                tasks.append(asyncio.create_task(entry["callable"](**args)))
+                continue
+
+            args = json.loads(call.arguments or "{}")
+            func = getattr(entry["callable"], "func", entry["callable"])
+            bound = dict(getattr(entry["callable"], "keywords", {}))
+            bound.update(args)
+
+            if "__event_emitter__" in inspect.signature(func).parameters:
+                async def wrapped_emitter(evt: dict[str, Any]) -> None:
+                    await emitter(evt)
+                    if evt.get("type") in {"message", "replace"}:
+                        content = evt.get("data", {}).get("content", "")
+                        if content:
+                            await persist_message(content)
+
+                bound["__event_emitter__"] = wrapped_emitter
+
+            async def run_tool(func=func, kwargs=bound):
+                return await func(**kwargs)
+
+            tasks.append(asyncio.create_task(run_tool()))
+
         try:
             return await asyncio.gather(*tasks)
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover - log error and return stubs
             self.log.error("Tool execution failed: %s", ex)
             return [f"Error: {ex}"] * len(tasks)
 
