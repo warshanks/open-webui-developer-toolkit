@@ -19,8 +19,7 @@ out `open_webui` so the suite can run without the external project.
 
 ## Examples
 
-Minimal example extensions live under `examples/`.
-Each subfolder (`pipes/`, `filters/`, `tools/`) contains starter templates.
+Example extensions live directly under the `functions/` and `tools/` folders.
 Additional files demonstrate advanced features discovered in the
 `open-webui` code base:
 
@@ -34,4 +33,5 @@ Additional files demonstrate advanced features discovered in the
 
 Detailed notes about upstream Open WebUI internals live under `external/`.
 See `external/MIDDLEWARE_GUIDE.md` for an overview of the core middleware logic.
-Additional placeholders are collected in the other `*_GUIDE.md` files and `docs/custom_pipes.md`.
+Additional placeholders are collected in the other `*_GUIDE.md` files and the
+expanded notes in `functions/pipes/README.md`.
