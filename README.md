@@ -8,9 +8,8 @@ pip install -e '.[dev]'
 nox -s lint tests
 ```
 
-Installing the optional `dev` extras installs the Open WebUI package from the
-`external/open-webui` directory so pipelines can import `open_webui` directly. A
-scheduled workflow keeps this folder synced with the upstream repository.
+Installing the optional `dev` extras adds linting and testing tools like `ruff`, `pytest` and `nox`.
+The `external/open-webui` folder mirrors the upstream project for reference.
 
 `nox` reuses the current Python environment and sets up `PYTHONPATH` so tests run
 quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
@@ -19,15 +18,9 @@ out `open_webui` so the suite can run without the external project.
 
 ## Examples
 
-Example extensions live directly under the `functions/` and `tools/` folders.
-Additional files demonstrate advanced features discovered in the
-`open-webui` code base:
-
-- `pipes/status_stream_pipe.py` streams tokens and emits status events.
-- `filters/stream_logging_filter.py` shows the optional `stream` hook.
-- `tools/docstring_tools.py` builds tool specs from function docstrings.
-- `tools/universal_example.py` demonstrates valves, event emitters and
-  confirmations in one tool.
+Example extensions live under `functions/` and `tools/`.
+The repository currently includes `pipes/openai_responses_api_pipeline.py` as a working sample.
+Additional examples will be added over time.
 
 ## Open WebUI Architecture
 

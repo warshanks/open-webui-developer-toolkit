@@ -71,7 +71,7 @@ class Tools:
             "location": r["nearest_area"][0]["areaName"][0]["value"],
             "temperature_c": float(r["current_condition"][0]["temp_C"]),
         }
-````
+```
 
 Enable the tool for your model (Workspace → Models → Tools) and ask:
 
@@ -249,16 +249,9 @@ with `tools=[{"spec":..., "callable": ...}]`.
 
 ---
 
-## Example Gallery <a id="example-gallery"></a>
+## Example Gallery
 
-| File               | Highlighted concept                   |
-| ------------------ | ------------------------------------- |
-| `simple_echo.py`   | Minimal sync tool                     |
-| `stream_search.py` | Async & streaming results             |
-| `image_gen.py`     | Binary data + custom `returns` schema |
-| `multi_toolkit.py` | Multiple methods in one file          |
-
-*(All samples live under `functions/tools/examples/`.)*
+Sample tool files will be added in a future update.
 
 ---
 
@@ -289,4 +282,3 @@ with `tools=[{"spec":..., "callable": ...}]`.
 * **Tool Chaining Agents:** design patterns for multi-step reasoning.
 * **Typed Returns:** auto-generate Pydantic models from `returns` schema.
 
-```
