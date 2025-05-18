@@ -50,6 +50,54 @@ if auth_manager_config.ENABLE_OAUTH_GROUP_CREATION:
 
 Existing memberships are updated by comparing the current list with the claim and calling `Groups.update_group_by_id` accordingly.
 
+#### Deep dive: sync algorithm
+
+`update_user_groups` performs four main steps:
+
+1. Parse the claim from `OAUTH_GROUPS_CLAIM` into a list of names.
+2. Optionally create missing groups when `ENABLE_OAUTH_GROUP_CREATION` is `True`.
+3. Remove memberships that no longer appear in the claim.
+4. Add the user to any new groups.
+
+The last two steps rely on `Groups.update_group_by_id` as shown below:
+
+```python
+# remove obsolete memberships
+for group_model in user_current_groups:
+    if (
+        user_oauth_groups
+        and group_model.name not in user_oauth_groups
+        and group_model.name not in blocked_groups
+    ):
+        user_ids = [i for i in group_model.user_ids if i != user.id]
+        update_form = GroupUpdateForm(
+            name=group_model.name,
+            description=group_model.description,
+            permissions=group_model.permissions or default_permissions,
+            user_ids=user_ids,
+        )
+        Groups.update_group_by_id(id=group_model.id, form_data=update_form, overwrite=False)
+
+# add missing memberships
+for group_model in all_available_groups:
+    if (
+        user_oauth_groups
+        and group_model.name in user_oauth_groups
+        and not any(gm.name == group_model.name for gm in user_current_groups)
+        and group_model.name not in blocked_groups
+    ):
+        user_ids = group_model.user_ids + [user.id]
+        update_form = GroupUpdateForm(
+            name=group_model.name,
+            description=group_model.description,
+            permissions=group_model.permissions or default_permissions,
+            user_ids=user_ids,
+        )
+        Groups.update_group_by_id(id=group_model.id, form_data=update_form, overwrite=False)
+```
+
+Groups listed under `OAUTH_BLOCKED_GROUPS` are ignored so they cannot be joined or left automatically.
+
 ### Profile pictures
 
 `_process_picture_url` downloads the profile image (optionally using an OAuth access token) and returns a base64 data URL.  It falls back to `/user.png` if anything fails.
