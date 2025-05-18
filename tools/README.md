@@ -111,10 +111,18 @@ async def pipe(self, body, __tools__):
 Remote **tool servers** are also supported. When a tool id starts with
 `server:` the loader fetches an OpenAPI document and converts each
 `operationId` into a tool definition using `convert_openapi_to_tool_payload`.
-Server entries are configured under `TOOL_SERVER_CONNECTIONS` and can use a
-Bearer or session token for authentication. Calls are then proxied via
-`execute_tool_server` so the remote HTTP API behaves like a local tool
-【F:external/TOOLS_GUIDE.md†L53-L79】【F:external/TOOLS_GUIDE.md†L80-L103】.
+Server entries are configured under the `TOOL_SERVER_CONNECTIONS` setting and
+may use a Bearer or session token for authentication. The specification is
+downloaded once with `get_tool_servers_data` and cached in
+`request.app.state.TOOL_SERVERS` so that subsequent requests do not hit the
+remote server again【F:external/open-webui/backend/open_webui/routers/tools.py†L38-L45】.
+Each OpenAPI operation is exposed as a tool and returned alongside local tools
+when calling `GET /tools`【F:external/open-webui/backend/open_webui/routers/tools.py†L48-L71】.
+Calls are proxied via `execute_tool_server` so the HTTP API behaves like a local
+tool【F:external/TOOLS_GUIDE.md†L53-L79】【F:external/TOOLS_GUIDE.md†L80-L103】.
+
+See [external/TOOLS_GUIDE.md](../external/TOOLS_GUIDE.md) for a deeper look at
+the request flow and schema conversion logic.
 
 ## Events and callbacks
 
