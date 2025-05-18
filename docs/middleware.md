@@ -342,3 +342,101 @@ When the response arrives each tool is executed in turn. The logic validates par
 
 ```
 The handler also removes `metadata['files']` when a tool reports it handled uploads itself. The function returns the updated chat body and any source snippets so later stages can inject them into the conversation.
+
+## Deep dive: `chat_web_search_handler`
+`chat_web_search_handler` performs on‑the‑fly web searches and attaches the results to the chat payload.  It emits progress updates so the client knows when search is happening and stores retrieved documents under temporary filenames so later steps can fetch the snippets.
+
+Steps performed:
+1. Send an initial `status` event marking that a search query is being generated.
+2. Use `generate_queries` to craft search terms from the latest user message. The JSON response is parsed or the raw text is used as a fallback.
+3. If no queries are produced a completion event is sent and the handler returns early.
+4. When queries exist, `process_web_search` is called which downloads pages and stores them in the retrieval system.
+5. Each returned collection or document is appended to `form_data['files']` so RAG can read them later. A summary event reports the visited URLs.
+6. Errors are caught and reported back to the client via `status` events.
+
+Below is the core logic showing how queries are built and search results attached:
+
+```python
+async def chat_web_search_handler(request: Request, form_data: dict, extra_params: dict, user):
+    event_emitter = extra_params["__event_emitter__"]
+    await event_emitter({
+        "type": "status",
+        "data": {"action": "web_search", "description": "Generating search query", "done": False},
+    })
+
+    messages = form_data["messages"]
+    user_message = get_last_user_message(messages)
+    queries = []
+    try:
+        res = await generate_queries(
+            request,
+            {"model": form_data["model"], "messages": messages, "prompt": user_message, "type": "web_search"},
+            user,
+        )
+        response = res["choices"][0]["message"]["content"]
+        try:
+            bracket_start = response.find("{")
+            bracket_end = response.rfind("}") + 1
+            if bracket_start == -1 or bracket_end == -1:
+                raise Exception("No JSON object found in the response")
+            response = response[bracket_start:bracket_end]
+            queries = json.loads(response).get("queries", [])
+        except Exception:
+            queries = [response]
+    except Exception:
+        log.exception("query generation failed")
+        queries = [user_message]
+
+    if len(queries) == 0:
+        await event_emitter({
+            "type": "status",
+            "data": {"action": "web_search", "description": "No search query generated", "done": True},
+        })
+        return form_data
+
+    await event_emitter({
+        "type": "status",
+        "data": {"action": "web_search", "description": "Searching the web", "done": False},
+    })
+
+    try:
+        results = await process_web_search(request, SearchForm(queries=queries), user=user)
+        if results:
+            files = form_data.get("files", [])
+            if results.get("collection_names"):
+                for collection_name in results.get("collection_names"):
+                    files.append({
+                        "collection_name": collection_name,
+                        "name": ", ".join(queries),
+                        "type": "web_search",
+                        "urls": results["filenames"],
+                    })
+            elif results.get("docs"):
+                files.append({
+                    "docs": results["docs"],
+                    "name": ", ".join(queries),
+                    "type": "web_search",
+                    "urls": results["filenames"],
+                })
+
+            form_data["files"] = files
+            await event_emitter({
+                "type": "status",
+                "data": {"action": "web_search", "description": "Searched {{count}} sites", "urls": results["filenames"], "done": True},
+            })
+        else:
+            await event_emitter({
+                "type": "status",
+                "data": {"action": "web_search", "description": "No search results found", "done": True, "error": True},
+            })
+    except Exception:
+        log.exception("search failed")
+        await event_emitter({
+            "type": "status",
+            "data": {"action": "web_search", "description": "An error occurred while searching the web", "queries": queries, "done": True, "error": True},
+        })
+
+    return form_data
+```
+
+The function's extensive event reporting keeps the user informed while retrieval happens in the background. The returned `form_data` now contains file records referencing the downloaded pages so `chat_completion_files_handler` can later embed their contents.
