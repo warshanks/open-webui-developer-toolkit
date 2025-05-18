@@ -2,11 +2,12 @@
 
 Standalone tools expose additional functionality that pipes can call. Each tool
 is a **single Python file** containing a `Tools` class. Every method of the
-class becomes an individual tool. When the file is uploaded the server executes
-it via `plugin.load_tool_module_by_id` which rewrites short imports, installs
-any dependencies and instantiates the class. The helper then builds an OpenAI
-style JSON spec for each method so the tooling can be used with function
-calling.
+class becomes an individual tool. Methods may be synchronous or `async` – the
+loader wraps them so every tool is awaitable. When the file is uploaded the
+server executes it via `plugin.load_tool_module_by_id` which rewrites short
+imports, installs any dependencies and instantiates the class. The helper then
+builds an OpenAI style JSON spec for each method so the tooling can be used with
+function calling.
 
 This folder complements the guides for [pipes](../functions/pipes/README.md) and
 [filters](../functions/filters/README.md). A tool provides standalone functions
@@ -34,8 +35,8 @@ so the module can reuse helpers from the main project.
 ### Frontmatter and upload
 
 Each tool file begins with a triple quoted block. At minimum declare an `id:` so
-WebUI can store and update the tool. Additional keys like `requirements:` list
-extra packages that are installed before the code runs. The loader parses this
+WebUI can store and update the tool. Additional keys such as `requirements:` and
+`description:` list extra packages and optional metadata. The loader parses this
 header and rewrites short imports before executing the module in a temporary
 file【F:external/PLUGIN_GUIDE.md†L5-L29】. The full flow is:
 1. Retrieve the source from the database (or use uploaded content).
@@ -45,8 +46,8 @@ file【F:external/PLUGIN_GUIDE.md†L5-L29】. The full flow is:
    【F:external/PLUGIN_GUIDE.md†L33-L59】.
 
 Use `.scripts/publish_to_webui.py` to upload a tool via the API. The script
-extracts the `id:` and description from the header and sends the file to a
-running WebUI instance.
+extracts the `id:` and description from the header, infers the plugin type from
+the file path and sends the file to a running WebUI instance.
 
 ## How tools are discovered
 
@@ -61,13 +62,18 @@ directly【F:external/TOOLS_GUIDE.md†L3-L10】【F:external/TOOLS_GUIDE.md†L
 `get_tools()` assembles a dictionary mapping function names to a callable and its
 specification ready for the chat pipeline【F:external/TOOLS_GUIDE.md†L12-L28】.
 
+Loaded modules are cached under `request.app.state.TOOLS` so subsequent calls do
+not re-import the code. Valve values are hydrated from the database before each
+execution.
+
 Tools may expose two optional Pydantic models named `Valves` and `UserValves`
 for configuration. The loader hydrates these models with values stored in the
 database before every call. This allows administrators to define global defaults
 while users can override selected fields.
 
 If a module defines `file_handler = True` the middleware removes uploaded files
-from the payload after the tool runs because the tool manages them itself.
+from the payload after the tool runs because the tool manages them itself. When
+`citation = True` the pipeline treats any returned snippets as citation sources.
 
 ### Parameter injection
 
@@ -84,8 +90,10 @@ available to pipes and filters and include:
 - `__files__`
 
 These values come from the chat middleware and allow a tool to inspect the
-conversation or emit events. `__metadata__` contains identifiers such as
-`chat_id` and `session_id`【F:functions/pipes/README.md†L66-L78】【F:external/MIDDLEWARE_GUIDE.md†L100-L112】.
+conversation or emit events. `__event_emitter__` and `__event_call__` interface
+with the user's websocket connection so messages can appear in real time.
+`__metadata__` contains identifiers such as `chat_id` and
+`session_id`【F:functions/pipes/README.md†L66-L78】【F:external/MIDDLEWARE_GUIDE.md†L100-L112】.
 
 ## Calling tools from a pipe
 
@@ -103,8 +111,10 @@ async def pipe(self, body, __tools__):
 Remote **tool servers** are also supported. When a tool id starts with
 `server:` the loader fetches an OpenAPI document and converts each
 `operationId` into a tool definition using `convert_openapi_to_tool_payload`.
-Calls are then proxied via `execute_tool_server` so the remote HTTP API behaves
-like a local tool【F:external/TOOLS_GUIDE.md†L53-L79】【F:external/TOOLS_GUIDE.md†L80-L103】.
+Server entries are configured under `TOOL_SERVER_CONNECTIONS` and can use a
+Bearer or session token for authentication. Calls are then proxied via
+`execute_tool_server` so the remote HTTP API behaves like a local tool
+【F:external/TOOLS_GUIDE.md†L53-L79】【F:external/TOOLS_GUIDE.md†L80-L103】.
 
 ## Events and callbacks
 
@@ -133,4 +143,4 @@ async def example_tool(__event_emitter__, __event_call__):
 
 `__event_call__` can also run JavaScript (`execute`) or prompt for text
 (`input`). The emitter supports `message`, `replace`, `status`, `citation` and
-`notification` event types.
+`notification` event types so tools can update the chat UI while running.
