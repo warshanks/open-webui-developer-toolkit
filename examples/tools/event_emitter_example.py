@@ -52,10 +52,10 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-    # Public tool method demonstrating common event types
-    async def playground(
+    # Example tool. Ask the LLM to run the 'example_tool' to test.
+    async def example_tool(
         self,
-        units: int | None = None,
+        units: int = None,
         __event_emitter__: Emitter | None = None,
         __event_call__: Caller | None = None,
     ) -> str:
