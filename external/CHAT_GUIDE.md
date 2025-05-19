@@ -193,23 +193,48 @@ context and return the resulting dictionary.
 
 ## Chat history persistence
 
-`backend/open_webui/models/chats.py` stores each conversation in a JSON field. The `history` object maps message ids to dictionaries that include `role` and `content`.
-`upsert_message_to_chat_by_id_and_message_id(id, message_id, data)` merges `data` into the existing message. Unknown keys are kept as-is because the table does not enforce a schema.
-This means custom fields placed in each message dictionary are persisted in the
-database. The default UI only understands a small subset of keys so additional
-logic is required to display or act on any extra data. For example:
+`backend/open_webui/models/chats.py` stores each conversation in a JSON field.
+A chat record roughly looks like:
+
+```json
+{
+  "title": "New Chat",
+  "history": {
+    "currentId": "m1",
+    "messages": {
+      "m1": {"role": "user", "content": "hi"}
+    }
+  }
+}
+```
+
+`upsert_message_to_chat_by_id_and_message_id(id, message_id, data)` merges
+`data` into the existing message if present or inserts it otherwise.  There is
+**no schema enforcement**, so any keys provided are stored as is. The builtin
+middleware writes plain strings under `content`, but custom pipes can store lists
+or additional metadata. For example:
 
 ```python
 Chats.upsert_message_to_chat_by_id_and_message_id(
     chat_id,
     "msg-123",
-    {"role": "assistant", "content": "hi", "custom": True},
+    {
+        "role": "assistant",
+        "content": "hi",
+        "custom": True,
+        "processed_at": 1712345678,
+    },
 )
 ```
 
-During streaming the middleware repeatedly calls this helper with partial events. Once the model finishes it writes the final content string, which replaces the previous text but preserves earlier metadata.
+During streaming the middleware may call this helper on every delta when
+`ENABLE_REALTIME_CHAT_SAVE` is enabled. Otherwise a final `chat:completion`
+event triggers one write with the complete content. Existing fields are merged
+so any metadata added earlier remains intact.
 
-Rendering functions such as `get_content_from_message` primarily read the `content` list, so extra keys (like custom tool metadata) are ignored by the UI unless additional logic handles them.
+Rendering helpers such as `get_content_from_message` only inspect the `content`
+field, meaning custom keys (like tool metadata) are ignored by the default UI
+unless additional code handles them.
 
 ## Tool and code interpreter blocks
 

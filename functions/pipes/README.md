@@ -295,7 +295,12 @@ assert asyncio.run(pipe.pipe(body)) == "hi"
 ---
 
 ## Example Gallery <a id="example-gallery"></a>
-Example pipe files will be added in a future update.
+The repository ships with a few reference implementations:
+
+| File | Highlights |
+| ---- | ---------- |
+| `openai_responses_api_pipeline.py` | Full fledged pipeline demonstrating complex streaming and tool execution. |
+| `metadata_demo.py` | Minimal example that stores custom fields via `Chats.upsert_message_to_chat_by_id_and_message_id`. |
 
 ---
 ## Glossary <a id="glossary"></a>
