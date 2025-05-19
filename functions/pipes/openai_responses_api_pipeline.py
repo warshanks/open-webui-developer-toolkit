@@ -227,7 +227,9 @@ class Pipe:
         """Stream responses from OpenAI and handle tool calls.
 
         Instead of yielding chunks, this version emits them via
-        ``__event_emitter__`` with the ``chat:completion`` event type.
+        ``__event_emitter__`` using ``message`` events so text is appended to
+        the current chat entry. A final ``chat:completion`` event indicates
+        completion and conveys usage stats.
         """
         start_ns = time.perf_counter_ns()
         self._debug_logs.clear()
@@ -323,19 +325,19 @@ class Pipe:
                             is_model_thinking = True
                             content += "<think>"
                             await __event_emitter__(
-                                {"type": "chat:completion", "data": {"content": content}}
+                                {"type": "message", "data": {"content": "<think>"}}
                             )
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         content += event.delta
                         await __event_emitter__(
-                            {"type": "chat:completion", "data": {"content": content}}
+                            {"type": "message", "data": {"content": event.delta}}
                         )
                         continue
                     if et == "response.reasoning_summary_text.done":
                         content += "\n\n---\n\n"
                         await __event_emitter__(
-                            {"type": "chat:completion", "data": {"content": content}}
+                            {"type": "message", "data": {"content": "\n\n---\n\n"}}
                         )
                         request_params["input"].append(
                             {
@@ -352,13 +354,13 @@ class Pipe:
                             is_model_thinking = False
                             content += "</think>\n"
                             await __event_emitter__(
-                                {"type": "chat:completion", "data": {"content": content}}
+                                {"type": "message", "data": {"content": "</think>\n"}}
                             )
                         continue
                     if et == "response.output_text.delta":
                         content += event.delta
                         await __event_emitter__(
-                            {"type": "chat:completion", "data": {"content": content}}
+                            {"type": "message", "data": {"content": event.delta}}
                         )
                         continue
                     if et == "response.output_text.done":
