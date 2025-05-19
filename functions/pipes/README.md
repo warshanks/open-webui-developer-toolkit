@@ -168,6 +168,36 @@ async def pipe(self, body, __event_emitter__):
 Event `type` options: `status`, `message`, `chat:message`, `citation`,
 `notification`, `confirmation`, `input`.
 
+#### Message vs Replace vs Chat Completion
+
+`__event_emitter__` forwards structured events to the websocket layer.
+Some event types also update the underlying chat record:
+
+| Type            | Backend Behaviour                                               |
+| --------------- | --------------------------------------------------------------- |
+| `message`       | Appends the chunk to `Chats.content`. Useful for streaming but
+adds a database write on every call. |
+| `replace`       | Replaces the stored message content entirely. Used to rewrite
+or fix messages. |
+| `chat:completion` | Sends data to the UI only. The DB is not touched until the
+middleware finishes and emits a final `done` event. |
+
+When speed matters you can `yield` text directly from your generator instead of
+sending many `message` events. `yield` skips the extra database updates while the
+UI still receives tokens in real time. Combine approaches as needed:
+
+```python
+async def pipe(self, body, __event_emitter__):
+    async def gen():
+        for word in ["fast", "stream"]:
+            yield word + " "          # no DB writes
+    await __event_emitter__({"type": "status", "data": {"msg": "Finishing"}})
+    await asyncio.sleep(0.2)
+    await __event_emitter__({"type": "replace", "data": {"content": "done"}})
+    return gen()  # noqa: R504
+```
+
+
 ---
 
 ## Valves & UserValves <a id="valves--uservalves"></a>
