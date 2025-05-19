@@ -190,3 +190,12 @@ class Action:
 The module can then be triggered from the API by posting `{"actionId": "foo",
 "model": "gpt-4", ...}` and `chat_action` will load `foo`, pass in the extra
 context and return the resulting dictionary.
+
+## Chat history persistence
+
+`backend/open_webui/models/chats.py` stores each conversation in a JSON field. The `history` object maps message ids to dictionaries that include `role` and `content`.
+`upsert_message_to_chat_by_id_and_message_id(id, message_id, data)` merges `data` into the existing message. Unknown keys are kept as-is because the table does not enforce a schema.
+
+During streaming the middleware repeatedly calls this helper with partial events. Once the model finishes it writes the final content string, which replaces the previous text but preserves earlier metadata.
+
+Rendering functions such as `get_content_from_message` primarily read the `content` list, so extra keys (like custom tool metadata) are ignored by the UI unless additional logic handles them.
