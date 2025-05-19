@@ -84,6 +84,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 import httpx
 from fastapi import Request
 from open_webui.models.chats import Chats
+from open_webui.utils.misc import deep_update, get_message_list
 from pydantic import BaseModel, Field
 
 EMOJI_LEVELS = {
@@ -594,13 +595,31 @@ class Pipe:
         """Override valve settings with user-provided values."""
         if not user_valves:
             return
-        for setting, user_val in user_valves.model_dump(exclude_none=True).items():
-            if isinstance(user_val, str) and user_val.lower() == "inherit":
-                continue
-            setattr(self.valves, setting, user_val)
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("User override → %s set to %r", setting, user_val)
-        self.log.setLevel(getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO))
+
+        dump = (
+            user_valves.model_dump(exclude_none=True)
+            if hasattr(user_valves, "model_dump")
+            else user_valves.dict(exclude_none=True)
+        )
+        overrides = {
+            k: v for k, v in dump.items() if not (isinstance(v, str) and v.lower() == "inherit")
+        }
+
+        base = (
+            self.valves.model_dump()
+            if hasattr(self.valves, "model_dump")
+            else self.valves.dict()
+        )
+        updated = deep_update(base, overrides)
+        self.valves = self.Valves(**updated)
+
+        if self.log.isEnabledFor(logging.DEBUG):
+            for setting, val in overrides.items():
+                self.log.debug("User override → %s set to %r", setting, val)
+
+        self.log.setLevel(
+            getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
+        )
 
     def _build_params(
         self,
@@ -792,12 +811,7 @@ def build_responses_payload(chat_id: str) -> list[dict]:
     chat = Chats.get_chat_by_id(chat_id).chat
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
-    thread: list[dict] = []
-    while current_id:
-        msg = msg_lookup[current_id]
-        thread.append(msg)
-        current_id = msg.get("parentId")
-    thread.reverse()
+    thread = get_message_list(msg_lookup, current_id) or []
 
     input_items: list[dict] = []
     for m in thread:

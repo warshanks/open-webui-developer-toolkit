@@ -22,8 +22,22 @@ def dummy_chat(monkeypatch):
         "open_webui": types.ModuleType("open_webui"),
         "open_webui.models": types.ModuleType("open_webui.models"),
         "open_webui.models.chats": chats_mod,
+        "open_webui.utils": types.ModuleType("open_webui.utils"),
+        "open_webui.utils.misc": types.ModuleType("open_webui.utils.misc"),
         "httpx": types.ModuleType("httpx"),
     }
+
+    modules["open_webui.utils.misc"].deep_update = lambda d, u: {**d, **u}
+    def _get_msg_list(msgs, mid):
+        out = []
+        curr = msgs.get(mid)
+        while curr:
+            out.insert(0, curr)
+            mid = curr.get("parentId")
+            curr = msgs.get(mid) if mid else None
+        return out
+
+    modules["open_webui.utils.misc"].get_message_list = _get_msg_list
 
     with patch.dict(sys.modules, modules):
         path = Path(__file__).resolve().parents[1] / "functions" / "pipes" / "openai_responses_api_pipeline.py"
