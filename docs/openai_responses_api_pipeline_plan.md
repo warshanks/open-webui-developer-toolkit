@@ -39,7 +39,6 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
    - Ensure stored items match OpenAI’s expected structure so future API calls can replay the same messages without reconstruction.
 
 6. **Configuration and valves**
-   - Review all `Valves` fields and drop or rename any that duplicate middleware options.
    - Provide sensible defaults so a minimal config works out‑of‑the‑box.
    - Ensure user overrides via `UserValves` are applied after initial setup, matching how middleware reads user settings.
 
@@ -65,7 +64,7 @@ Additional context: using `previous_response_id` requires the chat completion re
 The refactored file should remain a single module with clear helpers.  
 Suggested layout:
 
-1. **Configuration** – dataclasses `ResponsesValves` and `ResponsesUserValves` defining all tweakable options.
+
 2. **Payload Builders** – helper functions like `build_instructions()`, `prepare_tools()` and `build_chat_payload()`.
 3. **Streaming Loop** – a `stream_chat_completion()` coroutine that yields deltas and captures reasoning tokens.
 4. **Tool Handling** – `execute_tool_calls()` for running tools in parallel and updating chat history.
@@ -77,7 +76,7 @@ Each helper should follow existing middleware naming where possible for easy com
 ### Key Functions
 
 ```python
-async def build_chat_payload(cfg: ResponsesValves, messages: list[dict]) -> dict:
+async def build_chat_payload(cfg: Valves, messages: list[dict]) -> dict:
     """Return the JSON payload for OpenAI's chat completion endpoint."""
 
 async def stream_chat_completion(payload: dict, previous_id: str | None) -> AsyncIterator[Event]:
@@ -100,7 +99,7 @@ The helpers above intentionally use names that differ from WebUI's middleware
 functions. This avoids import collisions when the pipe is copied into the core
 project while still making the behaviour easy to compare.
 
-1. `assemble_responses_payload(valves: ResponsesValves, chat_id: str) -> dict`
+1. `assemble_responses_payload(valves: Valves, chat_id: str) -> dict`
    - Fetch the chat thread and convert it to the Responses API `input` format.
    - Insert the admin system prompt (if any) while respecting any user provided
      system message.
