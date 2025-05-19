@@ -87,6 +87,8 @@ from open_webui.models.chats import Chats
 from open_webui.utils.misc import deep_update, get_message_list
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 EMOJI_LEVELS = {
     logging.DEBUG: "\U0001F50D",
     logging.INFO: "\u2139",
@@ -331,6 +333,12 @@ class Pipe:
                         f"turn_input_{loop_count}",
                     )
                 )
+                self.log.debug(
+                    pretty_log_block(
+                        request_params,
+                        f"openai_request_params_{loop_count}",
+                    )
+                )
 
             try:
                 pending_calls: list[SimpleNamespace] = []
@@ -493,6 +501,11 @@ class Pipe:
                     }
                     base_params["input"].append(output_entry)
                     temp_input.insert(0, output_entry)
+                    if self.log.isEnabledFor(logging.DEBUG):
+                        self.log.debug(
+                            "Appended to temp_input: %s",
+                            json.dumps(output_entry, indent=2),
+                        )
                     await __event_emitter__(
                         {
                             "type": "citation",
@@ -521,13 +534,69 @@ class Pipe:
             remaining = self.valves.MAX_TOOL_CALLS - loop_count
             if loop_count == self.valves.MAX_TOOL_CALLS:
                 request_params["tool_choice"] = "none"
-                temp_input.append({"role": "assistant", "content": [{"type": "output_text", "text": f"[Internal thought] Final iteration ({loop_count}/{self.valves.MAX_TOOL_CALLS}). Tool-calling phase is over; I'll produce my final answer now."}]})
+                entry = {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": f"[Internal thought] Final iteration ({loop_count}/{self.valves.MAX_TOOL_CALLS}). Tool-calling phase is over; I'll produce my final answer now.",
+                        }
+                    ],
+                }
+                temp_input.append(entry)
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug(
+                        "Appended to temp_input: %s",
+                        json.dumps(entry, indent=2),
+                    )
             elif loop_count == 2 and self.valves.MAX_TOOL_CALLS > 2:
-                temp_input.append({"role": "assistant", "content": [{"type": "output_text", "text": f"[Internal thought] I've just received the initial tool results from iteration 1. I'm now continuing an iterative tool interaction with up to {self.valves.MAX_TOOL_CALLS} iterations."}]})
+                entry = {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": f"[Internal thought] I've just received the initial tool results from iteration 1. I'm now continuing an iterative tool interaction with up to {self.valves.MAX_TOOL_CALLS} iterations.",
+                        }
+                    ],
+                }
+                temp_input.append(entry)
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug(
+                        "Appended to temp_input: %s",
+                        json.dumps(entry, indent=2),
+                    )
             elif remaining == 1:
-                temp_input.append({"role": "assistant", "content": [{"type": "output_text", "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS}. Next iteration is answer-only; any remaining tool calls must happen now."}]})
+                entry = {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS}. Next iteration is answer-only; any remaining tool calls must happen now.",
+                        }
+                    ],
+                }
+                temp_input.append(entry)
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug(
+                        "Appended to temp_input: %s",
+                        json.dumps(entry, indent=2),
+                    )
             elif loop_count > 2:
-                temp_input.append({"role": "assistant", "content": [{"type": "output_text", "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS} ({remaining} remaining, no action needed)."}]})
+                entry = {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS} ({remaining} remaining, no action needed).",
+                        }
+                    ],
+                }
+                temp_input.append(entry)
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug(
+                        "Appended to temp_input: %s",
+                        json.dumps(entry, indent=2),
+                    )
             break
 
         await __event_emitter__(
@@ -741,8 +810,15 @@ class Pipe:
             msg = Chats.get_message_by_id_and_message_id(chat_id, message_id) or {}
             sources = list(msg.get("sources", []))
             sources.append(citation)
+            self.log.debug(
+                "Storing message to history: %s",
+                json.dumps({"sources": sources}, indent=2),
+            )
             Chats.upsert_message_to_chat_by_id_and_message_id(
                 chat_id, message_id, {"sources": sources}
+            )
+            self.log.debug(
+                "Stored citation for chat=%s message=%s", chat_id, message_id
             )
         except Exception as ex:  # pragma: no cover - log only
             self.log.debug("Failed to store citation: %s", ex)
@@ -763,10 +839,19 @@ class Pipe:
             responses = list(msg.get("tool_responses", []))
             if response:
                 responses.append(response)
+            self.log.debug(
+                "Storing message to history: %s",
+                json.dumps(
+                    {"tool_calls": calls, "tool_responses": responses}, indent=2
+                ),
+            )
             Chats.upsert_message_to_chat_by_id_and_message_id(
                 chat_id,
                 message_id,
                 {"tool_calls": calls, "tool_responses": responses},
+            )
+            self.log.debug(
+                "Stored tool metadata for chat=%s message=%s", chat_id, message_id
             )
         except Exception as ex:  # pragma: no cover - log only
             self.log.debug("Failed to store tool metadata: %s", ex)
@@ -866,10 +951,12 @@ def prepare_tools(registry: dict | None) -> list[dict]:
 
 def build_responses_payload(chat_id: str) -> list[dict]:
     """Convert WebUI chat history to Responses API input format."""
+    logger.debug("Retrieving message history for chat_id=%s", chat_id)
     chat = Chats.get_chat_by_id(chat_id).chat
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
     thread = get_message_list(msg_lookup, current_id) or []
+    logger.debug(pretty_log_block(thread, "history_thread"))
 
     input_items: list[dict] = []
     for m in thread:
