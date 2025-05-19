@@ -215,6 +215,21 @@ The inner `post_response_handler` consolidates streamed blocks into full message
 
 This handler assembles the streamed `tool_calls`, reasoning blocks and code interpreter output into final messages before persisting them.
 
+`serialize_content_blocks` walks over a list of block dictionaries and builds a
+single string for storage or display. Plain `text` blocks are appended as-is.
+`tool_calls` blocks become `<details>` tags showing the tool name, arguments and
+an "Executing..." placeholder until results are attached. `reasoning` and
+`code_interpreter` sections also expand into `<details>` wrappers with optional
+duration or output attributes. When `raw=True` the underlying tags are emitted
+directly; otherwise they are converted to human-friendly HTML.
+
+After the model produces a list of tool calls, the handler appends a
+`{"type": "tool_calls"}` block to `content_blocks` and immediately emits a
+`chat:completion` event using the serialized content. This lets the UI display
+"Executing..." while the tool is invoked via `event_caller` or a direct
+call. The tool's result is stored in the same block's `results` field and
+another `chat:completion` update follows.
+
 When streaming, the original generator is wrapped so extra events can be injected and each chunk is run through any outlet filters:
 
 ```python
