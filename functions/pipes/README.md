@@ -180,11 +180,13 @@ adds a database write on every call. |
 | `replace`       | Replaces the stored message content entirely. Used to rewrite
 or fix messages. |
 | `chat:completion` | Sends data to the UI only. The DB is not touched until the
-middleware finishes and emits a final `done` event. |
+middleware finishes and emits a final `done` event. Use this when emitting
+tokens via `__event_emitter__`. |
 
-When speed matters you can `yield` text directly from your generator instead of
-sending many `message` events. `yield` skips the extra database updates while the
-UI still receives tokens in real time. Combine approaches as needed:
+When maximum speed matters you can `yield` text directly from your generator
+instead of sending many `message` or `chat:completion` events. `yield` skips the
+extra database updates and event overhead while the UI still receives tokens in
+real time. Combine approaches as needed:
 
 ```python
 async def pipe(self, body, __event_emitter__):

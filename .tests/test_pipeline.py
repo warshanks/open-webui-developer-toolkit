@@ -200,7 +200,7 @@ async def test_pipe_stream_loop(dummy_chat):
     with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
-        await pipe.pipe(
+        gen = pipe.pipe(
             {},
             {},
             None,
@@ -210,15 +210,12 @@ async def test_pipe_stream_loop(dummy_chat):
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
             {},
         )
+        tokens = []
+        async for chunk in gen:
+            tokens.append(chunk)
     await pipe.on_shutdown()
 
-    assert [e["data"] for e in emitted if e["type"] == "message"] == [
-        {"content": "<think>"},
-        {"content": "t"},
-        {"content": "\n\n---\n\n"},
-        {"content": "</think>\n"},
-        {"content": "hi"},
-    ]
+    assert tokens == ["<think>", "t", "\n\n---\n\n", "</think>\n", "hi"]
     assert [e["data"] for e in emitted if e["type"] == "chat:completion"] == [
         {"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "loops": 1}},
         {"done": True},
