@@ -359,6 +359,70 @@ async def test_debug_logs_citation_saved_with_tool(dummy_chat):
 
 
 @pytest.mark.asyncio
+async def test_debug_logs_citation_multiple_turns(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    class Dummy:
+        def __init__(self, **vals):
+            self._vals = vals
+
+        def model_dump(self, exclude_none=True):
+            return self._vals
+
+    user = {"valves": Dummy(CUSTOM_LOG_LEVEL="DEBUG")}
+
+    events_first = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_item.added", item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}")),
+        types.SimpleNamespace(type="response.output_item.done", item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}")),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+    events_second = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r2")),
+        types.SimpleNamespace(type="response.output_text.delta", delta="ok"),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream1(*_a, **_kw):
+        for e in events_first:
+            yield e
+
+    async def fake_stream2(*_a, **_kw):
+        for e in events_second:
+            yield e
+
+    emitted = []
+
+    async def emitter(evt: dict):
+        emitted.append(evt)
+
+    with patch.object(
+        pipeline,
+        "stream_responses",
+        side_effect=[fake_stream1, fake_stream2],
+    ), patch.object(pipe, "get_http_client", AsyncMock(return_value=object())):
+        gen = pipe.pipe(
+            {},
+            user,
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {"t": {"callable": AsyncMock(return_value="42")}},
+        )
+        async for _ in gen:
+            pass
+    await pipe.on_shutdown()
+
+    assert emitted[-1]["type"] == "chat:completion"
+    assert emitted[-1]["data"] == {"done": True}
+    assert any(e["type"] == "citation" and e["data"]["source"]["name"] == "Debug Logs" for e in emitted)
+
+
+@pytest.mark.asyncio
 async def test_tool_metadata_persisted(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()

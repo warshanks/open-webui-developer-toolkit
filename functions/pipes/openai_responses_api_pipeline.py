@@ -324,6 +324,13 @@ class Pipe:
                     }
                 )
                 temp_input = []
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug(
+                    pretty_log_block(
+                        request_params.get("input", []),
+                        f"turn_input_{loop_count}",
+                    )
+                )
 
             try:
                 pending_calls: list[SimpleNamespace] = []
@@ -460,19 +467,9 @@ class Pipe:
                         continue
                     if et == "response.completed":
                         if event.response.usage:
-                            self._update_usage(usage_total, event.response.usage, loop_count)
-                            await __event_emitter__(
-                                {
-                                    "type": "chat:completion",
-                                    "data": {"usage": usage_total},
-                                }
+                            self._update_usage(
+                                usage_total, event.response.usage, loop_count
                             )
-                        await __event_emitter__(
-                            {
-                                "type": "chat:completion",
-                                "data": {"done": True},
-                            }
-                        )
                         continue
             except Exception as ex:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
@@ -581,12 +578,12 @@ class Pipe:
             usage_total.get("total_tokens", 0),
         )
 
-        await __event_emitter__(
-            {
-                "type": "chat:completion",
-                "data": {"done": True},
-            }
-        )
+        if usage_total:
+            await __event_emitter__(
+                {"type": "chat:completion", "data": {"usage": usage_total}}
+            )
+
+        await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
 
         for rid in cleanup_ids:
             try:
