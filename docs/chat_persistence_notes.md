@@ -13,6 +13,9 @@ This document summarizes how chat messages are stored in the upstream Open WebUI
 - Located in `backend/open_webui/models/chats.py`.
 - Merges the provided dictionary into the existing message entry or creates a new one.
 - There is no schema validation – arbitrary keys are stored as given.
+- Custom fields added to a message dictionary will therefore persist
+  in the database. They may be ignored by the default UI unless
+  additional code knows how to handle them.
 
 ## Middleware serialization
 - `backend/open_webui/utils/middleware.py` builds messages from `content_blocks`.

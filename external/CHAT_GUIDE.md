@@ -195,6 +195,9 @@ context and return the resulting dictionary.
 
 `backend/open_webui/models/chats.py` stores each conversation in a JSON field. The `history` object maps message ids to dictionaries that include `role` and `content`.
 `upsert_message_to_chat_by_id_and_message_id(id, message_id, data)` merges `data` into the existing message. Unknown keys are kept as-is because the table does not enforce a schema.
+This means custom fields placed in each message dictionary are persisted in the
+database. The default UI only understands a small subset of keys so additional
+logic is required to display or act on any extra data.
 
 During streaming the middleware repeatedly calls this helper with partial events. Once the model finishes it writes the final content string, which replaces the previous text but preserves earlier metadata.
 
