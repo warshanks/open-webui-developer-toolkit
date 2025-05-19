@@ -10,12 +10,37 @@ This document summarizes how chat messages are stored in the upstream Open WebUI
 - Messages typically include `id`, `parentId`, `role` and `content`. The `content` field is either a string or a list of typed blocks (e.g. `{type: "text", text: "hi"}`).
 
 ## `upsert_message_to_chat_by_id_and_message_id`
-- Located in `backend/open_webui/models/chats.py`.
-- Merges the provided dictionary into the existing message entry or creates a new one.
-- There is no schema validation – arbitrary keys are stored as given.
-- Custom fields added to a message dictionary will therefore persist
-  in the database. They may be ignored by the default UI unless
-  additional code knows how to handle them.
+Located in `backend/open_webui/models/chats.py`. The helper merges the given
+dictionary into an existing message entry or inserts it if the id is new. The
+core logic looks like:
+
+```python
+if message_id in history.get("messages", {}):
+    history["messages"][message_id] = {
+        **history["messages"][message_id],
+        **message,
+    }
+else:
+    history["messages"][message_id] = message
+```
+
+There is no schema validation – arbitrary keys are stored as provided. Custom
+fields therefore persist in the database. They may be ignored by the default UI
+unless additional code knows how to handle them.
+
+Example of persisting a custom flag:
+
+```python
+Chats.upsert_message_to_chat_by_id_and_message_id(
+    chat_id,
+    "msg-123",
+    {
+        "role": "assistant",
+        "content": "hello",
+        "my_meta": {"notes": "stored as-is"},
+    },
+)
+```
 
 ## Middleware serialization
 - `backend/open_webui/utils/middleware.py` builds messages from `content_blocks`.
@@ -29,6 +54,15 @@ This document summarizes how chat messages are stored in the upstream Open WebUI
   }
   ```
   followed by tool results as separate `{"role": "tool", ...}` entries.
+
+At render time the `<details>` block is inserted directly into the content string
+so progress and results can be displayed in the WebUI. Example output:
+
+```html
+<details type="tool_calls" done="true" id="123" name="my_tool" arguments="{}" result="\"ok\"">
+<summary>Tool Executed</summary>
+</details>
+```
 
 ## Observations
 - The database persists any extra keys but most helpers only read `role`, `content` and sometimes `files`.

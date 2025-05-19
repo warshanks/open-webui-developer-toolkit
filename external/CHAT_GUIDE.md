@@ -197,8 +197,31 @@ context and return the resulting dictionary.
 `upsert_message_to_chat_by_id_and_message_id(id, message_id, data)` merges `data` into the existing message. Unknown keys are kept as-is because the table does not enforce a schema.
 This means custom fields placed in each message dictionary are persisted in the
 database. The default UI only understands a small subset of keys so additional
-logic is required to display or act on any extra data.
+logic is required to display or act on any extra data. For example:
+
+```python
+Chats.upsert_message_to_chat_by_id_and_message_id(
+    chat_id,
+    "msg-123",
+    {"role": "assistant", "content": "hi", "custom": True},
+)
+```
 
 During streaming the middleware repeatedly calls this helper with partial events. Once the model finishes it writes the final content string, which replaces the previous text but preserves earlier metadata.
 
 Rendering functions such as `get_content_from_message` primarily read the `content` list, so extra keys (like custom tool metadata) are ignored by the UI unless additional logic handles them.
+
+## Tool and code interpreter blocks
+
+`backend/open_webui/utils/middleware.py` inserts `<details>` elements into the
+message `content` whenever tool calls or code interpreter blocks are processed.
+The relevant helper converts `content_blocks` to messages and produces HTML such
+as:
+
+```html
+<details type="tool_calls" done="true" id="123" name="my_tool" arguments="{}" result="\"ok\"">
+<summary>Tool Executed</summary>
+</details>
+```
+
+These tags allow the built‑in renderer to show tool execution progress.
