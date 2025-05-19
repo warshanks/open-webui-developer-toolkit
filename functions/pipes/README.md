@@ -320,5 +320,15 @@ Example pipe files will be added in a future update.
 
 ---
 
-## Responses API Refactor Plan
-See `docs/openai_responses_api_pipeline_plan.md` for the upcoming architecture changes to `openai_responses_api_pipeline.py`.
+## Refactored OpenAI Responses API Pipeline
+The `openai_responses_api_pipeline.py` file now mirrors WebUI's built‑in
+middleware.  Core logic has been extracted into helpers such as
+`stream_responses`, `delete_response`, and
+`assemble_responses_payload` with a concise `Pipe.pipe()` tying them
+together.  The implementation reuses utilities from
+`open_webui.models.chats` and `open_webui.utils.misc` so behaviour stays
+consistent with the upstream middleware.
+
+Maintainers can review `.tests/test_pipeline.py` for regression tests and
+consult `docs/openai_responses_api_pipeline_plan.md` for the full
+refactoring history.
