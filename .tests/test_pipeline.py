@@ -403,3 +403,59 @@ async def test_tool_metadata_persisted(dummy_chat):
     assert updates[-1]["tool_calls"][0]["name"] == "t"
     assert updates[-1]["tool_responses"][0]["output"] == "42"
 
+
+@pytest.mark.asyncio
+async def test_previous_response_cleanup(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events_first = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_item.added", item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}")),
+        types.SimpleNamespace(type="response.output_item.done", item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}")),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+    events_second = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r2")),
+        types.SimpleNamespace(type="response.output_text.delta", delta="ok"),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream1(*_args, **_kwargs):
+        for e in events_first:
+            yield e
+
+    async def fake_stream2(*_args, **_kwargs):
+        for e in events_second:
+            yield e
+
+    with patch.object(
+        pipeline,
+        "stream_responses",
+        side_effect=[fake_stream1, fake_stream2],
+    ), patch.object(
+        pipeline,
+        "delete_response",
+        AsyncMock(),
+    ) as del_mock, patch.object(
+        pipe,
+        "get_http_client",
+        AsyncMock(return_value=object()),
+    ):
+        await pipe.pipe(
+            {},
+            {},
+            None,
+            AsyncMock(),
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {"t": {"callable": AsyncMock(return_value="42")}},
+        )
+    await pipe.on_shutdown()
+
+    assert del_mock.await_count == 2
+    ids = [c.args[3] for c in del_mock.await_args_list]
+    assert ids == ["r1", "r2"]
+

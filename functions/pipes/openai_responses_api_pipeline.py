@@ -305,6 +305,7 @@ class Pipe:
         request_params = base_params
         usage_total: dict[str, Any] = {}
         last_response_id = None
+        cleanup_ids: list[str] = []
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
 
@@ -336,6 +337,8 @@ class Pipe:
                         self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
+                        if last_response_id:
+                            cleanup_ids.append(last_response_id)
                         last_response_id = event.response.id
                         continue
                     if et in {"response.done", "response.failed", "response.incomplete", "error"}:
@@ -584,6 +587,17 @@ class Pipe:
                 "data": {"done": True},
             }
         )
+
+        for rid in cleanup_ids:
+            try:
+                await delete_response(
+                    client,
+                    self.valves.BASE_URL,
+                    self.valves.API_KEY,
+                    rid,
+                )
+            except Exception as ex:  # pragma: no cover - logging only
+                self.log.warning("Failed to delete response %s: %s", rid, ex)
 
         if last_response_id and not self.valves.STORE_RESPONSE:
             try:
