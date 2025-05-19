@@ -1,6 +1,6 @@
 # OpenAI Responses API Pipeline Standalone Refactor Plan
 
-This document outlines the proposed refactor for `functions/pipes/openai_responses_api_pipeline.py`. The goal is to make the file feel closer to WebUI's built‑in middleware while remaining completely self contained so it can be copied directly into Open WebUI.
+This document outlines the proposed refactor for `functions/pipes/openai_responses_api_pipeline.py`. The goal is to make the file feel closer to WebUI's built‑in middleware while remaining completely self‑contained so it can be copied directly into Open WebUI.
 
 ## Goals
 
@@ -57,6 +57,45 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
 - How should error handling mirror middleware behaviour? Investigate how `process_chat_response` updates chat history on failures and replicate that logic for Responses API calls.
 - Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. Explore keeping the tokens themselves using the `previous_response_id` approach so later turns can replay them without loss.
 - Could tool call payloads and their outputs be written directly into the chat history rather than stored in `citation` metadata? This might remove the need to rebuild message sequences on later turns.
+
+Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete because the API currently lacks a way to delete stored responses via the app.
+
+## Proposed Structure
+
+The refactored file should remain a single module with clear helpers.  
+Suggested layout:
+
+1. **Configuration** – dataclasses `Valves` and `UserValves` defining all tweakable options.
+2. **Payload Builders** – helper functions like `build_instructions()`, `prepare_tools()` and `build_chat_payload()`.
+3. **Streaming Loop** – a `stream_chat_completion()` coroutine that yields deltas and captures reasoning tokens.
+4. **Tool Handling** – `execute_tool_calls()` for running tools in parallel and updating chat history.
+5. **Pipe Class** – lightweight orchestrator exposing a `pipe()` entrypoint mirroring WebUI middleware.
+
+Each helper should follow existing middleware naming where possible for easy comparison.
+
+### Key Functions
+
+```python
+async def build_chat_payload(cfg: Valves, messages: list[dict]) -> dict:
+    """Return the JSON payload for OpenAI's chat completion endpoint."""
+
+async def stream_chat_completion(payload: dict, previous_id: str | None) -> AsyncIterator[Event]:
+    """Yield SSE events while preserving reasoning tokens."""
+
+async def execute_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
+    """Run tools concurrently and return their responses."""
+
+class Pipe:
+    async def pipe(self, params: dict, send_event: Callable[[str, Any], Awaitable[None]]):
+        """Main entrypoint called by WebUI."""
+```
+
+### Previous Response Tracking
+
+`stream_chat_completion()` accepts a `previous_id` argument when `store=True`.  
+The function reuses this ID with OpenAI's `previous_response_id` field so that raw reasoning tokens persist across tool loops.  
+Once the tool step is finished the ID can be dropped, keeping history size small.  
+Because manual deletion of stored responses is not available yet, the pipe should only rely on this feature during the temporary tool loop.
 
 ## Next Steps
 
