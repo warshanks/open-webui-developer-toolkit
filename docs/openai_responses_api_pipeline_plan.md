@@ -74,7 +74,7 @@ Below is a task breakdown with _suggested_ statuses. The AI (or human) can check
 | **5**       | **Implement Cleanup**                         | 1. After streaming and tool calls, call `DELETE /v1/responses/{id}` to remove stored responses if `previous_response_id` was used. <br> 2. Ensure errors do not block cleanup.                                                                    | Done |                   |
 | **6**       | **Expand Unit Tests**                         | 1. Add tests under `.tests/` mocking SSE events, verifying usage stats and parallel tool call flows. <br> 2. Confirm the final event order (status → message → citation → completion).                                                           | Done |                   |
 | **7**       | **Update Documentation**                      | 1. Revise `functions/pipes/README.md` with a short summary of the new structure. <br> 2. Note any external imports from middleware. <br> 3. Link to the new test suite for maintainers.                                                            | Done |                   |
-| **8**       | **Verify Event Logs & Compare**              | 1. Capture logs from a real chat session in both the old pipeline and the new one. <br> 2. Compare event sequences to ensure no regressions.                                                                                                      | Not Started |                   |
+| **8**       | **Verify Event Logs & Compare**              | 1. Capture logs from a real chat session in both the old pipeline and the new one. <br> 2. Compare event sequences to ensure no regressions. | Blocked | Old pipeline version unavailable; cannot capture comparison logs |
 
 ---
 
