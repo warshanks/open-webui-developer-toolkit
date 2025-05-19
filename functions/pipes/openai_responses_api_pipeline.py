@@ -505,6 +505,20 @@ class Pipe:
                     },
                 }
             )
+            self._store_citation(
+                __metadata__["chat_id"],
+                __metadata__["message_id"],
+                {
+                    "document": ["\n".join(self._debug_logs)],
+                    "metadata": [
+                        {
+                            "date_accessed": datetime.now().isoformat(),
+                            "source": "Debug Logs",
+                        }
+                    ],
+                    "source": {"name": "Debug Logs"},
+                },
+            )
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
@@ -643,6 +657,18 @@ class Pipe:
                 for subkey, subval in value.items():
                     total[key][subkey] = total[key].get(subkey, 0) + subval
         total["loops"] = loops
+
+    def _store_citation(self, chat_id: str, message_id: str, citation: dict) -> None:
+        """Persist a citation under the given message."""
+        try:
+            msg = Chats.get_message_by_id_and_message_id(chat_id, message_id) or {}
+            sources = list(msg.get("sources", []))
+            sources.append(citation)
+            Chats.upsert_message_to_chat_by_id_and_message_id(
+                chat_id, message_id, {"sources": sources}
+            )
+        except Exception as ex:  # pragma: no cover - log only
+            self.log.debug("Failed to store citation: %s", ex)
 
 
 async def stream_responses(

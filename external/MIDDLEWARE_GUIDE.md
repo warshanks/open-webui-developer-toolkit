@@ -125,6 +125,8 @@ This multi stage processing allows Open WebUI to offer web search, code executio
 
 `middleware.py` relies heavily on the websocket event helpers `get_event_emitter` and `get_event_call`. These wrap asynchronous queues connected to the user's browser. Each major step (searching, executing a tool, streaming model output) emits structured events so the client can update the UI in real time.
 
+Only a few event types trigger immediate database writes (`status`, `message`, `replace`). Others like `citation` merely update the UI. Pipelines that want to persist custom citations must update the chat record themselves, e.g. via `Chats.upsert_message_to_chat_by_id_and_message_id({"sources": [...]})`.
+
 ## Background tasks
 
 Longer operations such as database updates, title generation or tag extraction are offloaded using `create_task`. This keeps the HTTP response snappy while ensuring chat history and metadata are stored reliably.
