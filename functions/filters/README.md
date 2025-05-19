@@ -144,6 +144,43 @@ class Filter:
 Place filter modules in this folder. They can be combined with any pipe to
 customise the chat pipeline.
 
+### Toggle Filter Example (Open WebUI 0.6.10)
+
+Filters may show a switch in the UI and a custom icon when `toggle` and `icon`
+are defined. The example below emits a status toast when toggled:
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+
+class Filter:
+    class Valves(BaseModel):
+        pass
+
+    def __init__(self):
+        self.valves = self.Valves()
+        self.toggle = True  # adds a UI switch
+        # small SVG encoded as a data URI
+        self.icon = "data:image/svg+xml;base64,..."
+
+    async def inlet(
+        self, body: dict, __event_emitter__, __user__: Optional[dict] = None
+    ) -> dict:
+        await __event_emitter__(
+            {
+                "type": "status",
+                "data": {
+                    "description": "Toggled!",
+                    "done": True,
+                    "hidden": False,
+                },
+            }
+        )
+        return body
+```
+
+A screenshot of the toggle in action can be found [here](https://docs.openwebui.com/assets/images/toggle-filter-491e8306ef6b94f72cd5236c7944043d.png).
+
 More implementation details and code snippets can be found in
 `external/FILTER_GUIDE.md` which summarises the upstream
 `open_webui.utils.filter` module.
