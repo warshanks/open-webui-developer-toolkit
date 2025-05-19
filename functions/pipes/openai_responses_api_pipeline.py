@@ -571,37 +571,6 @@ class Pipe:
             }
         )
 
-        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs:
-            await __event_emitter__(
-                {
-                    "type": "citation",
-                    "data": {
-                        "document": ["\n".join(self._debug_logs)],
-                        "metadata": [
-                            {
-                                "date_accessed": datetime.now().isoformat(),
-                                "source": "Debug Logs",
-                            }
-                        ],
-                        "source": {"name": "Debug Logs"},
-                    },
-                }
-            )
-            self._store_citation(
-                __metadata__["chat_id"],
-                __metadata__["message_id"],
-                {
-                    "document": ["\n".join(self._debug_logs)],
-                    "metadata": [
-                        {
-                            "date_accessed": datetime.now().isoformat(),
-                            "source": "Debug Logs",
-                        }
-                    ],
-                    "source": {"name": "Debug Logs"},
-                },
-            )
-
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
             __metadata__["chat_id"],
@@ -640,6 +609,23 @@ class Pipe:
                 )
             except Exception as ex:  # pragma: no cover - logging only
                 self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
+
+        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs:
+            await __event_emitter__(
+                {
+                    "type": "citation",
+                    "data": {
+                        "document": ["\n".join(self._debug_logs)],
+                        "metadata": [
+                            {
+                                "date_accessed": datetime.now().isoformat(),
+                                "source": "Debug Logs",
+                            }
+                        ],
+                        "source": {"name": "Debug Logs"},
+                    },
+                }
+            )
 
     async def _execute_tools(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
@@ -769,25 +755,6 @@ class Pipe:
                     total[key][subkey] = total[key].get(subkey, 0) + subval
         total["loops"] = loops
 
-    def _store_citation(self, chat_id: str, message_id: str, citation: dict) -> None:
-        """Persist a citation under the given message."""
-        try:
-            msg = Chats.get_message_by_id_and_message_id(chat_id, message_id) or {}
-            sources = list(msg.get("sources", []))
-            sources.append(citation)
-            self.log.debug(
-                "Storing message to history: %s",
-                json.dumps({"sources": sources}, indent=2),
-            )
-            Chats.upsert_message_to_chat_by_id_and_message_id(
-                chat_id, message_id, {"sources": sources}
-            )
-            self.log.debug(
-                "Stored citation for chat=%s message=%s", chat_id, message_id
-            )
-        except Exception as ex:  # pragma: no cover - log only
-            self.log.debug("Failed to store citation: %s", ex)
-
     def _store_tool_metadata(
         self,
         chat_id: str,
@@ -813,6 +780,14 @@ class Pipe:
                 responses.append(response)
             self.log.debug(
                 "Storing message to history: %s",
+                json.dumps(
+                    {"tool_calls": calls, "tool_responses": responses}, indent=2
+                ),
+            )
+            self.log.debug(
+                "Storing tool metadata for chat=%s message=%s: %s",
+                chat_id,
+                message_id,
                 json.dumps(
                     {"tool_calls": calls, "tool_responses": responses}, indent=2
                 ),
