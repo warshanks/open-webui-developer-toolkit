@@ -1,306 +1,175 @@
-# OpenAI Responses API Pipeline Standalone Refactor Plan
+Below is a streamlined, step‑by‑step refactoring plan organized for easy tracking by an AI or any incremental automation process. Each task is broken out, with placeholders for future status updates. The plan references existing behaviors and ensures none of the pipeline’s critical features are lost.
 
-This document outlines the proposed refactor for `functions/pipes/openai_responses_api_pipeline.py`. The goal is to make the file feel closer to WebUI's built‑in middleware while remaining completely self‑contained so it can be copied directly into Open WebUI.
+⸻
 
-## Goals
+OpenAI Responses API Pipeline Refactor Plan
 
-- **Align with WebUI middleware.** Reuse patterns from `open_webui.utils.middleware` to simplify maintenance and share features.
-- **Remain a single-file tool.** Avoid creating extra modules so the pipe can be copied as-is.
-- **Keep native tool calling.** The pipe must continue to support OpenAI's native tool calls.
-- **Improve readability and testability.** Break large blocks of logic into focused helpers and add unit tests.
-- **Maintain existing features.** Support reasoning summaries, parallel tool calls, web search integration and usage stats.
+This refactor aims to make functions/pipes/openai_responses_api_pipeline.py easier to maintain and more closely aligned with WebUI’s built‑in middleware—while remaining a self‑contained, single‑file tool. All changes must preserve existing features such as streaming, parallel tool calls, reasoning summaries (<think> blocks), and usage stats.
 
-## Current Pipeline Overview
+⸻
 
-The current implementation already works reliably and provides a rich feature
-set.  Key behaviours worth keeping:
+Refactor Goals
+	1.	Maintain Single-File Design
+So the pipeline can be copied into any Open WebUI instance with minimal friction.
+	2.	Align with WebUI Middleware
+Match function naming, event emitter patterns, and usage stats tracking so the pipeline behaves like process_chat_response.
+	3.	Native Tool Calls
+Continue supporting OpenAI’s native function‑call style (tool calls) in an asynchronous, parallel manner.
+	4.	Improve Readability & Testability
+Break large logic into focused helpers with unit tests to ensure correctness.
+	5.	Keep Existing Features
+	•	Manual SSE streaming, <think> markers, asynchronous tool calls, web search integration, usage stats, logging, and limiting repeated loops with MAX_TOOL_CALLS.
 
-- Streaming with a manual SSE parser (`stream_responses`) so the pipe has no
-  OpenAI SDK dependency.
-- `<think>` blocks are emitted when reasoning summaries arrive and closed when
-  normal output resumes.
-- Tool calls are executed asynchronously via `_execute_tools` and their results
-  are emitted as `citation` events.  Results are also appended to the next API
-  request to preserve context.
-- Debug logging is buffered and, when the log level is `DEBUG`, the buffer is
-  sent as a citation at the end of the run.
-- After each loop iteration the pipeline decides whether another tool phase is
-  required based on `MAX_TOOL_CALLS` and any pending calls.
+⸻
 
-Understanding these behaviours ensures the refactor does not accidentally drop
-useful functionality.
+High-Level Changes
+	1.	Extract Utilities & Mirror Middleware
+	•	Use (or closely mimic) utilities from open_webui.utils.middleware.
+	•	Remove duplicated code where possible.
+	•	Keep all logic in one file (don’t create a separate module).
+	2.	Restructure Pipe.pipe()
+	•	Break pipe() into smaller helpers:
+	•	Input assembly (prepares payload)
+	•	Streaming loop (listens to SSE)
+	•	Tool execution (runs calls in parallel)
+	•	Storage/cleanup (persist or delete partial responses)
+	•	Adopt event emitter conventions from WebUI (status, citation, chat:completion).
+	3.	Tool Execution Helper
+	•	Move _execute_tools to a dedicated helper that accepts a list of calls and returns results.
+	•	Store call inputs and outputs in the chat history (e.g., tool_calls, tool_responses fields).
+	4.	Reasoning Tokens Persistence
+	•	Use previous_response_id and DELETE /v1/responses/{id} to ensure raw reasoning tokens can be streamed and then cleaned up.
+	5.	Configuration & Valves
+	•	Provide fallback defaults.
+	•	Apply user overrides (e.g., UserValves) after defaults are set.
+	6.	Testing & Documentation
+	•	Add unit tests under .tests/ with SSE parsing, usage stats, and parallel tool calls.
+	•	Update functions/pipes/README.md explaining new structure.
 
-## Key Refactor Tasks
+⸻
 
-1. **Reuse middleware helpers**
-   - Import helpers from `open_webui.utils.middleware` instead of duplicating them.
-   - Remove local code that mirrors middleware utilities unless slight tweaks are required.
-   - Keep any helper functions inside the pipe file so no additional modules are needed.
+Detailed Implementation Tasks
 
-2. **Restructure `Pipe.pipe()`**
-   - Separate the preparation of OpenAI payloads from the streaming loop.
-   - Follow the same order as `process_chat_payload` → `generate_chat_completion` → `process_chat_response`.
-   - Use small helpers for building `input_items`, assembling `instructions`, preparing tools and updating usage.
-   - Limit `Pipe.pipe()` to orchestrating these helpers and emitting events.
+Below is a task breakdown with suggested statuses. The AI (or human) can check off each item, note partial progress, and leave comments.
 
-3. **Adopt event emitter conventions**
-   - Emit `status`, `citation` and `chat:completion` events using the same schemas as the core middleware.
-   - When tool calls occur, send events identical to the built‑in `chat_completion_tools_handler` so the UI behaves consistently.
-   - Keep the existing `<think>` reasoning markers but ensure they are sent as text deltas.
+Legend for Status:
+	•	Not Started
+	•	In Progress
+	•	Blocked
+	•	Done
 
-4. **Tool execution helper**
-   - Move `_execute_tools` into a standalone function that mirrors `process_chat_response`’s handling of tool calls.
-   - Support parallel execution using `asyncio.gather` and capture outputs as citation sources.
-   - Store results back into the chat history via `Chats.upsert_message_to_chat_by_id_and_message_id` similar to middleware behaviour.
+Task ID	Title	Description	Status	Notes / Links
+1	Extract Helpers	1. Create small, focused helper functions for SSE parsing, assembling OpenAI payloads, storing partial messages, etc.  2. Preserve existing logic but isolate it in well‑named functions.  3. Add placeholders in the code for future tests.	Not Started	
+2	Refactor pipe()	1. Rewrite Pipe.pipe() to orchestrate the new helpers (payload building, streaming, tool calls, final cleanup).  2. Keep the event emission order consistent with WebUI’s process_chat_response.  3. Ensure partial results are stored properly.	Not Started	
+3	Integrate Middleware Imports	1. Identify duplicated logic that can be replaced with open_webui.utils.middleware or similar.  2. Replace references safely, ensuring no feature gaps.	Not Started	
+4	Persist Tool Metadata	1. Update tool execution code so tool_calls and tool_responses are stored in the chat DB.  2. Remove any embedded JSON approach if used; rely on database fields for replays.	Not Started	
+5	Implement Cleanup	1. After streaming and tool calls, call DELETE /v1/responses/{id} to remove stored responses if previous_response_id was used.  2. Ensure errors do not block cleanup.	Not Started	
+6	Expand Unit Tests	1. Add tests under .tests/ mocking SSE events, verifying usage stats and parallel tool call flows.  2. Confirm the final event order (status → message → citation → completion).	Not Started	
+7	Update Documentation	1. Revise functions/pipes/README.md with a short summary of the new structure.  2. Note any external imports from middleware.  3. Link to the new test suite for maintainers.	Not Started	
+8	Verify Event Logs & Compare	1. Capture logs from a real chat session in both the old pipeline and the new one.  2. Compare event sequences to ensure no regressions.	Not Started	
 
-5. **Persist reasoning tokens and tool calls**
-   - Continue using the `previous_response_id` workaround so raw reasoning tokens can be streamed into follow-up turns.
-   - Instead of storing tool call JSON inside citation metadata, upsert the `tool_calls` and `tool_responses` directly into the chat history.
-   - Ensure stored items match OpenAI’s expected structure so future API calls can replay the same messages without reconstruction.
 
-6. **Configuration and valves**
-   - Provide sensible defaults so a minimal config works out‑of‑the‑box.
-   - Ensure user overrides via `UserValves` are applied after initial setup, matching how middleware reads user settings.
+⸻
 
-7. **Testing**
-   - Add unit tests under `.tests/` covering payload building, SSE parsing and tool loops.
-   - Reference `external/MIDDLEWARE_GUIDE.md` for examples of mocking the event emitter and chat database.
-   - Update `nox -s lint tests` to run these tests.
+Proposed File Structure
 
-8. **Documentation**
-   - Update `functions/pipes/README.md` with a short section summarising the new structure and pointing to this plan.
-   - Note any middleware helpers being imported so future maintainers understand the dependencies.
+Retain one file: openai_responses_api_pipeline.py. Within it:
+	1.	Data Models
+	•	Valves, UserValves (Pydantic or similar) for configuration.
+	•	ResponsesEvent (dataclass) for parsed SSE lines: includes type, delta, etc.
+	2.	Helper Functions (for example; names can vary):
+	•	assemble_responses_payload(valves: Valves, chat_id: str) -> dict
+Builds the input payload for the OpenAI Responses API.
+	•	parse_responses_sse(raw_sse_line: str) -> ResponsesEvent
+Converts an SSE line into a typed event object.
+	•	stream_responses_completion(...) -> AsyncIterator[ResponsesEvent]
+Streams SSE from the API, preserves previous_response_id.
+	•	execute_responses_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]
+Runs all requested tools asynchronously and returns results.
+	•	delete_openai_response(client, base_url, response_id)
+Cleans up stored responses via DELETE /v1/responses/{id}.
+	3.	Pipe Class
+	•	async def pipe(self, body, __user__, __request__, __emitter__, __caller__, __files__, __meta__, __tools__):
+The orchestrator that ties everything together. Steps:
+	1.	Load config & chat data
+	2.	Assemble the request payload
+	3.	Stream & parse SSE events, emit them in real‑time
+	4.	Detect and handle tool calls
+	5.	Cleanup any stored previous_response_id
 
-## Design Notes
+⸻
 
-- How should error handling mirror middleware behaviour? Investigate how `process_chat_response` updates chat history on failures and replicate that logic for Responses API calls.
-- Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. The pipeline will preserve these tokens using the `previous_response_id` approach so later turns can replay them.
-- Tool call payloads and their outputs will be written directly into the chat history via `tool_calls` and `tool_responses`. This removes the need to rebuild message sequences on later turns.
-
-Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete and delete the stored response via `DELETE /v1/responses/{id}`.  Event objects will be represented by a small dataclass `ResponsesEvent` to keep types consistent.
-
-## Proposed Structure
-
-The refactored file should remain a single module with clear helpers.
-Suggested layout:
-
-1. **Data Models** – Pydantic classes `Valves` and `UserValves` hold
-   configuration.  Defaults should match WebUI's middleware so a minimal
-   install works without tweaks.
-2. **Payload Builders** – helper functions like `build_instructions()`,
-   `prepare_tools()` and `assemble_responses_payload()` assemble the model payload.
-3. **Streaming Loop** – a `stream_responses_completion()` coroutine yields text
-   deltas and preserves reasoning tokens using `previous_response_id`.
-4. **Tool Handling** – `execute_responses_tool_calls()` runs tools in parallel and
-   updates chat history with `function_call_output` items.
-5. **Pipe Class** – lightweight orchestrator exposing a `pipe()` entrypoint
-   mirroring WebUI middleware.
-6. **Cleanup** – `delete_openai_response()` removes stored responses once
-   streaming and tools finish.
-
-Each helper should follow existing middleware naming where possible for easy comparison.
-
-The current implementation in `openai_responses_api_pipeline.py` already parses
-Server-Sent Events (SSE) from the Responses API and streams `<think>` blocks
-alongside normal tokens.  The refactor will keep this logic but wrap it in a
-`parse_responses_sse()` helper so the event loop is easier to test.  Error
-handling should mimic `process_chat_response` by storing partial messages and
-emitting a final `chat:completion` event even when a tool fails.
-
-### Key Functions
-
-```python
-async def assemble_responses_payload(valves: Valves, chat_id: str) -> dict:
-    """Return the input payload for the Responses API."""
-
-async def stream_responses_completion(
-    client: httpx.AsyncClient,
-    base_url: str,
-    payload: dict,
-    previous_id: str | None,
-) -> AsyncIterator[ResponsesEvent]:
-    """Yield SSE events while preserving reasoning tokens."""
-
-def parse_responses_sse(raw: str) -> ResponsesEvent:
-    """Parse a single SSE line into a ``ResponsesEvent`` dataclass."""
-
-async def execute_responses_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
-    """Run tools concurrently and return their results."""
-
-async def delete_openai_response(client: httpx.AsyncClient, base_url: str, response_id: str) -> None:
-    """Remove a stored response via the OpenAI API."""
+Example Pseudocode for Pipe.pipe()
 
 class Pipe:
-    async def pipe(self, body: dict, send_event: Callable[[dict], Awaitable[None]]):
-        """Main entrypoint called by WebUI."""
-```
+    async def pipe(self, body, __user__, __request__, __emitter__, __caller__, __files__, __meta__, __tools__):
+        chat_id = __meta__.get("chat_id")
+        user_valves = __user__.get("valves", {})
+        
+        # Merge user overrides
+        valves = self._apply_user_overrides(user_valves)
+        
+        # Prepare the OpenAI payload
+        payload = assemble_responses_payload(valves, chat_id)
+        payload.update(body)  # Merge user input or instructions if needed
 
-### Detailed Function Outline
+        # Optionally store the previous response
+        previous_response_id = None
 
-Helper names closely mirror the middleware and use a `responses_` prefix where
-needed.  This keeps the behaviour comparable while avoiding import collisions if
-the pipe is later merged into the core project.
+        # Stream from the OpenAI Responses API
+        async for event in stream_responses_completion(
+            self.http_client,
+            valves.BASE_URL,
+            payload,
+            previous_response_id
+        ):
+            # Emit text or citations
+            await __emitter__(event.to_dict())
+            
+            # Check if the event includes any tool calls
+            if event.type == "tool_calls":
+                # Execute them in parallel
+                tool_call_results = await execute_responses_tool_calls(
+                    event.data.get("calls"), 
+                    chat_id
+                )
+                # Optionally store or emit the tool results as citations
+                # ...
+            
+            # Update or clear previous_response_id as needed
+            previous_response_id = event.data.get("previous_response_id")
 
-1. `assemble_responses_payload(valves: Valves, chat_id: str) -> dict`
-   - Fetch the chat thread and convert it to the Responses API `input` format.
-   - Insert the admin system prompt (if any) while respecting any user provided
-     system message.  When both are present the user message wins.
-   - Return a payload dictionary ready to be merged with other model parameters.
+        # Cleanup if a stored ID existed
+        if previous_response_id:
+            await delete_openai_response(self.http_client, valves.BASE_URL, previous_response_id)
 
-2. `run_responses_completion(client, base_url, payload, previous_id)`
-   - Wrapper around `stream_responses` that yields parsed SSE events.
-   - Includes `previous_id` when `store=True` to preserve reasoning tokens.
-   - Emits an initial `status` event when the request is accepted.
 
-3. `parse_responses_sse(raw)`
-   - Convert a single SSE line into a `ResponsesEvent` dataclass used by the streaming loop.
-   - Unit tests will feed in example payloads from the official API docs.
+⸻
 
-4. `handle_responses_output(events, chat_id, emitter, tools)`
-   - Streams text deltas through `emitter` and records partial messages.
-   - Detects `tool_calls` events and delegates to `execute_responses_tool_calls`.
-   - Aggregates token usage for the final `chat:completion` event.
+Important Notes
+	•	Error Handling:
+Even if a tool call fails or the SSE stream breaks, emit a final chat:completion event and attempt to clean up previous_response_id.
+	•	MAX_TOOL_CALLS vs. MAX_TOOL_LOOPS:
+Consider renaming MAX_TOOL_CALLS to clarify it limits iterative loops of tool calls, not the total possible calls.
+	•	Storage of Reasoning Tokens:
+Because previous_response_id is used, partial model reasoning stays in the chain of responses. Once we’re done, we issue a DELETE to keep the response store clean.
+	•	Logging & Debug:
+Maintain the existing debug logging approach. Possibly buffer logs and emit them as a final citation in DEBUG mode.
+	•	Parallel Tool Execution:
+Use asyncio.gather for tool calls if multiple calls come in at once.
 
-5. `execute_responses_tool_calls(tool_calls, chat_id, tools, emitter)`
-   - Maps each call to the registered WebUI tools and runs them in parallel using
-     `asyncio.gather`.
-   - Stores results under `function_call_output` in the chat history so later
-     turns can replay them without reconstruction.
-   - Emits `citation` events referencing the returned data.  Results are attached
-     to the same citation payload for transparency.
+⸻
 
-6. `cleanup_responses(client, base_url, previous_id)`
-   - Deletes stored responses via `DELETE /v1/responses/{id}` once they are no
-     longer needed.
+Next Steps
+	•	(1) Begin Helper Extraction: Introduce new helper functions without breaking the old flow.
+	•	(2) Incrementally Refactor: Migrate logic from _execute_tools and other large code blocks into the new helpers.
+	•	(3) Integrate & Test: Ensure references to new helpers align with WebUI middleware. Write tests as changes are made to prevent regressions.
+	•	(4) Finalize & Cleanup: Remove unused code, add docstrings, finalize documentation in README.md.
 
-### Previous Response Tracking
+As each task is completed, update the Task Table’s status column. This will keep the refactoring organized and easy to track.
 
-`stream_responses_completion()` accepts a `previous_id` argument when `store=True`.
-The function reuses this ID with OpenAI's `previous_response_id` field so that raw reasoning tokens persist across tool loops.  
-Once the tool step is finished the ID can be dropped, keeping history size small.
-With the new `DELETE /v1/responses/{id}` endpoint the pipe can remove stored responses when they are no longer needed. Use this after tool execution to prevent history bloat.
+⸻
 
-### Event Flow Example
+End of Plan
 
-The refactored pipeline should emit events in a predictable sequence so the
-frontend can mirror the behaviour of WebUI's middleware:
-
-1. **`status`** – immediately after the Responses request is accepted. Indicates
-   the model is generating output.
-2. **`message`** – streamed deltas of assistant text or `<think>` blocks.
-3. **`citation`** – whenever a web search or tool result produces a source
-   document. These should also be persisted via `_store_citation`.
-4. **`chat:completion`** – final usage stats followed by a final event with
-   `{"done": true}`.
-
-Tools emit their own `status` updates while running. The order of events should
-match `process_chat_response` so existing UI components require no changes.
-
-## Next Steps
-
-1. Replace duplicated utilities with imports from middleware where practical.
-2. Refactor `openai_responses_api_pipeline.Pipe` to use concise helper functions defined in the same file.
-3. Write tests covering the refactored logic.
-4. Update documentation.
-5. Validate the emitted event order matches `process_chat_response` using unit
-   tests and sample logs.
-
-Future agents should implement the above tasks incrementally, verifying tests pass after each major change.
-
-## Implementation Order
-
-To keep the existing pipe stable while refactoring, tackle the changes in
-discrete stages:
-
-1. **Extract Helpers** – introduce the new helper functions (`assemble_responses_payload`,
-   `prepare_tools`, `parse_responses_sse`, etc.) without altering the main logic.
-   Unit tests should cover these helpers in isolation.
-2. **Refactor `pipe()`** – rewrite the streaming loop to call the helpers and
-   emit events in the same order as `process_chat_response`. Keep behaviour
-   identical and compare test logs to the current implementation.
-3. **Integrate Middleware Imports** – once the structure matches, replace local
-   utilities with imports from `open_webui.utils.middleware` where possible.
-4. **Persist Tool Metadata** – update `_execute_tools` (or the new
-   `execute_responses_tool_calls`) so tool call and output items are stored via
-   `Chats.upsert_message_to_chat_by_id_and_message_id` rather than embedding JSON
-   in citations.
-5. **Clean Up and Delete** – hook `cleanup_responses` after the streaming loop to
-   remove any temporary responses. Verify this works against the official API and
-   LiteLLM gateways.
-6. **Expand Tests** – add regression tests for SSE parsing, usage aggregation and
-   parallel tool execution. Use the fixtures under `.tests/` to mock database and
-   event emitters.
-7. **Update Docs** – finalise README snippets and remove outdated comments once
-   the refactor is stable.
-8. **Compare Event Logs** – capture before/after logs from a real chat session
-   and verify the event sequence matches exactly.  This guards against subtle UI
-   regressions.
-
-## Additional Implementation Considerations
-
-The original pipeline grew organically which makes the control flow difficult to
-follow.  The refactor will introduce more explicit helpers and data models so
-each step has a single responsibility.  Important points to keep in mind:
-
-1. **Rename `MAX_TOOL_CALLS`** – the existing setting actually limits how many
-   **loops** can occur when the model repeatedly invokes tools.  Renaming this
-   to `MAX_TOOL_LOOPS` clarifies its purpose and matches the upcoming helper
-   function names.
-2. **`ResponsesEvent` Dataclass** – define a lightweight dataclass that mirrors
-   the event payloads returned by the API.  Fields should include `type`, any
-   textual delta (`delta`), the originating `item` and an optional `response`
-   object with usage stats.  Converting the streaming objects up front makes type
-   hints clearer and unit tests easier to write.
-3. **Database Interactions** – helper functions such as
-   `upsert_message_to_chat_by_id_and_message_id` must be called whenever partial
-   messages or tool results are produced.  This keeps the chat thread consistent
-   with the middleware behaviour.
-4. **Pseudocode for `Pipe.pipe`** –
-
-   ```python
-   async def pipe(
-       self,
-       body: dict,
-       __user__,
-       __request__,
-       __emitter__,
-       __caller__,
-       __files__,
-       __meta__,
-       __tools__,
-   ) -> None:
-       valves = self._apply_user_overrides(__user__.get("valves"))
-       chat_id = __meta__["chat_id"]
-       payload = assemble_responses_payload(valves, chat_id)
-       instructions = build_instructions(body)
-       tools = prepare_tools(__tools__)
-       previous_id: str | None = None
-       async for evt in run_responses_completion(
-           self.client,
-           valves.BASE_URL,
-           {**payload, **instructions},
-           previous_id,
-       ):
-           await handle_responses_output(evt, chat_id, __emitter__, tools)
-           if evt.type == "tool_calls" and evt.response:
-               previous_id = evt.response.id
-           else:
-               previous_id = None
-
-       if previous_id:
-           await cleanup_responses(self.client, valves.BASE_URL, previous_id)
-   ```
-
-   This outline emphasises the separation between assembling the payload,
-   streaming the response and cleaning up any persisted state.
-5. **Error Handling** – every loop should catch network or tool exceptions and
-   emit a `chat:completion` event with a truncated traceback.  The stored
-   `previous_response_id` must be cleared so the next turn starts fresh.
-
-### Are we ready to proceed?
-
-The design now specifies helper names, expected dataclasses and the overall
-orchestration flow.  Remaining open questions are mostly around exact event
-schemas which can be validated against `external/MIDDLEWARE_GUIDE.md`.  With
-these clarifications in place the refactor can begin in small stages as outlined
-above.
+Use this document as a single source of truth for the refactoring effort. Each time new commits are made to production, update the “Task ID” row accordingly and note any special considerations in the “Notes / Links” column.
