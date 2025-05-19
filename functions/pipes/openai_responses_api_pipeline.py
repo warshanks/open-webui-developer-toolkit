@@ -227,7 +227,8 @@ class Pipe:
         """Stream responses from OpenAI and handle tool calls.
 
         Instead of yielding chunks, this version emits them via
-        ``__event_emitter__`` with the ``chat:completion`` event type.
+        ``__event_emitter__`` with the ``message`` event type so the
+        websocket layer appends text to the current message.
         """
         start_ns = time.perf_counter_ns()
         self._debug_logs.clear()
@@ -236,7 +237,7 @@ class Pipe:
         if __tools__ and __metadata__.get("function_calling") != "native":
             await __event_emitter__(
                 {
-                    "type": "chat:completion",
+                    "type": "message",
                     "data": {
                         "content": (
                             "🛑 Tools detected, but native function calling is disabled.\n\n"
@@ -323,19 +324,19 @@ class Pipe:
                             is_model_thinking = True
                             content += "<think>"
                             await __event_emitter__(
-                                {"type": "chat:completion", "data": {"content": content}}
+                                {"type": "message", "data": {"content": content}}
                             )
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         content += event.delta
                         await __event_emitter__(
-                            {"type": "chat:completion", "data": {"content": content}}
+                            {"type": "message", "data": {"content": content}}
                         )
                         continue
                     if et == "response.reasoning_summary_text.done":
                         content += "\n\n---\n\n"
                         await __event_emitter__(
-                            {"type": "chat:completion", "data": {"content": content}}
+                            {"type": "message", "data": {"content": content}}
                         )
                         request_params["input"].append(
                             {
@@ -352,13 +353,13 @@ class Pipe:
                             is_model_thinking = False
                             content += "</think>\n"
                             await __event_emitter__(
-                                {"type": "chat:completion", "data": {"content": content}}
+                                {"type": "message", "data": {"content": content}}
                             )
                         continue
                     if et == "response.output_text.delta":
                         content += event.delta
                         await __event_emitter__(
-                            {"type": "chat:completion", "data": {"content": content}}
+                            {"type": "message", "data": {"content": content}}
                         )
                         continue
                     if et == "response.output_text.done":
@@ -439,7 +440,7 @@ class Pipe:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
                 await __event_emitter__(
                     {
-                        "type": "chat:completion",
+                        "type": "message",
                         "data": {
                             "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
                         },
