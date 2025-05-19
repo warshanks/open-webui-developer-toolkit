@@ -58,7 +58,7 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
 - Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. Explore keeping the tokens themselves using the `previous_response_id` approach so later turns can replay them without loss.
 - Could tool call payloads and their outputs be written directly into the chat history rather than stored in `citation` metadata? This might remove the need to rebuild message sequences on later turns.
 
-Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete because the API currently lacks a way to delete stored responses via the app.
+Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete and delete the stored response via `DELETE /v1/responses/{id}`.
 
 ## Proposed Structure
 
@@ -70,6 +70,7 @@ Suggested layout:
 3. **Streaming Loop** – a `stream_chat_completion()` coroutine that yields deltas and captures reasoning tokens.
 4. **Tool Handling** – `execute_tool_calls()` for running tools in parallel and updating chat history.
 5. **Pipe Class** – lightweight orchestrator exposing a `pipe()` entrypoint mirroring WebUI middleware.
+6. **Cleanup** – `delete_openai_response()` removes stored responses once streaming and tools finish.
 
 Each helper should follow existing middleware naming where possible for easy comparison.
 
@@ -85,6 +86,9 @@ async def stream_chat_completion(payload: dict, previous_id: str | None) -> Asyn
 async def execute_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
     """Run tools concurrently and return their responses."""
 
+async def delete_openai_response(response_id: str) -> None:
+    """Remove a stored response via the OpenAI API."""
+
 class Pipe:
     async def pipe(self, params: dict, send_event: Callable[[str, Any], Awaitable[None]]):
         """Main entrypoint called by WebUI."""
@@ -95,7 +99,7 @@ class Pipe:
 `stream_chat_completion()` accepts a `previous_id` argument when `store=True`.  
 The function reuses this ID with OpenAI's `previous_response_id` field so that raw reasoning tokens persist across tool loops.  
 Once the tool step is finished the ID can be dropped, keeping history size small.  
-Because manual deletion of stored responses is not available yet, the pipe should only rely on this feature during the temporary tool loop.
+With the new `DELETE /v1/responses/{id}` endpoint the pipe can remove stored responses when they are no longer needed. Use this after tool execution to prevent history bloat.
 
 ## Next Steps
 
