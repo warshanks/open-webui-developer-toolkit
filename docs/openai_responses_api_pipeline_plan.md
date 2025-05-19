@@ -235,3 +235,72 @@ discrete stages:
 8. **Compare Event Logs** – capture before/after logs from a real chat session
    and verify the event sequence matches exactly.  This guards against subtle UI
    regressions.
+
+## Additional Implementation Considerations
+
+The original pipeline grew organically which makes the control flow difficult to
+follow.  The refactor will introduce more explicit helpers and data models so
+each step has a single responsibility.  Important points to keep in mind:
+
+1. **Rename `MAX_TOOL_CALLS`** – the existing setting actually limits how many
+   **loops** can occur when the model repeatedly invokes tools.  Renaming this
+   to `MAX_TOOL_LOOPS` clarifies its purpose and matches the upcoming helper
+   function names.
+2. **`ResponsesEvent` Dataclass** – define a lightweight dataclass that mirrors
+   the event payloads returned by the API.  Fields should include `type`, any
+   textual delta (`delta`), the originating `item` and an optional `response`
+   object with usage stats.  Converting the streaming objects up front makes type
+   hints clearer and unit tests easier to write.
+3. **Database Interactions** – helper functions such as
+   `upsert_message_to_chat_by_id_and_message_id` must be called whenever partial
+   messages or tool results are produced.  This keeps the chat thread consistent
+   with the middleware behaviour.
+4. **Pseudocode for `Pipe.pipe`** –
+
+   ```python
+   async def pipe(
+       self,
+       body: dict,
+       __user__,
+       __request__,
+       __emitter__,
+       __caller__,
+       __files__,
+       __meta__,
+       __tools__,
+   ) -> None:
+       valves = self._apply_user_overrides(__user__.get("valves"))
+       chat_id = __meta__["chat_id"]
+       payload = assemble_responses_payload(valves, chat_id)
+       instructions = build_instructions(body)
+       tools = prepare_tools(__tools__)
+       previous_id: str | None = None
+       async for evt in run_responses_completion(
+           self.client,
+           valves.BASE_URL,
+           {**payload, **instructions},
+           previous_id,
+       ):
+           await handle_responses_output(evt, chat_id, __emitter__, tools)
+           if evt.type == "tool_calls" and evt.response:
+               previous_id = evt.response.id
+           else:
+               previous_id = None
+
+       if previous_id:
+           await cleanup_responses(self.client, valves.BASE_URL, previous_id)
+   ```
+
+   This outline emphasises the separation between assembling the payload,
+   streaming the response and cleaning up any persisted state.
+5. **Error Handling** – every loop should catch network or tool exceptions and
+   emit a `chat:completion` event with a truncated traceback.  The stored
+   `previous_response_id` must be cleared so the next turn starts fresh.
+
+### Are we ready to proceed?
+
+The design now specifies helper names, expected dataclasses and the overall
+orchestration flow.  Remaining open questions are mostly around exact event
+schemas which can be validated against `external/MIDDLEWARE_GUIDE.md`.  With
+these clarifications in place the refactor can begin in small stages as outlined
+above.
