@@ -654,6 +654,23 @@ class Pipe:
 
         await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
 
+        # Persist the final content alongside any metadata accumulated during
+        # streaming. Earlier writes only stored partial data (tool calls,
+        # citations, etc.), so we merge everything here in one final update.
+        msg = Chats.get_message_by_id_and_message_id(
+            __metadata__["chat_id"], __metadata__["message_id"]
+        ) or {}
+        Chats.upsert_message_to_chat_by_id_and_message_id(
+            __metadata__["chat_id"],
+            __metadata__["message_id"],
+            {
+                "content": content,
+                "tool_calls": msg.get("tool_calls", []),
+                "tool_responses": msg.get("tool_responses", []),
+                "sources": msg.get("sources", []),
+            },
+        )
+
         for rid in cleanup_ids:
             try:
                 await delete_response(
