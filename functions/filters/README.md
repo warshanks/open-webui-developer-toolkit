@@ -1,12 +1,25 @@
 # Filters Guide
 
-Filters intercept chat traffic at three stages and can mutate the payload or stream
-events. Each filter is a single Python file defining a `Filter` class. The loader
-instantiates this class and invokes whichever methods are present:
+Filters are lightweight plugins that run **alongside pipes**.  They intercept chat
+traffic at three points – before a request hits the model, while the model streams
+tokens and once the full response is produced.  Picture the pipeline as a stream of
+water: each filter is a treatment step that can enrich, sanitise or log the flow
+without replacing the underlying pipe.  Filters are stored as single Python files
+and the loader invokes whichever handlers they implement.
 
-Filter IDs are resolved by `get_sorted_filter_ids`, which merges globally
-enabled filters with the ones declared in the selected model and sorts them by
-`Valves.priority`.
+Filter IDs are resolved by `get_sorted_filter_ids`, which merges globally enabled
+filters with those declared on a model and sorts them by `Valves.priority`.
+
+## How Filters Fit in the Pipeline
+
+1. **inlet** – runs on the request body before the pipe executes. Use it to add
+   context, scrub data or block unwanted content.
+2. **pipe** – generates the assistant reply (not covered here).
+3. **stream** – intercepts each chunk of the assistant's reply while streaming.
+4. **outlet** – processes the full response payload once the pipe is done.
+
+By chaining multiple filters you can shape the conversation without modifying the
+underlying pipe logic.
 
 ```python
 class Filter:
@@ -143,6 +156,23 @@ class Filter:
 
 Place filter modules in this folder. They can be combined with any pipe to
 customise the chat pipeline.
+
+Other patterns include adding system context or formatting the assistant reply:
+
+```python
+class Filter:
+    def inlet(self, body: dict) -> dict:
+        body.setdefault("messages", []).insert(
+            0, {"role": "system", "content": "You are a helpful assistant."}
+        )
+        return body
+
+    def outlet(self, body: dict) -> dict:
+        for msg in body.get("messages", []):
+            if msg.get("role") == "assistant":
+                msg["content"] = f"**{msg['content']}**"
+        return body
+```
 
 ### Toggle Filter Example (Open WebUI 0.6.10)
 
