@@ -415,6 +415,17 @@ class Pipe:
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
+                            self._store_tool_metadata(
+                                __metadata__["chat_id"],
+                                __metadata__["message_id"],
+                                {
+                                    "type": "function_call",
+                                    "call_id": item.call_id,
+                                    "name": item.name,
+                                    "arguments": item.arguments,
+                                },
+                                None,
+                            )
                             await __event_emitter__(
                                 {
                                     "type": "status",
@@ -475,22 +486,34 @@ class Pipe:
             if pending_calls:
                 results = await self._execute_tools(pending_calls, __tools__)
                 for call, result in zip(pending_calls, results):
-                    call_entry = {
-                        "type": "function_call",
-                        "call_id": call.call_id,
-                        "name": call.name,
-                        "arguments": call.arguments,
-                    }
                     output_entry = {
                         "type": "function_call_output",
                         "call_id": call.call_id,
                         "output": str(result),
                     }
-                    base_params["input"].append(call_entry)
                     base_params["input"].append(output_entry)
                     temp_input.insert(0, output_entry)
-                    # TODO is there a better way to store tool results in conversation history?
-                    await __event_emitter__({"type": "citation", "data": {"document": [f"{call.name}({call.arguments})\n\n{result}"], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": call.name.replace("_", " ").title()}], "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"}, "_fc": [{"call_id": call.call_id, "name": call.name, "arguments": call.arguments, "output": str(result)}]}})
+                    await __event_emitter__(
+                        {
+                            "type": "citation",
+                            "data": {
+                                "document": [f"{call.name}({call.arguments})\n\n{result}"],
+                                "metadata": [
+                                    {
+                                        "date_accessed": datetime.now().isoformat(),
+                                        "source": call.name.replace("_", " ").title(),
+                                    }
+                                ],
+                                "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
+                            },
+                        }
+                    )
+                    self._store_tool_metadata(
+                        __metadata__["chat_id"],
+                        __metadata__["message_id"],
+                        None,
+                        output_entry,
+                    )
                 continue
 
             # Clean up the server-side state unless the user opted to keep it
@@ -713,6 +736,30 @@ class Pipe:
         except Exception as ex:  # pragma: no cover - log only
             self.log.debug("Failed to store citation: %s", ex)
 
+    def _store_tool_metadata(
+        self,
+        chat_id: str,
+        message_id: str,
+        call: dict | None = None,
+        response: dict | None = None,
+    ) -> None:
+        """Persist tool call and response details."""
+        try:
+            msg = Chats.get_message_by_id_and_message_id(chat_id, message_id) or {}
+            calls = list(msg.get("tool_calls", []))
+            if call:
+                calls.append(call)
+            responses = list(msg.get("tool_responses", []))
+            if response:
+                responses.append(response)
+            Chats.upsert_message_to_chat_by_id_and_message_id(
+                chat_id,
+                message_id,
+                {"tool_calls": calls, "tool_responses": responses},
+            )
+        except Exception as ex:  # pragma: no cover - log only
+            self.log.debug("Failed to store tool metadata: %s", ex)
+
 
 async def stream_responses(
     client: httpx.AsyncClient,
@@ -818,6 +865,23 @@ def build_responses_payload(chat_id: str) -> list[dict]:
         role = m["role"]
         from_assistant = role == "assistant"
         if from_assistant:
+            for call in m.get("tool_calls", []):
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call.get("call_id"),
+                        "name": call.get("name"),
+                        "arguments": call.get("arguments"),
+                    }
+                )
+            for resp in m.get("tool_responses", []):
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": resp.get("call_id"),
+                        "output": resp.get("output"),
+                    }
+                )
             for src in m.get("sources", ()):
                 for fc in src.get("_fc", ()):
                     cid = fc.get("call_id") or fc.get("id")
