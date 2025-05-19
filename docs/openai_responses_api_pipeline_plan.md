@@ -1,7 +1,3 @@
-Below is a streamlined, step‑by‑step refactoring plan organized for easy tracking by an AI or any incremental automation process. Each task is broken out, with placeholders for future status updates. The plan references existing behaviors and ensures none of the pipeline’s critical features are lost.
-
-⸻
-
 OpenAI Responses API Pipeline Refactor Plan
 
 This refactor aims to make functions/pipes/openai_responses_api_pipeline.py easier to maintain and more closely aligned with WebUI’s built‑in middleware—while remaining a self‑contained, single‑file tool. All changes must preserve existing features such as streaming, parallel tool calls, reasoning summaries (<think> blocks), and usage stats.
