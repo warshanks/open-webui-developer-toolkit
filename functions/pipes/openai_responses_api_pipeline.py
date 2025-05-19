@@ -293,9 +293,15 @@ class Pipe:
             self.log.debug(pretty_log_block(instructions, "instructions"))
             self.log.debug(pretty_log_block(input_messages, "input_messages"))
 
-        request_params = self._build_params(
-            body, instructions, tools, __user__.get("email")
+        base_params = assemble_responses_payload(
+            self.valves,
+            chat_id,
+            body,
+            instructions,
+            tools,
+            __user__.get("email"),
         )
+        request_params = base_params
         usage_total: dict[str, Any] = {}
         last_response_id = None
         temp_input: list[dict[str, Any]] = []
@@ -339,15 +345,18 @@ class Pipe:
                             is_model_thinking = True
                             content += "<think>"
                             yield "<think>"
+                            store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         content += event.delta
                         yield event.delta
+                        store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.reasoning_summary_text.done":
                         content += "\n\n---\n\n"
                         yield "\n\n---\n\n"
-                        request_params["input"].append(
+                        store_partial_message(chat_id, __metadata__["message_id"], content)
+                        base_params["input"].append(
                             {
                                 "type": "reasoning",
                                 "id": event.item_id,
@@ -362,14 +371,16 @@ class Pipe:
                             is_model_thinking = False
                             content += "</think>\n"
                             yield "</think>\n"
+                            store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.output_text.delta":
                         content += event.delta
                         yield event.delta
+                        store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.output_text.done":
                         # TODO is this still needed now that I retain message context using previous_response_id?
-                        request_params["input"].append(
+                        base_params["input"].append(
                             {
                                 "role": "assistant",
                                 "content": [{"type": "output_text", "text": event.text}],
@@ -474,8 +485,8 @@ class Pipe:
                         "call_id": call.call_id,
                         "output": str(result),
                     }
-                    request_params["input"].append(call_entry)
-                    request_params["input"].append(output_entry)
+                    base_params["input"].append(call_entry)
+                    base_params["input"].append(output_entry)
                     temp_input.insert(0, output_entry)
                     # TODO is there a better way to store tool results in conversation history?
                     await __event_emitter__({"type": "citation", "data": {"document": [f"{call.name}({call.arguments})\n\n{result}"], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": call.name.replace("_", " ").title()}], "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"}, "_fc": [{"call_id": call.call_id, "name": call.name, "arguments": call.arguments, "output": str(result)}]}})
