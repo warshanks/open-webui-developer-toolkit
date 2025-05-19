@@ -33,24 +33,30 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
    - Support parallel execution using `asyncio.gather` and capture outputs as citation sources.
    - Store results back into the chat history via `Chats.upsert_message_to_chat_by_id_and_message_id` similar to middleware behaviour.
 
-5. **Configuration and valves**
+5. **Persist reasoning tokens and tool calls**
+   - Continue using the `previous_response_id` workaround so raw reasoning tokens can be streamed into follow-up turns.
+   - Instead of storing tool call JSON inside citation metadata, upsert the `tool_calls` and `tool_responses` directly into the chat history.
+   - Ensure stored items match OpenAI’s expected structure so future API calls can replay the same messages without reconstruction.
+
+6. **Configuration and valves**
    - Review all `Valves` fields and drop or rename any that duplicate middleware options.
    - Provide sensible defaults so a minimal config works out‑of‑the‑box.
    - Ensure user overrides via `UserValves` are applied after initial setup, matching how middleware reads user settings.
 
-6. **Testing**
+7. **Testing**
    - Add unit tests under `.tests/` covering payload building, SSE parsing and tool loops.
    - Reference `external/MIDDLEWARE_GUIDE.md` for examples of mocking the event emitter and chat database.
    - Update `nox -s lint tests` to run these tests.
 
-7. **Documentation**
+8. **Documentation**
    - Update `functions/pipes/README.md` with a short section summarising the new structure and pointing to this plan.
    - Note any middleware helpers being imported so future maintainers understand the dependencies.
 
 ## Open Questions
 
 - How should error handling mirror middleware behaviour? Investigate how `process_chat_response` updates chat history on failures and replicate that logic for Responses API calls.
-- Can reasoning summaries be stored as hidden system messages so later turns can reference them? This might simplify `previous_response_id` handling.
+- Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. Explore keeping the tokens themselves using the `previous_response_id` approach so later turns can replay them without loss.
+- Could tool call payloads and their outputs be written directly into the chat history rather than stored in `citation` metadata? This might remove the need to rebuild message sequences on later turns.
 
 ## Next Steps
 
