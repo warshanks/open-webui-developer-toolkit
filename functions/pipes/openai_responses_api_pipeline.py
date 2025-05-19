@@ -375,15 +375,6 @@ class Pipe:
                         content += "\n\n---\n\n"
                         yield "\n\n---\n\n"
                         store_partial_message(chat_id, __metadata__["message_id"], content)
-                        base_params["input"].append(
-                            {
-                                "type": "reasoning",
-                                "id": event.item_id,
-                                "summary": [
-                                    {"type": "summary_text", "text": event.text}
-                                ],
-                            }
-                        )
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
@@ -398,13 +389,7 @@ class Pipe:
                         store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.output_text.done":
-                        # TODO is this still needed now that I retain message context using previous_response_id?
-                        base_params["input"].append(
-                            {
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": event.text}],
-                            }
-                        )
+                        # This delta marks the end of the current output block.
                         continue
                     if et == "response.output_item.added":
                         item = getattr(event, "item", None)
@@ -499,7 +484,6 @@ class Pipe:
                         "call_id": call.call_id,
                         "output": str(result),
                     }
-                    base_params["input"].append(output_entry)
                     temp_input.insert(0, output_entry)
                     if self.log.isEnabledFor(logging.DEBUG):
                         self.log.debug(
