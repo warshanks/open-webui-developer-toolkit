@@ -10,6 +10,26 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
 - **Improve readability and testability.** Break large blocks of logic into focused helpers and add unit tests.
 - **Maintain existing features.** Support reasoning summaries, parallel tool calls, web search integration and usage stats.
 
+## Current Pipeline Overview
+
+The current implementation already works reliably and provides a rich feature
+set.  Key behaviours worth keeping:
+
+- Streaming with a manual SSE parser (`stream_responses`) so the pipe has no
+  OpenAI SDK dependency.
+- `<think>` blocks are emitted when reasoning summaries arrive and closed when
+  normal output resumes.
+- Tool calls are executed asynchronously via `_execute_tools` and their results
+  are emitted as `citation` events.  Results are also appended to the next API
+  request to preserve context.
+- Debug logging is buffered and, when the log level is `DEBUG`, the buffer is
+  sent as a citation at the end of the run.
+- After each loop iteration the pipeline decides whether another tool phase is
+  required based on `MAX_TOOL_CALLS` and any pending calls.
+
+Understanding these behaviours ensures the refactor does not accidentally drop
+useful functionality.
+
 ## Key Refactor Tasks
 
 1. **Reuse middleware helpers**
@@ -57,7 +77,7 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
 - Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. The pipeline will preserve these tokens using the `previous_response_id` approach so later turns can replay them.
 - Tool call payloads and their outputs will be written directly into the chat history via `tool_calls` and `tool_responses`. This removes the need to rebuild message sequences on later turns.
 
-Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete and delete the stored response via `DELETE /v1/responses/{id}`.
+Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete and delete the stored response via `DELETE /v1/responses/{id}`.  Event objects will be represented by a small dataclass `ResponsesEvent` to keep types consistent.
 
 ## Proposed Structure
 
@@ -98,11 +118,11 @@ async def stream_responses_completion(
     base_url: str,
     payload: dict,
     previous_id: str | None,
-) -> AsyncIterator[Event]:
+) -> AsyncIterator[ResponsesEvent]:
     """Yield SSE events while preserving reasoning tokens."""
 
-def parse_responses_sse(raw: str) -> Event:
-    """Parse a single SSE line into an Event dataclass."""
+def parse_responses_sse(raw: str) -> ResponsesEvent:
+    """Parse a single SSE line into a ``ResponsesEvent`` dataclass."""
 
 async def execute_responses_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
     """Run tools concurrently and return their results."""
@@ -111,7 +131,7 @@ async def delete_openai_response(client: httpx.AsyncClient, base_url: str, respo
     """Remove a stored response via the OpenAI API."""
 
 class Pipe:
-    async def pipe(self, body: dict, send_event: Callable[[str, Any], Awaitable[None]]):
+    async def pipe(self, body: dict, send_event: Callable[[dict], Awaitable[None]]):
         """Main entrypoint called by WebUI."""
 ```
 
@@ -124,7 +144,7 @@ the pipe is later merged into the core project.
 1. `assemble_responses_payload(valves: Valves, chat_id: str) -> dict`
    - Fetch the chat thread and convert it to the Responses API `input` format.
    - Insert the admin system prompt (if any) while respecting any user provided
-     system message.
+     system message.  When both are present the user message wins.
    - Return a payload dictionary ready to be merged with other model parameters.
 
 2. `run_responses_completion(client, base_url, payload, previous_id)`
@@ -133,7 +153,7 @@ the pipe is later merged into the core project.
    - Emits an initial `status` event when the request is accepted.
 
 3. `parse_responses_sse(raw)`
-   - Convert a single SSE line into an `Event` object used by the streaming loop.
+   - Convert a single SSE line into a `ResponsesEvent` dataclass used by the streaming loop.
    - Unit tests will feed in example payloads from the official API docs.
 
 4. `handle_responses_output(events, chat_id, emitter, tools)`
@@ -142,9 +162,12 @@ the pipe is later merged into the core project.
    - Aggregates token usage for the final `chat:completion` event.
 
 5. `execute_responses_tool_calls(tool_calls, chat_id, tools, emitter)`
-   - Maps each call to the registered WebUI tools and runs them in parallel.
-   - Stores results under `function_call_output` in the chat history.
-   - Emits `citation` events referencing the returned data.
+   - Maps each call to the registered WebUI tools and runs them in parallel using
+     `asyncio.gather`.
+   - Stores results under `function_call_output` in the chat history so later
+     turns can replay them without reconstruction.
+   - Emits `citation` events referencing the returned data.  Results are attached
+     to the same citation payload for transparency.
 
 6. `cleanup_responses(client, base_url, previous_id)`
    - Deletes stored responses via `DELETE /v1/responses/{id}` once they are no
@@ -209,3 +232,6 @@ discrete stages:
    event emitters.
 7. **Update Docs** – finalise README snippets and remove outdated comments once
    the refactor is stable.
+8. **Compare Event Logs** – capture before/after logs from a real chat session
+   and verify the event sequence matches exactly.  This guards against subtle UI
+   regressions.
