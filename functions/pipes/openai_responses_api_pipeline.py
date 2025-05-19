@@ -664,7 +664,7 @@ class Pipe:
             __metadata__["chat_id"],
             __metadata__["message_id"],
             {
-                "content": content,
+                "content": [{"type": "output_text", "text": content}],
                 "tool_calls": msg.get("tool_calls", []),
                 "tool_responses": msg.get("tool_responses", []),
                 "sources": msg.get("sources", []),
