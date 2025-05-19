@@ -523,3 +523,57 @@ async def test_previous_response_cleanup(dummy_chat):
     ids = [c.args[3] for c in del_mock.await_args_list]
     assert ids == ["r1", "r2"]
 
+
+@pytest.mark.asyncio
+async def test_function_call_output_persisted(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    dummy_chat["history"] = {
+        "currentId": "u1",
+        "messages": {
+            "u1": {"role": "user", "content": [{"text": "hi"}], "parentId": None},
+            "m1": {"role": "assistant", "parentId": "u1"},
+        },
+    }
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(
+            type="response.output_item.added",
+            item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}"),
+        ),
+        types.SimpleNamespace(
+            type="response.output_item.done",
+            item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}"),
+        ),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(*_a, **_kw):
+        for e in events:
+            yield e
+
+    tools = {"t": {"callable": AsyncMock(return_value="42")}}
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        gen = pipe.pipe(
+            {},
+            {},
+            None,
+            AsyncMock(),
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            tools,
+        )
+        async for _ in gen:
+            pass
+    await pipe.on_shutdown()
+
+    payload = pipeline.build_responses_payload("chat1")
+    assert {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"} in payload
+    assert {"type": "function_call_output", "call_id": "c1", "output": "42"} in payload
+
