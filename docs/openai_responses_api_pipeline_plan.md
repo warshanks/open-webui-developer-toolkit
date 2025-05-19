@@ -61,7 +61,7 @@ Additional context: using `previous_response_id` requires the chat completion re
 
 ## Proposed Structure
 
-The refactored file should remain a single module with clear helpers.  
+The refactored file should remain a single module with clear helpers.
 Suggested layout:
 
 1. **Data Models** – Pydantic classes `Valves` and `UserValves` hold
@@ -80,6 +80,13 @@ Suggested layout:
 
 Each helper should follow existing middleware naming where possible for easy comparison.
 
+The current implementation in `openai_responses_api_pipeline.py` already parses
+Server-Sent Events (SSE) from the Responses API and streams `<think>` blocks
+alongside normal tokens.  The refactor will keep this logic but wrap it in a
+`parse_responses_sse()` helper so the event loop is easier to test.  Error
+handling should mimic `process_chat_response` by storing partial messages and
+emitting a final `chat:completion` event even when a tool fails.
+
 ### Key Functions
 
 ```python
@@ -93,6 +100,9 @@ async def stream_responses_completion(
     previous_id: str | None,
 ) -> AsyncIterator[Event]:
     """Yield SSE events while preserving reasoning tokens."""
+
+def parse_responses_sse(raw: str) -> Event:
+    """Parse a single SSE line into an Event dataclass."""
 
 async def execute_responses_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
     """Run tools concurrently and return their results."""
@@ -122,17 +132,21 @@ the pipe is later merged into the core project.
    - Includes `previous_id` when `store=True` to preserve reasoning tokens.
    - Emits an initial `status` event when the request is accepted.
 
-3. `handle_responses_output(events, chat_id, emitter, tools)`
+3. `parse_responses_sse(raw)`
+   - Convert a single SSE line into an `Event` object used by the streaming loop.
+   - Unit tests will feed in example payloads from the official API docs.
+
+4. `handle_responses_output(events, chat_id, emitter, tools)`
    - Streams text deltas through `emitter` and records partial messages.
    - Detects `tool_calls` events and delegates to `execute_responses_tool_calls`.
    - Aggregates token usage for the final `chat:completion` event.
 
-4. `execute_responses_tool_calls(tool_calls, chat_id, tools, emitter)`
+5. `execute_responses_tool_calls(tool_calls, chat_id, tools, emitter)`
    - Maps each call to the registered WebUI tools and runs them in parallel.
    - Stores results under `function_call_output` in the chat history.
    - Emits `citation` events referencing the returned data.
 
-5. `cleanup_responses(client, base_url, previous_id)`
+6. `cleanup_responses(client, base_url, previous_id)`
    - Deletes stored responses via `DELETE /v1/responses/{id}` once they are no
      longer needed.
 
@@ -169,3 +183,29 @@ match `process_chat_response` so existing UI components require no changes.
    tests and sample logs.
 
 Future agents should implement the above tasks incrementally, verifying tests pass after each major change.
+
+## Implementation Order
+
+To keep the existing pipe stable while refactoring, tackle the changes in
+discrete stages:
+
+1. **Extract Helpers** – introduce the new helper functions (`assemble_responses_payload`,
+   `prepare_tools`, `parse_responses_sse`, etc.) without altering the main logic.
+   Unit tests should cover these helpers in isolation.
+2. **Refactor `pipe()`** – rewrite the streaming loop to call the helpers and
+   emit events in the same order as `process_chat_response`. Keep behaviour
+   identical and compare test logs to the current implementation.
+3. **Integrate Middleware Imports** – once the structure matches, replace local
+   utilities with imports from `open_webui.utils.middleware` where possible.
+4. **Persist Tool Metadata** – update `_execute_tools` (or the new
+   `execute_responses_tool_calls`) so tool call and output items are stored via
+   `Chats.upsert_message_to_chat_by_id_and_message_id` rather than embedding JSON
+   in citations.
+5. **Clean Up and Delete** – hook `cleanup_responses` after the streaming loop to
+   remove any temporary responses. Verify this works against the official API and
+   LiteLLM gateways.
+6. **Expand Tests** – add regression tests for SSE parsing, usage aggregation and
+   parallel tool execution. Use the fixtures under `.tests/` to mock database and
+   event emitters.
+7. **Update Docs** – finalise README snippets and remove outdated comments once
+   the refactor is stable.
