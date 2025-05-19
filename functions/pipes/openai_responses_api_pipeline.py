@@ -106,8 +106,10 @@ class Pipe:
         )
 
         API_KEY: str = Field(
-            default=os.getenv("OPENAI_API_KEY", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"),
-            description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable. ",
+            default=os.getenv(
+                "OPENAI_API_KEY", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            ).strip(),
+            description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
 
         MODEL_ID: str = Field(
@@ -653,7 +655,7 @@ async def stream_responses(
 
     url = base_url.rstrip("/") + "/responses"
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {api_key.strip()}",
         "Accept": "text/event-stream",
         "Content-Type": "application/json",
     }
@@ -707,7 +709,7 @@ async def delete_response(
     """Delete a stored response."""
     url = base_url.rstrip("/") + f"/responses/{response_id}"
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
     }
     resp = await client.delete(url, headers=headers)
