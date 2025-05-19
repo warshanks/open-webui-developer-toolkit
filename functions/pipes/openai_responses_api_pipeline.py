@@ -4,7 +4,7 @@ id: openai_responses_api_pipeline
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.12
+version: 1.6.13
 license: MIT
 requirements: httpx
 
@@ -364,29 +364,24 @@ class Pipe:
                             is_model_thinking = True
                             content += "<think>"
                             yield "<think>"
-                            store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         content += event.delta
                         yield event.delta
-                        store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.reasoning_summary_text.done":
                         content += "\n\n---\n\n"
                         yield "\n\n---\n\n"
-                        store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
                             content += "</think>\n"
                             yield "</think>\n"
-                            store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.output_text.delta":
                         content += event.delta
                         yield event.delta
-                        store_partial_message(chat_id, __metadata__["message_id"], content)
                         continue
                     if et == "response.output_text.done":
                         # This delta marks the end of the current output block.
@@ -1059,18 +1054,3 @@ def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     return ResponsesEvent(type=event_type or "message", **payload)
 
 
-def store_partial_message(chat_id: str, message_id: str, content: str) -> None:
-    """Persist a partial streamed message for future inspection."""
-    try:
-        Chats.upsert_message_to_chat_by_id_and_message_id(
-            chat_id,
-            message_id,
-            {"content": [{"type": "output_text", "text": content}]},
-        )
-        logger.debug(
-            "Stored partial message for chat=%s message=%s",
-            chat_id,
-            message_id,
-        )
-    except Exception as ex:  # pragma: no cover - debug only
-        logger.debug("Failed to store partial message: %s", ex)

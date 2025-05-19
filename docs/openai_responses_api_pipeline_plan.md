@@ -35,7 +35,7 @@ This refactor aims to make `functions/pipes/openai_responses_api_pipeline.py` ea
      - *Input assembly* (prepares payload)  
      - *Streaming loop* (listens to SSE)  
      - *Tool execution* (runs calls in parallel)  
-     - *Storage/cleanup* (persist or delete partial responses)  
+    - *Storage/cleanup* (persist final response only; remove partial writes)
    - Adopt event emitter conventions from WebUI (`status`, `citation`, `chat:completion`).
 
 3. **Tool Execution Helper**  
@@ -67,7 +67,7 @@ Below is a task breakdown with _suggested_ statuses. The AI (or human) can check
 
 | **Task ID** | **Title**                                     | **Description**                                                                                                                                                                                                                               | **Status** | **Notes / Links** |
 |-------------|-----------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|-------------------|
-| **1**       | **Extract Helpers**                           | 1. Create small, focused helper functions for SSE parsing, assembling OpenAI payloads, storing partial messages, etc. <br> 2. Preserve existing logic but isolate it in well‑named functions. <br> 3. Add placeholders in the code for future tests. | Done |                   |
+| **1**       | **Extract Helpers**                           | 1. Create small, focused helper functions for SSE parsing and assembling OpenAI payloads.<br> 2. Preserve existing logic but isolate it in well‑named functions. <br> 3. Add placeholders in the code for future tests. | Done |                   |
 | **2**       | **Refactor `pipe()`**                        | 1. Rewrite `Pipe.pipe()` to orchestrate the new helpers (payload building, streaming, tool calls, final cleanup). <br> 2. Keep the event emission order consistent with WebUI’s `process_chat_response`. <br> 3. Ensure partial results are stored properly. | Done |                   |
 | **3**       | **Integrate Middleware Imports**              | 1. Identify duplicated logic that can be replaced with `open_webui.utils.middleware` or similar. <br> 2. Replace references safely, ensuring no feature gaps.                                                                                     | Done |                   |
 | **4**       | **Persist Tool Metadata**                     | 1. Update tool execution code so `tool_calls` and `tool_responses` are stored in the chat DB. <br> 2. Remove any embedded JSON approach if used; rely on database fields for replays.                                                             | Done | Custom metadata stored via `Chats.upsert_message_to_chat_by_id_and_message_id` |
