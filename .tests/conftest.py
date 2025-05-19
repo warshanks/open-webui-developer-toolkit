@@ -15,8 +15,21 @@ def dummy_chat(monkeypatch):
     def get_chat_by_id(_):
         return types.SimpleNamespace(chat=chat)
 
+    def get_message_by_id_and_message_id(_, message_id):
+        return chat["history"].get("messages", {}).get(message_id, {})
+
+    def upsert_message_to_chat_by_id_and_message_id(_, message_id, message):
+        history = chat.setdefault("history", {"messages": {}, "currentId": None})
+        msgs = history.setdefault("messages", {})
+        msgs[message_id] = {**msgs.get(message_id, {}), **message}
+        history["currentId"] = message_id
+
     chats_mod = types.ModuleType("open_webui.models.chats")
-    chats_mod.Chats = types.SimpleNamespace(get_chat_by_id=get_chat_by_id)
+    chats_mod.Chats = types.SimpleNamespace(
+        get_chat_by_id=get_chat_by_id,
+        get_message_by_id_and_message_id=get_message_by_id_and_message_id,
+        upsert_message_to_chat_by_id_and_message_id=upsert_message_to_chat_by_id_and_message_id,
+    )
 
     modules = {
         "open_webui": types.ModuleType("open_webui"),

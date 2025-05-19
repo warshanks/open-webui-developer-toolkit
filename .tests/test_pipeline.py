@@ -146,7 +146,12 @@ def test_build_responses_payload_complex(dummy_chat):
                 "role": "assistant",
                 "content": [{"text": "ok"}],
                 "parentId": "m1",
-                "sources": [{"_fc": [{"call_id": "c1", "name": "t", "arguments": "{}", "output": "42"}]}],
+                "tool_calls": [
+                    {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"}
+                ],
+                "tool_responses": [
+                    {"type": "function_call_output", "call_id": "c1", "output": "42"}
+                ],
             },
         },
     }
@@ -351,4 +356,50 @@ async def test_debug_logs_citation_saved_with_tool(dummy_chat):
     await pipe.on_shutdown()
 
     store_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_tool_metadata_persisted(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_item.added", item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}")),
+        types.SimpleNamespace(type="response.output_item.done", item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}")),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(client, base_url, api_key, params):
+        for e in events:
+            yield e
+
+    tools = {"t": {"callable": AsyncMock(return_value="42")}}
+    updates = []
+
+    def upsert(chat_id, message_id, data):
+        updates.append(data)
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ), patch.object(
+        pipeline.Chats,
+        "upsert_message_to_chat_by_id_and_message_id",
+        side_effect=upsert,
+    ):
+        await pipe.pipe(
+            {},
+            {},
+            None,
+            AsyncMock(),
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            tools,
+        )
+    await pipe.on_shutdown()
+
+    assert any("tool_calls" in u for u in updates)
+    assert updates[-1]["tool_calls"][0]["name"] == "t"
+    assert updates[-1]["tool_responses"][0]["output"] == "42"
 
