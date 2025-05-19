@@ -65,11 +65,16 @@ The refactored file should remain a single module with clear helpers.
 Suggested layout:
 
 
-2. **Payload Builders** – helper functions like `build_instructions()`, `prepare_tools()` and `build_chat_payload()`.
-3. **Streaming Loop** – a `stream_chat_completion()` coroutine that yields deltas and captures reasoning tokens.
-4. **Tool Handling** – `execute_tool_calls()` for running tools in parallel and updating chat history.
-5. **Pipe Class** – lightweight orchestrator exposing a `pipe()` entrypoint mirroring WebUI middleware.
-6. **Cleanup** – `delete_openai_response()` removes stored responses once streaming and tools finish.
+2. **Payload Builders** – helper functions like `build_instructions()`,
+   `prepare_tools()` and `build_chat_payload()` assemble the model payload.
+3. **Streaming Loop** – a `stream_chat_completion()` coroutine yields text
+   deltas and preserves reasoning tokens using `previous_response_id`.
+4. **Tool Handling** – `execute_tool_calls()` runs tools in parallel and
+   updates chat history with `function_call_output` items.
+5. **Pipe Class** – lightweight orchestrator exposing a `pipe()` entrypoint
+   mirroring WebUI middleware.
+6. **Cleanup** – `delete_openai_response()` removes stored responses once
+   streaming and tools finish.
 
 Each helper should follow existing middleware naming where possible for easy comparison.
 
@@ -128,8 +133,24 @@ project while still making the behaviour easy to compare.
 
 `stream_chat_completion()` accepts a `previous_id` argument when `store=True`.  
 The function reuses this ID with OpenAI's `previous_response_id` field so that raw reasoning tokens persist across tool loops.  
-Once the tool step is finished the ID can be dropped, keeping history size small.  
+Once the tool step is finished the ID can be dropped, keeping history size small.
 With the new `DELETE /v1/responses/{id}` endpoint the pipe can remove stored responses when they are no longer needed. Use this after tool execution to prevent history bloat.
+
+### Event Flow Example
+
+The refactored pipeline should emit events in a predictable sequence so the
+frontend can mirror the behaviour of WebUI's middleware:
+
+1. **`status`** – immediately after the Responses request is accepted. Indicates
+   the model is generating output.
+2. **`message`** – streamed deltas of assistant text or `<think>` blocks.
+3. **`citation`** – whenever a web search or tool result produces a source
+   document. These should also be persisted via `_store_citation`.
+4. **`chat:completion`** – final usage stats followed by a final event with
+   `{"done": true}`.
+
+Tools emit their own `status` updates while running. The order of events should
+match `process_chat_response` so existing UI components require no changes.
 
 ## Next Steps
 
@@ -137,5 +158,7 @@ With the new `DELETE /v1/responses/{id}` endpoint the pipe can remove stored res
 2. Refactor `openai_responses_api_pipeline.Pipe` to use concise helper functions defined in the same file.
 3. Write tests covering the refactored logic.
 4. Update documentation.
+5. Validate the emitted event order matches `process_chat_response` using unit
+   tests and sample logs.
 
 Future agents should implement the above tasks incrementally, verifying tests pass after each major change.
