@@ -51,11 +51,11 @@ This document outlines the proposed refactor for `functions/pipes/openai_respons
    - Update `functions/pipes/README.md` with a short section summarising the new structure and pointing to this plan.
    - Note any middleware helpers being imported so future maintainers understand the dependencies.
 
-## Open Questions
+## Design Notes
 
 - How should error handling mirror middleware behaviour? Investigate how `process_chat_response` updates chat history on failures and replicate that logic for Responses API calls.
-- Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. Explore keeping the tokens themselves using the `previous_response_id` approach so later turns can replay them without loss.
-- Could tool call payloads and their outputs be written directly into the chat history rather than stored in `citation` metadata? This might remove the need to rebuild message sequences on later turns.
+- Storing reasoning summaries as system messages is helpful but does not capture the raw reasoning tokens. The pipeline will preserve these tokens using the `previous_response_id` approach so later turns can replay them.
+- Tool call payloads and their outputs will be written directly into the chat history via `tool_calls` and `tool_responses`. This removes the need to rebuild message sequences on later turns.
 
 Additional context: using `previous_response_id` requires the chat completion request to be sent with `store=True` so that OpenAI retains the prior response. The pipeline should drop the ID once tools complete and delete the stored response via `DELETE /v1/responses/{id}`.
 
@@ -64,12 +64,14 @@ Additional context: using `previous_response_id` requires the chat completion re
 The refactored file should remain a single module with clear helpers.  
 Suggested layout:
 
-
+1. **Data Models** – Pydantic classes `Valves` and `UserValves` hold
+   configuration.  Defaults should match WebUI's middleware so a minimal
+   install works without tweaks.
 2. **Payload Builders** – helper functions like `build_instructions()`,
-   `prepare_tools()` and `build_chat_payload()` assemble the model payload.
-3. **Streaming Loop** – a `stream_chat_completion()` coroutine yields text
+   `prepare_tools()` and `assemble_responses_payload()` assemble the model payload.
+3. **Streaming Loop** – a `stream_responses_completion()` coroutine yields text
    deltas and preserves reasoning tokens using `previous_response_id`.
-4. **Tool Handling** – `execute_tool_calls()` runs tools in parallel and
+4. **Tool Handling** – `execute_responses_tool_calls()` runs tools in parallel and
    updates chat history with `function_call_output` items.
 5. **Pipe Class** – lightweight orchestrator exposing a `pipe()` entrypoint
    mirroring WebUI middleware.
@@ -81,28 +83,33 @@ Each helper should follow existing middleware naming where possible for easy com
 ### Key Functions
 
 ```python
-async def build_chat_payload(cfg: Valves, messages: list[dict]) -> dict:
-    """Return the JSON payload for OpenAI's chat completion endpoint."""
+async def assemble_responses_payload(valves: Valves, chat_id: str) -> dict:
+    """Return the input payload for the Responses API."""
 
-async def stream_chat_completion(payload: dict, previous_id: str | None) -> AsyncIterator[Event]:
+async def stream_responses_completion(
+    client: httpx.AsyncClient,
+    base_url: str,
+    payload: dict,
+    previous_id: str | None,
+) -> AsyncIterator[Event]:
     """Yield SSE events while preserving reasoning tokens."""
 
-async def execute_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
-    """Run tools concurrently and return their responses."""
+async def execute_responses_tool_calls(tool_calls: list[dict], chat_id: str) -> list[dict]:
+    """Run tools concurrently and return their results."""
 
-async def delete_openai_response(response_id: str) -> None:
+async def delete_openai_response(client: httpx.AsyncClient, base_url: str, response_id: str) -> None:
     """Remove a stored response via the OpenAI API."""
 
 class Pipe:
-    async def pipe(self, params: dict, send_event: Callable[[str, Any], Awaitable[None]]):
+    async def pipe(self, body: dict, send_event: Callable[[str, Any], Awaitable[None]]):
         """Main entrypoint called by WebUI."""
 ```
 
 ### Detailed Function Outline
 
-The helpers above intentionally use names that differ from WebUI's middleware
-functions. This avoids import collisions when the pipe is copied into the core
-project while still making the behaviour easy to compare.
+Helper names closely mirror the middleware and use a `responses_` prefix where
+needed.  This keeps the behaviour comparable while avoiding import collisions if
+the pipe is later merged into the core project.
 
 1. `assemble_responses_payload(valves: Valves, chat_id: str) -> dict`
    - Fetch the chat thread and convert it to the Responses API `input` format.
@@ -117,10 +124,10 @@ project while still making the behaviour easy to compare.
 
 3. `handle_responses_output(events, chat_id, emitter, tools)`
    - Streams text deltas through `emitter` and records partial messages.
-   - Detects `tool_calls` events and delegates to `execute_tool_calls`.
+   - Detects `tool_calls` events and delegates to `execute_responses_tool_calls`.
    - Aggregates token usage for the final `chat:completion` event.
 
-4. `execute_tool_calls(tool_calls, chat_id, tools, emitter)`
+4. `execute_responses_tool_calls(tool_calls, chat_id, tools, emitter)`
    - Maps each call to the registered WebUI tools and runs them in parallel.
    - Stores results under `function_call_output` in the chat history.
    - Emits `citation` events referencing the returned data.
@@ -131,7 +138,7 @@ project while still making the behaviour easy to compare.
 
 ### Previous Response Tracking
 
-`stream_chat_completion()` accepts a `previous_id` argument when `store=True`.  
+`stream_responses_completion()` accepts a `previous_id` argument when `store=True`.
 The function reuses this ID with OpenAI's `previous_response_id` field so that raw reasoning tokens persist across tool loops.  
 Once the tool step is finished the ID can be dropped, keeping history size small.
 With the new `DELETE /v1/responses/{id}` endpoint the pipe can remove stored responses when they are no longer needed. Use this after tool execution to prevent history bloat.
