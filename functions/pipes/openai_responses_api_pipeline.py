@@ -847,7 +847,14 @@ class Pipe:
         call: dict | None = None,
         response: dict | None = None,
     ) -> None:
-        """Persist tool call and response details."""
+        """Persist tool call and response details.
+
+        Both ``call`` and ``response`` are appended to ``tool_calls`` and
+        ``tool_responses`` lists on the target message using
+        ``Chats.upsert_message_to_chat_by_id_and_message_id``. This mirrors the
+        approach shown in ``example_persist_custom_chat_metadata.py`` and keeps
+        the metadata hidden from the main chat UI while remaining queryable.
+        """
         try:
             msg = Chats.get_message_by_id_and_message_id(chat_id, message_id) or {}
             calls = list(msg.get("tool_calls", []))
@@ -997,26 +1004,6 @@ def build_responses_payload(chat_id: str) -> list[dict]:
                         "output": resp.get("output"),
                     }
                 )
-            for src in m.get("sources", ()):
-                for fc in src.get("_fc", ()):
-                    cid = fc.get("call_id") or fc.get("id")
-                    if not cid:
-                        continue
-                    input_items.append(
-                        {
-                            "type": "function_call",
-                            "call_id": cid,
-                            "name": fc.get("name") or fc.get("n"),
-                            "arguments": fc.get("arguments") or fc.get("a"),
-                        }
-                    )
-                    input_items.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": cid,
-                            "output": fc.get("output") or fc.get("o"),
-                        }
-                    )
         blocks: list[dict] = []
         raw_blocks = m.get("content", []) or []
         if not isinstance(raw_blocks, list):
@@ -1090,5 +1077,16 @@ def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
 
 def store_partial_message(chat_id: str, message_id: str, content: str) -> None:
     """Persist a partial streamed message for future inspection."""
-    # TODO: implement persistence logic
-    _ = (chat_id, message_id, content)
+    try:
+        Chats.upsert_message_to_chat_by_id_and_message_id(
+            chat_id,
+            message_id,
+            {"content": [{"type": "output_text", "text": content}]},
+        )
+        logger.debug(
+            "Stored partial message for chat=%s message=%s",
+            chat_id,
+            message_id,
+        )
+    except Exception as ex:  # pragma: no cover - debug only
+        logger.debug("Failed to store partial message: %s", ex)

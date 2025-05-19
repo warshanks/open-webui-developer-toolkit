@@ -68,3 +68,17 @@ so progress and results can be displayed in the WebUI. Example output:
 - The database persists any extra keys but most helpers only read `role`, `content` and sometimes `files`.
 - Embedding tool metadata directly inside `content` is how the UI displays call progress. Standalone fields like `tool_calls` are ignored by the renderer unless custom code processes them.
 - Final message writes from the middleware overwrite `content` but keep previously stored fields due to the merge logic.
+
+### Custom tool metadata
+The `openai_responses_api_pipeline` stores `function_call` and
+`function_call_output` events using two arrays:
+
+```json
+{
+  "tool_calls": [{"type": "function_call", "call_id": "c1", "name": "t"}],
+  "tool_responses": [{"type": "function_call_output", "call_id": "c1", "output": "42"}]
+}
+```
+
+`build_responses_payload()` reads these lists to reconstruct the conversation
+history when the assistant is invoked again.
