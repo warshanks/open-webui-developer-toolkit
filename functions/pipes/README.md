@@ -319,3 +319,6 @@ Example pipe files will be added in a future update.
 * **Auto-generated SDK** – scaffold a new pipe via `npx create-webui-pipe`.
 
 ---
+
+## Responses API Refactor Plan
+See `docs/openai_responses_api_pipeline_plan.md` for the upcoming architecture changes to `openai_responses_api_pipeline.py`.
