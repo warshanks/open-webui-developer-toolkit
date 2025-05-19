@@ -123,7 +123,7 @@ class Pipe:
 
         API_KEY: str = Field(
             default=os.getenv(
-                "OPENAI_API_KEY", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                "OPENAI_API_KEY", "sk-xxxxx"
             ).strip(),
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
@@ -242,11 +242,8 @@ class Pipe:
         __metadata__: dict[str, Any],
         __tools__: dict[str, Any],
     ) -> AsyncIterator[str]:
-        """Stream responses from OpenAI and handle tool calls.
-
-        Yields text tokens directly for maximum throughput. ``__event_emitter__``
-        still emits status and metadata events. A final ``chat:completion`` event
-        with ``done: True`` signals completion.
+        """
+        Stream responses from OpenAI and handle tool calls.
         """
         start_ns = time.perf_counter_ns()
         self._debug_logs.clear()
@@ -294,7 +291,6 @@ class Pipe:
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(pretty_log_block(tools, "tools"))
             self.log.debug(pretty_log_block(instructions, "instructions"))
-            self.log.debug(pretty_log_block(input_messages, "input_messages"))
 
         base_params = assemble_responses_payload(
             self.valves,
@@ -413,17 +409,6 @@ class Pipe:
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
-                            self._store_tool_metadata(
-                                __metadata__["chat_id"],
-                                __metadata__["message_id"],
-                                {
-                                    "type": "function_call",
-                                    "call_id": item.call_id,
-                                    "name": item.name,
-                                    "arguments": item.arguments,
-                                },
-                                None,
-                            )
                             await __event_emitter__(
                                 {
                                     "type": "status",
@@ -474,17 +459,24 @@ class Pipe:
             if pending_calls:
                 results = await self._execute_tools(pending_calls, __tools__)
                 for call, result in zip(pending_calls, results):
-                    output_entry = {
+                    function_call = {
+                        "type": "function_call",
+                        "call_id": item.call_id,
+                        "name": item.name,
+                        "arguments": item.arguments,
+                    }
+                    function_call_output = {
                         "type": "function_call_output",
                         "call_id": call.call_id,
                         "output": str(result),
                     }
-                    temp_input.insert(0, output_entry)
-                    if self.log.isEnabledFor(logging.DEBUG):
-                        self.log.debug(
-                            "Appended to temp_input: %s",
-                            json.dumps(output_entry, indent=2),
-                        )
+                    temp_input.insert(0, function_call_output)
+                    self._store_tool_metadata(
+                        __metadata__["chat_id"],
+                        __metadata__["message_id"],
+                        function_call,
+                        function_call_output,
+                    )
                     await __event_emitter__(
                         {
                             "type": "citation",
@@ -499,12 +491,6 @@ class Pipe:
                                 "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
                             },
                         }
-                    )
-                    self._store_tool_metadata(
-                        __metadata__["chat_id"],
-                        __metadata__["message_id"],
-                        None,
-                        output_entry,
                     )
                 continue
 
@@ -632,23 +618,6 @@ class Pipe:
             )
 
         await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
-
-        # Persist the final content alongside any metadata accumulated during
-        # streaming. Earlier writes only stored partial data (tool calls,
-        # citations, etc.), so we merge everything here in one final update.
-        msg = Chats.get_message_by_id_and_message_id(
-            __metadata__["chat_id"], __metadata__["message_id"]
-        ) or {}
-        Chats.upsert_message_to_chat_by_id_and_message_id(
-            __metadata__["chat_id"],
-            __metadata__["message_id"],
-            {
-                "content": [{"type": "output_text", "text": content}],
-                "tool_calls": msg.get("tool_calls", []),
-                "tool_responses": msg.get("tool_responses", []),
-                "sources": msg.get("sources", []),
-            },
-        )
 
         for rid in cleanup_ids:
             try:
