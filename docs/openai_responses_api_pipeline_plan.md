@@ -65,7 +65,7 @@ Additional context: using `previous_response_id` requires the chat completion re
 The refactored file should remain a single module with clear helpers.  
 Suggested layout:
 
-1. **Configuration** – dataclasses `Valves` and `UserValves` defining all tweakable options.
+1. **Configuration** – dataclasses `ResponsesValves` and `ResponsesUserValves` defining all tweakable options.
 2. **Payload Builders** – helper functions like `build_instructions()`, `prepare_tools()` and `build_chat_payload()`.
 3. **Streaming Loop** – a `stream_chat_completion()` coroutine that yields deltas and captures reasoning tokens.
 4. **Tool Handling** – `execute_tool_calls()` for running tools in parallel and updating chat history.
@@ -77,7 +77,7 @@ Each helper should follow existing middleware naming where possible for easy com
 ### Key Functions
 
 ```python
-async def build_chat_payload(cfg: Valves, messages: list[dict]) -> dict:
+async def build_chat_payload(cfg: ResponsesValves, messages: list[dict]) -> dict:
     """Return the JSON payload for OpenAI's chat completion endpoint."""
 
 async def stream_chat_completion(payload: dict, previous_id: str | None) -> AsyncIterator[Event]:
@@ -93,6 +93,37 @@ class Pipe:
     async def pipe(self, params: dict, send_event: Callable[[str, Any], Awaitable[None]]):
         """Main entrypoint called by WebUI."""
 ```
+
+### Detailed Function Outline
+
+The helpers above intentionally use names that differ from WebUI's middleware
+functions. This avoids import collisions when the pipe is copied into the core
+project while still making the behaviour easy to compare.
+
+1. `assemble_responses_payload(valves: ResponsesValves, chat_id: str) -> dict`
+   - Fetch the chat thread and convert it to the Responses API `input` format.
+   - Insert the admin system prompt (if any) while respecting any user provided
+     system message.
+   - Return a payload dictionary ready to be merged with other model parameters.
+
+2. `run_responses_completion(client, base_url, payload, previous_id)`
+   - Wrapper around `stream_responses` that yields parsed SSE events.
+   - Includes `previous_id` when `store=True` to preserve reasoning tokens.
+   - Emits an initial `status` event when the request is accepted.
+
+3. `handle_responses_output(events, chat_id, emitter, tools)`
+   - Streams text deltas through `emitter` and records partial messages.
+   - Detects `tool_calls` events and delegates to `execute_tool_calls`.
+   - Aggregates token usage for the final `chat:completion` event.
+
+4. `execute_tool_calls(tool_calls, chat_id, tools, emitter)`
+   - Maps each call to the registered WebUI tools and runs them in parallel.
+   - Stores results under `function_call_output` in the chat history.
+   - Emits `citation` events referencing the returned data.
+
+5. `cleanup_responses(client, base_url, previous_id)`
+   - Deletes stored responses via `DELETE /v1/responses/{id}` once they are no
+     longer needed.
 
 ### Previous Response Tracking
 
