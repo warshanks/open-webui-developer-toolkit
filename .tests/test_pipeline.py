@@ -212,14 +212,12 @@ async def test_pipe_stream_loop(dummy_chat):
         )
     await pipe.on_shutdown()
 
-    assert [e["data"] for e in emitted if e["type"] == "message"] == [
+    assert [e["data"] for e in emitted if e["type"] == "chat:completion"] == [
         {"content": "<think>"},
         {"content": "t"},
         {"content": "\n\n---\n\n"},
         {"content": "</think>\n"},
         {"content": "hi"},
-    ]
-    assert [e["data"] for e in emitted if e["type"] == "chat:completion"] == [
         {"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "loops": 1}},
         {"done": True},
     ]

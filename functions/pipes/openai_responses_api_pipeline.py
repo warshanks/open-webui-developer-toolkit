@@ -324,19 +324,19 @@ class Pipe:
                             is_model_thinking = True
                             content += "<think>"
                             await __event_emitter__(
-                                {"type": "message", "data": {"content": "<think>"}}
+                                {"type": "chat:completion", "data": {"content": "<think>"}}
                             )
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         content += event.delta
                         await __event_emitter__(
-                            {"type": "message", "data": {"content": event.delta}}
+                            {"type": "chat:completion", "data": {"content": event.delta}}
                         )
                         continue
                     if et == "response.reasoning_summary_text.done":
                         content += "\n\n---\n\n"
                         await __event_emitter__(
-                            {"type": "message", "data": {"content": "\n\n---\n\n"}}
+                            {"type": "chat:completion", "data": {"content": "\n\n---\n\n"}}
                         )
                         request_params["input"].append(
                             {
@@ -353,13 +353,13 @@ class Pipe:
                             is_model_thinking = False
                             content += "</think>\n"
                             await __event_emitter__(
-                                {"type": "message", "data": {"content": "</think>\n"}}
+                                {"type": "chat:completion", "data": {"content": "</think>\n"}}
                             )
                         continue
                     if et == "response.output_text.delta":
                         content += event.delta
                         await __event_emitter__(
-                            {"type": "message", "data": {"content": event.delta}}
+                            {"type": "chat:completion", "data": {"content": event.delta}}
                         )
                         continue
                     if et == "response.output_text.done":
@@ -427,12 +427,19 @@ class Pipe:
                         url = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
                         await __event_emitter__({"type": "citation", "data": {"document": [title], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": title}], "source": {"name": url, "url": url}}})
                         continue
-                    if et == "response.completed" and event.response.usage:
-                        self._update_usage(usage_total, event.response.usage, loop_count)
+                    if et == "response.completed":
+                        if event.response.usage:
+                            self._update_usage(usage_total, event.response.usage, loop_count)
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:completion",
+                                    "data": {"usage": usage_total},
+                                }
+                            )
                         await __event_emitter__(
                             {
-                                "type": "message",
-                                "data": {"usage": usage_total},
+                                "type": "chat:completion",
+                                "data": {"done": True},
                             }
                         )
                         continue
@@ -519,7 +526,7 @@ class Pipe:
 
         await __event_emitter__(
             {
-                "type": "message",
+                "type": "chat:completion",
                 "data": {"done": True},
             }
         )
