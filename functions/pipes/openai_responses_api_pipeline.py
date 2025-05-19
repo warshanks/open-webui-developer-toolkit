@@ -228,8 +228,7 @@ class Pipe:
 
         Instead of yielding chunks, this version emits them via
         ``__event_emitter__`` using ``message`` events so text is appended to
-        the current chat entry. A final ``chat:completion`` event indicates
-        completion and conveys usage stats.
+        the current chat entry.
         """
         start_ns = time.perf_counter_ns()
         self._debug_logs.clear()
@@ -238,7 +237,7 @@ class Pipe:
         if __tools__ and __metadata__.get("function_calling") != "native":
             await __event_emitter__(
                 {
-                    "type": "chat:completion",
+                    "type": "message",
                     "data": {
                         "content": (
                             "🛑 Tools detected, but native function calling is disabled.\n\n"
@@ -432,7 +431,7 @@ class Pipe:
                         self._update_usage(usage_total, event.response.usage, loop_count)
                         await __event_emitter__(
                             {
-                                "type": "chat:completion",
+                                "type": "message",
                                 "data": {"usage": usage_total},
                             }
                         )
@@ -441,7 +440,7 @@ class Pipe:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
                 await __event_emitter__(
                     {
-                        "type": "chat:completion",
+                        "type": "message",
                         "data": {
                             "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
                         },
@@ -520,7 +519,7 @@ class Pipe:
 
         await __event_emitter__(
             {
-                "type": "chat:completion",
+                "type": "message",
                 "data": {"done": True},
             }
         )
