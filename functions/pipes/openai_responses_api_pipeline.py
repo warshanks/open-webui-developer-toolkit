@@ -77,6 +77,7 @@ import sys
 import time
 import traceback
 from datetime import datetime
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 
@@ -92,6 +93,18 @@ EMOJI_LEVELS = {
     logging.ERROR: "\u274C",
     logging.CRITICAL: "\U0001F525",
 }
+
+
+@dataclass
+class ResponsesEvent:
+    """Parsed SSE event."""
+
+    type: str
+    delta: str | None = None
+    text: str | None = None
+    item_id: str | None = None
+    item: Any | None = None
+    response: Any | None = None
 
 
 class Pipe:
@@ -827,3 +840,51 @@ def pretty_log_block(data: Any, label: str = "") -> str:
         content = str(data)
     label_line = f"{label} =" if label else ""
     return f"\n{'-' * 40}\n{label_line}\n{content}\n{'-' * 40}"
+
+
+def assemble_responses_payload(
+    valves: Pipe.Valves,
+    chat_id: str,
+    body: dict[str, Any],
+    instructions: str,
+    tools: list[dict[str, Any]],
+    user_email: str | None,
+) -> dict[str, Any]:
+    """Combine chat history and parameters into a request payload."""
+    params = {
+        "model": valves.MODEL_ID,
+        "tools": tools,
+        "tool_choice": "auto" if tools else "none",
+        "instructions": instructions,
+        "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
+        "max_output_tokens": body.get("max_tokens"),
+        "temperature": body.get("temperature") or 1.0,
+        "top_p": body.get("top_p") or 1.0,
+        "user": user_email,
+        "text": {"format": {"type": "text"}},
+        "truncation": "auto",
+        "stream": True,
+        "store": True,
+        "input": build_responses_payload(chat_id),
+    }
+
+    if valves.REASON_EFFORT or valves.REASON_SUMMARY:
+        params["reasoning"] = {}
+        if valves.REASON_EFFORT:
+            params["reasoning"]["effort"] = valves.REASON_EFFORT
+        if valves.REASON_SUMMARY:
+            params["reasoning"]["summary"] = valves.REASON_SUMMARY
+
+    return params
+
+
+def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
+    """Parse an SSE data payload into a ``ResponsesEvent``."""
+    payload = json.loads(data)
+    return ResponsesEvent(type=event_type or "message", **payload)
+
+
+def store_partial_message(chat_id: str, message_id: str, content: str) -> None:
+    """Persist a partial streamed message for future inspection."""
+    # TODO: implement persistence logic
+    _ = (chat_id, message_id, content)
