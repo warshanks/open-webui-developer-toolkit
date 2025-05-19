@@ -1,12 +1,11 @@
 """
-title: Example: Persisting Custom Chat Metadata
+title: Example Persisting Custom Chat Metadata
 id: example_persist_custom_chat_metadata
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 version: 1.0.1
 license: MIT
-description: |
-  Demonstrates how to store additional custom metadata directly in chat messages, allowing you to save and later access structured data without displaying it to users in the chat interface.
+description: Demonstrates how to store additional custom metadata directly in chat messages, allowing you to save and later access structured data without displaying it to users in the chat interface.
 
   ### Practical example:
   - Cache expensive or rate-limited tool results for quick retrieval in future interactions.
