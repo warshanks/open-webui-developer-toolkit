@@ -17,8 +17,7 @@ dev = [
   "pytest",
   "pytest-cov",
   "pre-commit",
-  "nox",
-  "nano"
+  "nox"
 ]
 
 [build-system]
