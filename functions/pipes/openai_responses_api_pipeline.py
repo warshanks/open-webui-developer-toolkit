@@ -217,9 +217,8 @@ class Pipe:
                 self.buf = buf
 
             def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
-                if record.levelno == logging.DEBUG:
-                    msg = self.format(record)
-                    self.buf.append(msg)
+                msg = self.format(record)
+                self.buf.append(msg)
 
         mem_handler = _MemHandler(self._debug_logs)
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
