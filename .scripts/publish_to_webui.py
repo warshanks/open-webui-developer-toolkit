@@ -83,8 +83,9 @@ def _detect_type(path: Path, explicit: str | None) -> str:
     return "pipe"
 
 
-def _extract_metadata(code: str) -> tuple[str, str]:
-    """Return ``(id, description)`` extracted from the plugin header."""
+def _extract_metadata(code: str) -> tuple[str, str, str]:
+    """Return ``(id, title, description)`` extracted from the plugin header."""
+
     plugin_id = next(
         (
             ln.split(":", 1)[1].strip()
@@ -96,6 +97,15 @@ def _extract_metadata(code: str) -> tuple[str, str]:
     if not plugin_id:
         raise ValueError("'id:' line not found at top of file -- aborting")
 
+    plugin_title = next(
+        (
+            ln.split(":", 1)[1].strip()
+            for ln in code.splitlines()
+            if ln.lower().startswith("title:")
+        ),
+        plugin_id,
+    )
+
     plugin_description = next(
         (
             ln.split(":", 1)[1].strip()
@@ -104,14 +114,17 @@ def _extract_metadata(code: str) -> tuple[str, str]:
         ),
         "",
     )
-    return plugin_id, plugin_description
+    return plugin_id, plugin_title, plugin_description
 
 
-def _build_payload(plugin_id: str, plugin_type: str, code: str, description: str) -> dict:
+def _build_payload(
+    plugin_id: str, plugin_type: str, code: str, description: str, name: str
+) -> dict:
     """Create the JSON payload for WebUI."""
+
     return {
         "id": plugin_id,
-        "name": plugin_id,
+        "name": name,
         "type": plugin_type,
         "content": code,
         "meta": {"description": description, "manifest": {}},
@@ -133,7 +146,7 @@ def main() -> None:
     code = path.read_text(encoding="utf-8")
 
     try:
-        plugin_id, description = _extract_metadata(code)
+        plugin_id, plugin_name, description = _extract_metadata(code)
         logging.info("Plugin id: %s", plugin_id)
     except ValueError as exc:
         sys.exit(f"❌  {exc}")
@@ -142,7 +155,7 @@ def main() -> None:
         logging.warning("'description:' line not found - using empty description")
 
     plugin_type = _detect_type(path, args.type)
-    payload = _build_payload(plugin_id, plugin_type, code, description)
+    payload = _build_payload(plugin_id, plugin_type, code, description, plugin_name)
 
     logging.info("Publishing '%s' (%s) to %s", plugin_id, plugin_type, args.url)
     status = _post(args.url, args.key, CREATE, payload)

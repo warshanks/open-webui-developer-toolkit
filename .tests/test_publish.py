@@ -29,9 +29,10 @@ def test_detect_type_from_path():
 
 
 def test_extract_metadata_success():
-    code = "id: test\ndescription: cool plugin\nprint(1)"
-    pid, desc = _extract_metadata(code)
+    code = "title: My Plugin\nid: test\ndescription: cool plugin\nprint(1)"
+    pid, title, desc = _extract_metadata(code)
     assert pid == "test"
+    assert title == "My Plugin"
     assert desc == "cool plugin"
 
 
@@ -40,9 +41,18 @@ def test_extract_metadata_missing_id():
         _extract_metadata("description: nope")
 
 
+def test_extract_metadata_defaults_title_to_id():
+    code = "id: pid\nprint()"
+    pid, title, desc = _extract_metadata(code)
+    assert pid == "pid"
+    assert title == "pid"
+    assert desc == ""
+
+
 def test_build_payload_structure():
-    payload = _build_payload("pid", "pipe", "code", "desc")
+    payload = _build_payload("pid", "pipe", "code", "desc", "MyTitle")
     assert payload["id"] == "pid"
+    assert payload["name"] == "MyTitle"
     assert payload["type"] == "pipe"
     assert payload["content"] == "code"
     assert payload["meta"]["description"] == "desc"
