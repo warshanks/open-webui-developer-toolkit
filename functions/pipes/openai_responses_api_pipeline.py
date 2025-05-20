@@ -84,6 +84,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 import httpx
 from fastapi import Request
 from open_webui.models.chats import Chats
+from open_webui.models.models import Models, ModelForm, ModelParams
 from open_webui.utils.misc import deep_update, get_message_list
 from pydantic import BaseModel, Field
 
@@ -258,19 +259,26 @@ class Pipe:
         self._apply_user_overrides(__user__.get("valves"))
 
         if __tools__ and __metadata__.get("function_calling") != "native":
-            await __event_emitter__(
-                {
-                    "type": "message",
-                    "data": {
-                        "content": (
-                            "🛑 Tools detected, but native function calling is disabled.\n\n"
-                            "To enable tools in this chat, switch Function Calling to 'Native'."
-                        ),
-                    },
-                }
-            )
-            self.log.error("Tools present but native function calling disabled")
-            return
+            model_id = __metadata__.get("model")
+            model_info = Models.get_model_by_id(model_id) if model_id else None
+            if model_info:
+                params = dict(model_info.params.model_dump())
+                if params.get("function_calling") != "native":
+                    params["function_calling"] = "native"
+                    model_form = ModelForm(
+                        id=model_info.id,
+                        name=model_info.name,
+                        base_model_id=model_info.base_model_id,
+                        meta=model_info.meta,
+                        params=ModelParams(**params),
+                        access_control=model_info.access_control,
+                        is_active=model_info.is_active,
+                    )
+                    Models.update_model_by_id(model_info.id, model_form)
+                    self.log.info(
+                        "Enabled native function calling for model %s", model_id
+                    )
+            __metadata__["function_calling"] = "native"
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
