@@ -100,7 +100,7 @@ def test_build_params_includes_reasoning(dummy_chat):
     pipe = pipeline.Pipe()
     pipe.valves.REASON_EFFORT = "high"
     pipe.valves.REASON_SUMMARY = "concise"
-    body = {"max_tokens": 50, "temperature": 0.4, "top_p": 0.9}
+    body = {"model": "openai_responses_api_pipeline.o3", "max_tokens": 50, "temperature": 0.4, "top_p": 0.9}
     params = pipe._build_params(body, "ins", [{"type": "function"}], "me@example.com")
     assert params["tool_choice"] == "auto"
     assert params["max_output_tokens"] == 50
@@ -108,6 +108,15 @@ def test_build_params_includes_reasoning(dummy_chat):
     assert params["top_p"] == 0.9
     assert params["user"] == "me@example.com"
     assert params["reasoning"] == {"effort": "high", "summary": "concise"}
+
+
+def test_build_params_drops_reasoning_for_base_model(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+    pipe.valves.REASON_EFFORT = "high"
+    body = {"model": "openai_responses_api_pipeline.gpt-4.1"}
+    params = pipe._build_params(body, "ins", [], None)
+    assert "reasoning" not in params
 
 
 def test_update_usage_accumulates(dummy_chat):
@@ -587,4 +596,15 @@ async def test_function_call_output_persisted(dummy_chat):
     payload = pipeline.build_responses_payload("chat1")
     assert {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"} in payload
     assert {"type": "function_call_output", "call_id": "c1", "output": "42"} in payload
+
+
+def test_pipes_returns_multiple_models(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+    pipe.valves.MODEL_ID = "gpt-4o,gpt-4o-mini"
+    models = pipe.pipes()
+    assert models == [
+        {"id": "gpt-4o", "name": "OpenAI: gpt-4o"},
+        {"id": "gpt-4o-mini", "name": "OpenAI: gpt-4o-mini"},
+    ]
 

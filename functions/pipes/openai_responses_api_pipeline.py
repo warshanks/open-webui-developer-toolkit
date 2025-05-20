@@ -39,7 +39,7 @@ Future Improvements:
 
 Notes:
    - This pipeline is experimental. USE AT YOUR OWN RISK.
-   - Duplicate/clone this pipeline if you want multiple models.
+   - Set `MODEL_ID` to a comma separated list to expose multiple models.
    - Tool calling requires 'OpenWebUI Model Advanced Params → Function Calling → set to "Native"'
 
 Read more about OpenAI Responses API:
@@ -97,6 +97,10 @@ EMOJI_LEVELS = {
     logging.CRITICAL: "\U0001F525",
 }
 
+# Feature support by model
+WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
+REASONING_MODELS = {"o3", "o4-mini"}
+
 
 @dataclass
 class ResponsesEvent:
@@ -131,29 +135,28 @@ class Pipe:
         MODEL_ID: str = Field(
             default="gpt-4.1",
             description=(
-                "Model ID used to generate responses. Defaults to 'gpt-4.1'. Note: The model ID must be a valid OpenAI model ID. E.g. 'gpt-4o', 'o3', etc."
+                "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-model
 
         REASON_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
             description=(
-                "Reasoning summary style for o-series models (if your OpenAI org has access). OpenAI may require identify verification before enabling. Leave blank to disable (default)."
+                "Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
 
         REASON_EFFORT: Literal["low", "medium", "high", None] = Field(
             default=None,
             description=(
-                "Reasoning effort level for o-series models. "
-                "Leave blank to disable (default)."
+                "Reasoning effort level for o-series models (supported by: o3, o4-mini)."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
 
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
             description=(
-                "Whether to enable OpenAI's built-in 'web_search' tool. If True, adds {'type': 'web_search'} to tools (unless already present). Note: Tool occurs additional charge each time the model calls it"
+                "Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini)."
             ),
         )  # Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses
 
@@ -195,7 +198,7 @@ class Pipe:
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
         self.valves = self.Valves()
-        self.name = f"OpenAI: {self.valves.MODEL_ID}"  # TODO fix this as MODEL_ID value can't be accessed from within __init__.
+        self.name = "OpenAI Responses"
         self._client: httpx.AsyncClient | None = None
         self._transport: httpx.AsyncHTTPTransport | None = None
         self._client_lock = asyncio.Lock()
@@ -221,6 +224,11 @@ class Pipe:
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         self.log.handlers = [handler, mem_handler]
         self.log.setLevel(logging.INFO)
+
+    def pipes(self):
+        """Return models exposed by this pipe."""
+        models = [m.strip() for m in self.valves.MODEL_ID.split(',') if m.strip()]
+        return [{"id": mid, "name": f"OpenAI: {mid}"} for mid in models]
 
     async def on_shutdown(self) -> None:
         """Clean up the HTTP client."""
@@ -267,7 +275,7 @@ class Pipe:
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
             self.name,
-            self.valves.MODEL_ID,
+            body.get("model", self.valves.MODEL_ID),
             __user__.get("email", "anon"),
             __metadata__["chat_id"],
             __metadata__["message_id"],
@@ -279,8 +287,12 @@ class Pipe:
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
 
+        model = body.get("model", self.valves.MODEL_ID.split(",")[0])
+        if "." in str(model):
+            model = str(model).split(".", 1)[1]
+
         tools = prepare_tools(__tools__)
-        if self.valves.ENABLE_WEB_SEARCH:
+        if self.valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
             tools.append(
                 {
                     "type": "web_search",
@@ -679,8 +691,11 @@ class Pipe:
         user_email: str | None,
     ) -> dict[str, Any]:
         """Create the request payload for the Responses API."""
+        model = body.get("model", self.valves.MODEL_ID.split(",")[0])
+        if "." in str(model):
+            model = str(model).split(".", 1)[1]
         params = {
-            "model": self.valves.MODEL_ID,
+            "model": model,
             "tools": tools,
             "tool_choice": "auto" if tools else "none",
             "instructions": instructions,
@@ -694,7 +709,7 @@ class Pipe:
             "stream": True,
             "store": True,
         }
-        if self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY:
+        if model in REASONING_MODELS and (self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY):
             params["reasoning"] = {}
             if self.valves.REASON_EFFORT:
                 params["reasoning"]["effort"] = self.valves.REASON_EFFORT
@@ -916,8 +931,11 @@ def assemble_responses_payload(
     user_email: str | None,
 ) -> dict[str, Any]:
     """Combine chat history and parameters into a request payload."""
+    model = body.get("model", valves.MODEL_ID.split(",")[0])
+    if "." in str(model):
+        model = str(model).split(".", 1)[1]
     params = {
-        "model": valves.MODEL_ID,
+        "model": model,
         "tools": tools,
         "tool_choice": "auto" if tools else "none",
         "instructions": instructions,
@@ -933,7 +951,7 @@ def assemble_responses_payload(
         "input": build_responses_payload(chat_id),
     }
 
-    if valves.REASON_EFFORT or valves.REASON_SUMMARY:
+    if model in REASONING_MODELS and (valves.REASON_EFFORT or valves.REASON_SUMMARY):
         params["reasoning"] = {}
         if valves.REASON_EFFORT:
             params["reasoning"]["effort"] = valves.REASON_EFFORT
