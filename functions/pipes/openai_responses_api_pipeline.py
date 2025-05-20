@@ -1,6 +1,6 @@
 """
 title: OpenAI Responses API Pipeline
-id: openai_responses_api_pipeline
+id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
@@ -198,12 +198,12 @@ class Pipe:
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
         self.valves = self.Valves()
-        self.name = "OpenAI Responses"
+        self.log_name = "OpenAI Responses"
         self._client: httpx.AsyncClient | None = None
         self._transport: httpx.AsyncHTTPTransport | None = None
         self._client_lock = asyncio.Lock()
 
-        self.log = logging.getLogger(self.name)
+        self.log = logging.getLogger(self.log_name)
         self.log.propagate = False
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"))
@@ -274,7 +274,7 @@ class Pipe:
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
-            self.name,
+            self.log_name,
             body.get("model", self.valves.MODEL_ID),
             __user__.get("email", "anon"),
             __metadata__["chat_id"],
