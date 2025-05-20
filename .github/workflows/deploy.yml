@@ -1,8 +1,8 @@
-name: Deploy OpenWebUI Extensions
+name: OpenWebUI Extension Deployment
 
 on:
   push:
-    branches: [ main ]                      # 🚀 deploy pipeline only on main
+    branches: [ dev, main ]
     paths:
       - 'functions/**.py'
       - 'tools/**.py'
@@ -11,9 +11,10 @@ on:
 
 jobs:
 # ───────────────────────────────────────────
-# 1.  STAGING  — GLC (auto)
+# Deploy to GLC when committing to dev
 # ───────────────────────────────────────────
-  deploy-staging:
+  deploy-glc:
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment: staging-glc
 
@@ -56,10 +57,10 @@ jobs:
           done
 
 # ───────────────────────────────────────────
-# 2.  PRODUCTION — CLAC (manual gate)
+# Deploy to CLAC when committing to main
 # ───────────────────────────────────────────
-  deploy-production:
-    needs: deploy-staging
+  deploy-clac:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production-clac
 
