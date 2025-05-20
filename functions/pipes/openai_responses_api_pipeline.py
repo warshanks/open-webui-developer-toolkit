@@ -258,30 +258,7 @@ class Pipe:
         self._debug_logs.clear()
         self._apply_user_overrides(__user__.get("valves"))
 
-        if __metadata__.get("function_calling") != "native":
-            model_dict = __metadata__.get("model") or {}
-            model_id = (
-                model_dict.get("id") if isinstance(model_dict, dict) else model_dict
-            )
-            self.log.debug("Enabling native function calling for %s", model_id)
-
-            model_info = Models.get_model_by_id(model_id) if model_id else None
-            if model_info:
-                model_data = model_info.model_dump()
-                model_data["params"]["function_calling"] = "native"
-                model_data["params"] = ModelParams(**model_data["params"])
-                updated = Models.update_model_by_id(
-                    model_info.id, ModelForm(**model_data)
-                )
-                if updated:
-                    self.log.info(
-                        "✅ Set model %s to native function calling", model_info.id
-                    )
-                else:
-                    self.log.error("❌ Failed to update model %s", model_info.id)
-            else:
-                self.log.warning("⚠️ Model info not found for id %s", model_id)
-            __metadata__["function_calling"] = "native"
+        self._ensure_native_function_calling(__metadata__)
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
@@ -693,6 +670,32 @@ class Pipe:
         self.log.setLevel(
             getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
         )
+
+    def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
+        """Enable native function calling for a model if not already active."""
+        if metadata.get("function_calling") == "native":
+            return
+
+        model_dict = metadata.get("model") or {}
+        model_id = model_dict.get("id") if isinstance(model_dict, dict) else model_dict
+        self.log.debug("Enabling native function calling for %s", model_id)
+
+        model_info = Models.get_model_by_id(model_id) if model_id else None
+        if model_info:
+            model_data = model_info.model_dump()
+            model_data["params"]["function_calling"] = "native"
+            model_data["params"] = ModelParams(**model_data["params"])
+            updated = Models.update_model_by_id(model_info.id, ModelForm(**model_data))
+            if updated:
+                self.log.info(
+                    "✅ Set model %s to native function calling", model_info.id
+                )
+            else:
+                self.log.error("❌ Failed to update model %s", model_info.id)
+        else:
+            self.log.warning("⚠️ Model info not found for id %s", model_id)
+
+        metadata["function_calling"] = "native"
 
     def _build_params(
         self,
