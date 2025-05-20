@@ -70,7 +70,7 @@ so progress and results can be displayed in the WebUI. Example output:
 - Final message writes from the middleware overwrite `content` but keep previously stored fields due to the merge logic.
 
 ### Custom tool metadata
-The `openai_responses_api_pipeline` stores `function_call` and
+The `openai_responses` pipeline stores `function_call` and
 `function_call_output` events using two arrays:
 
 ```json
