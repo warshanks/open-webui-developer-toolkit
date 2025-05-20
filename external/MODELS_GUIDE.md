@@ -148,3 +148,25 @@ Validates that a user can see the given model.  Arena models honour the
 function consults `Models.get_model_by_id` and verifies ownership or explicit
 permissions via `has_access`.
 
+### Updating models
+
+Use `Models.update_model_by_id` to modify a model's metadata or parameters.
+Construct a `ModelForm` with the desired fields and pass it along with the
+model id. Only the provided attributes are changed:
+
+```python
+model = Models.get_model_by_id("gpt-4o")
+params = model.params.model_dump()
+params["function_calling"] = "native"
+form = ModelForm(
+    id=model.id,
+    name=model.name,
+    base_model_id=model.base_model_id,
+    meta=model.meta,
+    params=ModelParams(**params),
+    access_control=model.access_control,
+    is_active=model.is_active,
+)
+Models.update_model_by_id(model.id, form)
+```
+
