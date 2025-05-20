@@ -40,22 +40,6 @@ def dummy_chat(monkeypatch):
         "httpx": types.ModuleType("httpx"),
     }
 
-    models_mod = types.ModuleType("open_webui.models.models")
-
-    class ModelForm:
-        def __init__(self, **data):
-            for k, v in data.items():
-                setattr(self, k, v)
-
-    models_mod.ModelForm = ModelForm
-    models_mod.ModelParams = ModelForm
-    models_mod.Models = types.SimpleNamespace(
-        get_model_by_id=lambda _id: None,
-        update_model_by_id=lambda _id, form: None,
-    )
-
-    modules["open_webui.models.models"] = models_mod
-
     modules["open_webui.utils.misc"].deep_update = lambda d, u: {**d, **u}
     def _get_msg_list(msgs, mid):
         out = []
