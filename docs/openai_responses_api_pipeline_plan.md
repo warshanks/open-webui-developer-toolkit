@@ -67,14 +67,13 @@ Below is a task breakdown with _suggested_ statuses. The AI (or human) can check
 
 | **Task ID** | **Title**                                     | **Description**                                                                                                                                                                                                                               | **Status** | **Notes / Links** |
 |-------------|-----------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|-------------------|
-| **1**       | **Extract Helpers**                           | 1. Create small, focused helper functions for SSE parsing and assembling OpenAI payloads.<br> 2. Preserve existing logic but isolate it in well‑named functions. <br> 3. Add placeholders in the code for future tests. | Done |                   |
-| **2**       | **Refactor `pipe()`**                        | 1. Rewrite `Pipe.pipe()` to orchestrate the new helpers (payload building, streaming, tool calls, final cleanup). <br> 2. Keep the event emission order consistent with WebUI’s `process_chat_response`. <br> 3. Ensure partial results are stored properly. | Done |                   |
-| **3**       | **Integrate Middleware Imports**              | 1. Identify duplicated logic that can be replaced with `open_webui.utils.middleware` or similar. <br> 2. Replace references safely, ensuring no feature gaps.                                                                                     | Done |                   |
-| **4**       | **Persist Tool Metadata**                     | 1. Update tool execution code so `tool_calls` and `tool_responses` are stored in the chat DB. <br> 2. Remove any embedded JSON approach if used; rely on database fields for replays.                                                             | Done (reverted) | Custom metadata now embedded in citation events via `_fc`; will revisit DB persistence later |
-| **5**       | **Implement Cleanup**                         | 1. After streaming and tool calls, call `DELETE /v1/responses/{id}` to remove stored responses if `previous_response_id` was used. <br> 2. Ensure errors do not block cleanup.                                                                    | Done |                   |
-| **6**       | **Expand Unit Tests**                         | 1. Add tests under `.tests/` mocking SSE events, verifying usage stats and parallel tool call flows. <br> 2. Confirm the final event order (status → message → citation → completion).                                                           | Done |                   |
-| **7**       | **Update Documentation**                      | 1. Revise `functions/pipes/README.md` with a short summary of the new structure. <br> 2. Note any external imports from middleware. <br> 3. Link to the new test suite for maintainers.                                                            | Done |                   |
-| **8**       | **Verify Event Logs & Compare**              | 1. Capture logs from a real chat session in both the old pipeline and the new one. <br> 2. Compare event sequences to ensure no regressions. | Blocked | Old pipeline version unavailable; cannot capture comparison logs |
+| **1**       | **Extract Helpers**                           | 1. Create small, focused helper functions for SSE parsing and assembling OpenAI payloads.<br> 2. Preserve existing logic but isolate it in well‑named functions. <br> 3. Add placeholders in the code for future tests. | In Progress |                   |
+| **2**       | **Refactor `pipe()`**                        | 1. Rewrite `Pipe.pipe()` to orchestrate the new helpers (payload building, streaming, tool calls, final cleanup). <br> 2. Keep the event emission order consistent with WebUI’s `process_chat_response`. <br> 3. Ensure partial results are stored properly. | In Progress |                   |
+| **3**       | **Integrate Middleware Imports**              | 1. Identify duplicated logic that can be replaced with `open_webui.utils.middleware` or similar. <br> 2. Replace references safely, ensuring no feature gaps.                                                                                     | In Progress |                   |
+| **4**       | **Implement Cleanup**                         | 1. After streaming and tool calls, call `DELETE /v1/responses/{id}` to remove stored responses if `previous_response_id` was used. <br> 2. Ensure errors do not block cleanup.                                                                    | In Progress |                   |
+| **5**       | **Expand Unit Tests**                         | 1. Add tests under `.tests/` mocking SSE events, verifying usage stats and parallel tool call flows. <br> 2. Confirm the final event order (status → message → citation → completion).                                                           | In Progress |                   |
+| **6**       | **Update Documentation**                      | 1. Revise `functions/pipes/README.md` with a short summary of the new structure. <br> 2. Note any external imports from middleware. <br> 3. Link to the new test suite for maintainers.                                                            | In Progress |                   |
+| **7**       | **Verify Event Logs & Compare**              | 1. Capture logs from a real chat session in both the old pipeline and the new one. <br> 2. Compare event sequences to ensure no regressions. | Blocked | Old pipeline version unavailable; cannot capture comparison logs |
 
 ---
 
@@ -107,55 +106,6 @@ Retain **one** file: `openai_responses_api_pipeline.py`. Within it:
      4. Detect and handle tool calls  
      5. Cleanup any stored `previous_response_id`
 
----
-
-## Example Pseudocode for `Pipe.pipe()`
-
-```python
-class Pipe:
-    async def pipe(self, body, __user__, __request__, __emitter__, __caller__, __files__, __meta__, __tools__):
-        chat_id = __meta__.get("chat_id")
-        user_valves = __user__.get("valves", {})
-        
-        # Merge user overrides
-        valves = self._apply_user_overrides(user_valves)
-        
-        # Prepare the OpenAI payload
-        payload = assemble_responses_payload(valves, chat_id)
-        payload.update(body)  # Merge user input or instructions if needed
-
-        # Optionally store the previous response
-        previous_response_id = None
-
-        # Stream from the OpenAI Responses API
-        async for event in stream_responses_completion(
-            self.http_client,
-            valves.BASE_URL,
-            payload,
-            previous_response_id
-        ):
-            # Emit text or citations
-            await __emitter__(event.to_dict())
-            
-            # Check if the event includes any tool calls
-            if event.type == "tool_calls":
-                # Execute them in parallel
-                tool_call_results = await execute_responses_tool_calls(
-                    event.data.get("calls"), 
-                    chat_id
-                )
-                # Optionally store or emit the tool results as citations
-                # ...
-            
-            # Update or clear previous_response_id as needed
-            previous_response_id = event.data.get("previous_response_id")
-
-        # Cleanup if a stored ID existed
-        if previous_response_id:
-            await delete_openai_response(self.http_client, valves.BASE_URL, previous_response_id)
-
-
-⸻
 
 Important Notes
 	•	Error Handling:
@@ -183,5 +133,5 @@ As each task is completed, update the Task Table’s status column. This will ke
 
 End of Plan
 
-Use this document as a single source of truth for the refactoring effort. Each time new commits are made to production, update the “Task ID” row accordingly and note any special considerations in the “Notes / Links” column.
+Use this document as a single source of truth for the refactoring effort. Each time new commits are made to production, update the “Task ID” row accordingly and note any special considerations in the “Notes / Links” column.  Let items as In Progress until they are perfected.
 
