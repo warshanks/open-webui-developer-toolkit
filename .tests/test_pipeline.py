@@ -146,11 +146,17 @@ def test_build_responses_payload_complex(dummy_chat):
                 "role": "assistant",
                 "content": [{"text": "ok"}],
                 "parentId": "m1",
-                "tool_calls": [
-                    {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"}
-                ],
-                "tool_responses": [
-                    {"type": "function_call_output", "call_id": "c1", "output": "42"}
+                "sources": [
+                    {
+                        "_fc": [
+                            {
+                                "call_id": "c1",
+                                "name": "t",
+                                "arguments": "{}",
+                                "output": "42",
+                            }
+                        ]
+                    }
                 ],
             },
         },
@@ -439,23 +445,19 @@ async def test_tool_metadata_persisted(dummy_chat):
             yield e
 
     tools = {"t": {"callable": AsyncMock(return_value="42")}}
-    updates = []
+    emitted = []
 
-    def upsert(chat_id, message_id, data):
-        updates.append(data)
+    async def emitter(evt: dict):
+        emitted.append(evt)
 
     with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
         pipe, "get_http_client", AsyncMock(return_value=object())
-    ), patch.object(
-        pipeline.Chats,
-        "upsert_message_to_chat_by_id_and_message_id",
-        side_effect=upsert,
     ):
         await pipe.pipe(
             {},
             {},
             None,
-            AsyncMock(),
+            emitter,
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
@@ -463,9 +465,11 @@ async def test_tool_metadata_persisted(dummy_chat):
         )
     await pipe.on_shutdown()
 
-    assert any("tool_calls" in u for u in updates)
-    assert updates[-1]["tool_calls"][0]["name"] == "t"
-    assert updates[-1]["tool_responses"][0]["output"] == "42"
+    citation = next(e for e in emitted if e["type"] == "citation")
+    assert citation["data"].get("_fc")
+    fc = citation["data"]["_fc"][0]
+    assert fc["name"] == "t"
+    assert fc["output"] == "42"
 
 
 @pytest.mark.asyncio
@@ -559,11 +563,18 @@ async def test_function_call_output_persisted(dummy_chat):
     with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
+        async def emitter(evt: dict):
+            if evt.get("type") == "citation":
+                msgs = dummy_chat["history"].setdefault("messages", {})
+                m = msgs.setdefault("m1", {"role": "assistant"})
+                srcs = list(m.get("sources", []))
+                srcs.append(evt["data"])
+                m["sources"] = srcs
         gen = pipe.pipe(
             {},
             {},
             None,
-            AsyncMock(),
+            emitter,
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},

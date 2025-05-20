@@ -459,26 +459,14 @@ class Pipe:
             if pending_calls:
                 results = await self._execute_tools(pending_calls, __tools__)
                 for call, result in zip(pending_calls, results):
-                    function_call = {
-                        "type": "function_call",
-                        "call_id": item.call_id,
-                        "name": item.name,
-                        "arguments": item.arguments,
-                    }
                     function_call_output = {
                         "type": "function_call_output",
                         "call_id": call.call_id,
                         "output": str(result),
                     }
                     temp_input.insert(0, function_call_output)
-                    self._store_tool_metadata(
-                        __metadata__["chat_id"],
-                        __metadata__["message_id"],
-                        function_call,
-                        function_call_output,
-                    )
-                    await __event_emitter__(
-                        {
+                    if __event_emitter__:
+                        citation_event = {
                             "type": "citation",
                             "data": {
                                 "document": [f"{call.name}({call.arguments})\n\n{result}"],
@@ -489,9 +477,17 @@ class Pipe:
                                     }
                                 ],
                                 "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
+                                "_fc": [
+                                    {
+                                        "call_id": call.call_id,
+                                        "name": call.name,
+                                        "arguments": call.arguments,
+                                        "output": str(result),
+                                    }
+                                ],
                             },
                         }
-                    )
+                        await __event_emitter__(citation_event)
                 continue
 
             # Clean up the server-side state unless the user opted to keep it
@@ -755,54 +751,6 @@ class Pipe:
                     total[key][subkey] = total[key].get(subkey, 0) + subval
         total["loops"] = loops
 
-    def _store_tool_metadata(
-        self,
-        chat_id: str,
-        message_id: str,
-        call: dict | None = None,
-        response: dict | None = None,
-    ) -> None:
-        """Persist tool call and response details.
-
-        Both ``call`` and ``response`` are appended to ``tool_calls`` and
-        ``tool_responses`` lists on the target message using
-        ``Chats.upsert_message_to_chat_by_id_and_message_id``. This mirrors the
-        approach shown in ``example_persist_custom_chat_metadata.py`` and keeps
-        the metadata hidden from the main chat UI while remaining queryable.
-        """
-        try:
-            msg = Chats.get_message_by_id_and_message_id(chat_id, message_id) or {}
-            calls = list(msg.get("tool_calls", []))
-            if call:
-                calls.append(call)
-            responses = list(msg.get("tool_responses", []))
-            if response:
-                responses.append(response)
-            self.log.debug(
-                "Storing message to history: %s",
-                json.dumps(
-                    {"tool_calls": calls, "tool_responses": responses}, indent=2
-                ),
-            )
-            self.log.debug(
-                "Storing tool metadata for chat=%s message=%s: %s",
-                chat_id,
-                message_id,
-                json.dumps(
-                    {"tool_calls": calls, "tool_responses": responses}, indent=2
-                ),
-            )
-            Chats.upsert_message_to_chat_by_id_and_message_id(
-                chat_id,
-                message_id,
-                {"tool_calls": calls, "tool_responses": responses},
-            )
-            self.log.debug(
-                "Stored tool metadata for chat=%s message=%s", chat_id, message_id
-            )
-        except Exception as ex:  # pragma: no cover - log only
-            self.log.debug("Failed to store tool metadata: %s", ex)
-
 
 async def stream_responses(
     client: httpx.AsyncClient,
@@ -910,23 +858,26 @@ def build_responses_payload(chat_id: str) -> list[dict]:
         role = m["role"]
         from_assistant = role == "assistant"
         if from_assistant:
-            for call in m.get("tool_calls", []):
-                input_items.append(
-                    {
-                        "type": "function_call",
-                        "call_id": call.get("call_id"),
-                        "name": call.get("name"),
-                        "arguments": call.get("arguments"),
-                    }
-                )
-            for resp in m.get("tool_responses", []):
-                input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": resp.get("call_id"),
-                        "output": resp.get("output"),
-                    }
-                )
+            for src in m.get("sources", ()):
+                for fc in src.get("_fc", ()):
+                    cid = fc.get("call_id") or fc.get("id")
+                    if not cid:
+                        continue
+                    input_items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": cid,
+                            "name": fc.get("name") or fc.get("n"),
+                            "arguments": fc.get("arguments") or fc.get("a"),
+                        }
+                    )
+                    input_items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": cid,
+                            "output": fc.get("output") or fc.get("o"),
+                        }
+                    )
         blocks: list[dict] = []
         raw_blocks = m.get("content", []) or []
         if not isinstance(raw_blocks, list):
