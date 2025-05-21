@@ -37,7 +37,8 @@ def test_prepare_tools_variants(dummy_chat):
     assert tools[1]["type"] == "function"
 
 
-def test_build_responses_payload(dummy_chat):
+@pytest.mark.asyncio
+async def test_build_responses_payload(dummy_chat):
     pipeline = _reload_pipeline()
     dummy_chat["history"] = {
         "currentId": "m2",
@@ -51,7 +52,7 @@ def test_build_responses_payload(dummy_chat):
         },
     }
 
-    payload = pipeline.assemble_responses_input("chat1")
+    payload = await pipeline.assemble_responses_input("chat1")
     assert payload == [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
         {"role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
@@ -96,7 +97,8 @@ def test_apply_user_overrides_sets_log_level(dummy_chat):
     assert pipe.log.level == logging.DEBUG
 
 
-def test_build_params_includes_reasoning(dummy_chat):
+@pytest.mark.asyncio
+async def test_build_params_includes_reasoning(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
     pipe.valves.REASON_SUMMARY = "concise"
@@ -107,7 +109,7 @@ def test_build_params_includes_reasoning(dummy_chat):
         "top_p": 0.9,
         "reasoning_effort": "high",
     }
-    params = pipeline.assemble_responses_payload(
+    params = await pipeline.assemble_responses_payload(
         pipe.valves,
         "chat1",
         body,
@@ -123,11 +125,12 @@ def test_build_params_includes_reasoning(dummy_chat):
     assert params["reasoning"] == {"effort": "high", "summary": "concise"}
 
 
-def test_build_params_drops_reasoning_for_base_model(dummy_chat):
+@pytest.mark.asyncio
+async def test_build_params_drops_reasoning_for_base_model(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
     body = {"model": "openai_responses.gpt-4.1", "reasoning_effort": "high"}
-    params = pipeline.assemble_responses_payload(
+    params = await pipeline.assemble_responses_payload(
         pipe.valves,
         "chat1",
         body,
@@ -138,10 +141,11 @@ def test_build_params_drops_reasoning_for_base_model(dummy_chat):
     assert "reasoning" not in params
 
 
-def test_assemble_payload_omits_tool_fields_when_none(dummy_chat):
+@pytest.mark.asyncio
+async def test_assemble_payload_omits_tool_fields_when_none(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
-    params = pipeline.assemble_responses_payload(
+    params = await pipeline.assemble_responses_payload(
         pipe.valves,
         "chat1",
         {},
@@ -174,7 +178,8 @@ def test_parse_responses_sse_handles_extra_fields(dummy_chat):
     assert getattr(event, "annotation").title == "t"
 
 
-def test_build_responses_payload_complex(dummy_chat):
+@pytest.mark.asyncio
+async def test_build_responses_payload_complex(dummy_chat):
     pipeline = _reload_pipeline()
     dummy_chat["history"] = {
         "currentId": "m2",
@@ -204,7 +209,7 @@ def test_build_responses_payload_complex(dummy_chat):
             },
         },
     }
-    payload = pipeline.assemble_responses_input("chat1")
+    payload = await pipeline.assemble_responses_input("chat1")
     assert payload == [
         {
             "role": "user",
@@ -627,7 +632,7 @@ async def test_function_call_output_persisted(dummy_chat):
             pass
     await pipe.on_shutdown()
 
-    payload = pipeline.assemble_responses_input("chat1")
+    payload = await pipeline.assemble_responses_input("chat1")
     assert {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"} in payload
     assert {"type": "function_call_output", "call_id": "c1", "output": "42"} in payload
 
@@ -689,7 +694,7 @@ async def test_persist_tool_results_valve_off(dummy_chat):
             pass
     await pipe.on_shutdown()
 
-    payload = pipeline.assemble_responses_input("chat1")
+    payload = await pipeline.assemble_responses_input("chat1")
     assert {
         "type": "function_call",
         "call_id": "c1",

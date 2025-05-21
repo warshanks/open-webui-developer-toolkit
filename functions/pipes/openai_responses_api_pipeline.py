@@ -251,7 +251,7 @@ class Pipe:
         self._apply_user_overrides(__user__.get("valves"))
 
         if self.valves.ENABLE_NATIVE_TOOL_CALLING:
-            self._ensure_native_function_calling(__metadata__)
+            await self._ensure_native_function_calling(__metadata__)
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
@@ -288,7 +288,7 @@ class Pipe:
             self.log.debug(pretty_log_block(tools, "tools"))
             self.log.debug(pretty_log_block(instructions, "instructions"))
 
-        base_params = assemble_responses_payload(
+        base_params = await assemble_responses_payload(
             self.valves,
             chat_id,
             body,
@@ -630,7 +630,7 @@ class Pipe:
             getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
         )
 
-    def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
+    async def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
         """Enable native function calling for a model if not already active."""
         if metadata.get("function_calling") == "native":
             return
@@ -642,12 +642,14 @@ class Pipe:
             return
         self.log.debug("Enabling native function calling for %s", model_id)
 
-        model_info = Models.get_model_by_id(model_id) if model_id else None
+        model_info = await asyncio.to_thread(Models.get_model_by_id, model_id) if model_id else None
         if model_info:
             model_data = model_info.model_dump()
             model_data["params"]["function_calling"] = "native"
             model_data["params"] = ModelParams(**model_data["params"])
-            updated = Models.update_model_by_id(model_info.id, ModelForm(**model_data))
+            updated = await asyncio.to_thread(
+                Models.update_model_by_id, model_info.id, ModelForm(**model_data)
+            )
             if updated:
                 self.log.info(
                     "✅ Set model %s to native function calling", model_info.id
@@ -732,6 +734,8 @@ async def stream_responses(
         event_type: str | None = None
         data_buf: list[str] = []
         async for raw in resp.aiter_lines():
+            # Yield to the event loop to keep the UI responsive
+            await asyncio.sleep(0)
             line = raw.rstrip("\r")
             if line.startswith(":"):
                 continue
@@ -781,10 +785,11 @@ def prepare_tools(registry: dict | None) -> list[dict]:
     return tools_out
 
 
-def assemble_responses_input(chat_id: str) -> list[dict]:
+async def assemble_responses_input(chat_id: str) -> list[dict]:
     """Convert WebUI chat history to Responses API input format."""
     logger.debug("Retrieving message history for chat_id=%s", chat_id)
-    chat = Chats.get_chat_by_id(chat_id).chat
+    chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
+    chat = chat_model.chat if chat_model else {"history": {"messages": {}, "currentId": None}}
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
     thread = get_message_list(msg_lookup, current_id) or []
@@ -845,7 +850,7 @@ def pretty_log_block(data: Any, label: str = "") -> str:
     return f"\n{'-' * 40}\n{label_line}\n{content}\n{'-' * 40}"
 
 
-def assemble_responses_payload(
+async def assemble_responses_payload(
     valves: Pipe.Valves,
     chat_id: str,
     body: dict[str, Any],
@@ -862,7 +867,7 @@ def assemble_responses_payload(
     if "." in str(model):
         model = str(model).split(".", 1)[1]
     if input_messages is None:
-        input_messages = assemble_responses_input(chat_id)
+        input_messages = await assemble_responses_input(chat_id)
 
     params = {
         "model": model,

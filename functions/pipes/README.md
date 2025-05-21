@@ -20,6 +20,6 @@ When `MODEL_ID` contains multiple comma separated values the pipe becomes a
 
 This repository's larger pipelines also include small helper functions for
 building the request payload, streaming Server-Sent Events (SSE), and executing
-tool calls.  See `openai_responses_api_pipeline.py` for examples such as
+tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `assemble_responses_payload`, `assemble_responses_input`, `stream_responses`,
 and `execute_responses_tool_calls`.
