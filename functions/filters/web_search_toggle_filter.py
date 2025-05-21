@@ -18,8 +18,9 @@ class Filter:
 
     def __init__(self) -> None:
         self.valves = self.Valves()
+
         # Show a toggle in the UI labelled "Web Search" with a magnifying glass icon
-        self.toggle = "Web Search"
+        self.toggle = True
         self.icon = (
             "data:image/svg+xml;base64,"
             "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIg"
@@ -37,6 +38,8 @@ class Filter:
         """Modify the request body when the toggle is active."""
 
         features = body.setdefault("features", {})
+        # \U0001f9e0 Override native search and explicitly set GPT-4o route
+        features["web_search"] = False
 
         if __event_emitter__:
             await __event_emitter__(
@@ -50,8 +53,6 @@ class Filter:
                 }
             )
 
-        # \U0001f9e0 Override native search and explicitly set GPT-4o route
-        features["web_search"] = False
         body["model"] = "gpt-4o-search-preview"
 
         metadata = __metadata__ or {}
@@ -66,5 +67,27 @@ class Filter:
             },
             "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
         }
+
+        return body
+
+    async def outlet(self, body: dict, __event_emitter__=None) -> dict:
+
+        # PLEASE IMPLEMENT THIS POST PROCESSING
+
+        """
+        The outlet should retrieve the last message from body.get("messages", []) and extract all the URLs that end with ?utm_source=openai.  It should then emitt citations for each and emitt a status message with "✅ Web search complete — {citation_count} source{'s' if citation_count != 1 else ''} cited.".  If it didn't find any it should emitt a status of "Search not used — answer based on model's internal knowledge."
+
+        """
+
+        await __event_emitter__(
+            {
+                "type": "status",
+                "data": {
+                    "description": "",
+                    "done": True,
+                    "hidden": False,
+                },
+            }
+        )
 
         return body
