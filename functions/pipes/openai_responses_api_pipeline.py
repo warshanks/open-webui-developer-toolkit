@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.17
+version: 1.6.16
 license: MIT
 requirements: httpx
 
@@ -34,7 +34,6 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
-• 1.6.17: Optional smooth-stream buffer for SSE tokens.
 • 1.6.16: Valve to control persisting tool results in chat history.
 • 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
 • 1.6.11: Disabled HTTP/2 to prevent stream stalls; optimized connection pooling.
@@ -162,13 +161,6 @@ class Pipe:
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set.",
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls
-
-        SMOOTH_STREAM_MS: int = Field(
-            default=0,
-            description=(
-                "Buffer streaming deltas and emit them every N milliseconds. 0 disables buffering."
-            ),
-        )
 
         # TODO Need to rename as it's not truely max tool calls.  It's max tool loops.  It can call an unlimited number of tools within a single loop.
         MAX_TOOL_CALLS: int = Field(
@@ -340,11 +332,6 @@ class Pipe:
                 pending_calls: list[SimpleNamespace] = []
                 if self.log.isEnabledFor(logging.DEBUG):
                     self.log.debug("response_stream created for loop #%d", loop_count)
-                smooth_ms = self.valves.SMOOTH_STREAM_MS
-                buf: list[str] = []
-                last_emit = time.perf_counter()
-                interval = smooth_ms / 1000 if smooth_ms else 0
-
                 async for event in stream_responses(
                     client, self.valves.BASE_URL, self.valves.API_KEY, request_params
                 ):
@@ -358,10 +345,6 @@ class Pipe:
                         last_response_id = event.response.id
                         continue
                     if et in {"response.done", "response.failed", "response.incomplete", "error"}:
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
@@ -370,21 +353,9 @@ class Pipe:
                             yield "<think>"
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        if smooth_ms:
-                            buf.append(event.delta)
-                            now = time.perf_counter()
-                            if now - last_emit >= interval:
-                                yield "".join(buf)
-                                buf.clear()
-                                last_emit = now
-                        else:
-                            yield event.delta
+                        yield event.delta
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         yield "\n\n---\n\n"
                         continue
                     if et == "response.content_part.added":
@@ -393,28 +364,12 @@ class Pipe:
                             yield "</think>\n"
                         continue
                     if et == "response.output_text.delta":
-                        if smooth_ms:
-                            buf.append(event.delta)
-                            now = time.perf_counter()
-                            if now - last_emit >= interval:
-                                yield "".join(buf)
-                                buf.clear()
-                                last_emit = now
-                        else:
-                            yield event.delta
+                        yield event.delta
                         continue
                     if et == "response.output_text.done":
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         # This delta marks the end of the current output block.
                         continue
                     if et == "response.output_item.added":
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             await self._emit_status(
@@ -426,10 +381,6 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_item.done":
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
@@ -442,10 +393,6 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_text.annotation.added":
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         raw = str(getattr(event, "annotation", ""))
                         title_m = ANNOT_TITLE_RE.search(raw)
                         url_m = ANNOT_URL_RE.search(raw)
@@ -455,10 +402,6 @@ class Pipe:
                         await __event_emitter__({"type": "citation", "data": {"document": [title], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": title}], "source": {"name": url, "url": url}}})
                         continue
                     if et == "response.completed":
-                        if smooth_ms and buf:
-                            yield "".join(buf)
-                            buf.clear()
-                            last_emit = time.perf_counter()
                         if event.response.usage:
                             self._update_usage(
                                 usage_total, event.response.usage, loop_count

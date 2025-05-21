@@ -283,45 +283,6 @@ async def test_pipe_stream_loop(dummy_chat):
 
 
 @pytest.mark.asyncio
-async def test_smooth_streaming_buffers_output(dummy_chat):
-    pipeline = _reload_pipeline()
-    pipe = pipeline.Pipe()
-    pipe.valves.SMOOTH_STREAM_MS = 15
-
-    events = [
-        types.SimpleNamespace(type="response.output_text.delta", delta="a"),
-        types.SimpleNamespace(type="response.output_text.delta", delta="b"),
-        types.SimpleNamespace(type="response.output_text.delta", delta="c"),
-        types.SimpleNamespace(type="response.output_text.done", text="abc"),
-        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
-    ]
-
-    async def fake_stream(*_a, **_kw):
-        for e in events:
-            yield e
-
-    pc_vals = iter([0.0, 0.005, 0.010, 0.020, 0.025, 0.030])
-
-    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
-        pipe, "get_http_client", AsyncMock(return_value=object())
-    ), patch("openai_responses_api_pipeline.time.perf_counter", side_effect=lambda: next(pc_vals)):
-        gen = pipe.pipe(
-            {},
-            {},
-            None,
-            AsyncMock(),
-            AsyncMock(),
-            [],
-            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
-        )
-        tokens = [chunk async for chunk in gen]
-    await pipe.on_shutdown()
-
-    assert tokens == ["abc"]
-
-
-@pytest.mark.asyncio
 async def test_pipe_deletes_response(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
