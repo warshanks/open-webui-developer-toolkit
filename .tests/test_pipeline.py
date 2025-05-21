@@ -100,6 +100,50 @@ def test_instruction_suffix_helpers(dummy_chat):
     assert "device_info:" in ctx
 
 
+@pytest.mark.asyncio
+async def test_ip_lookup_cached(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    class DummyResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+
+        def json(self):
+            return self._data
+
+        def raise_for_status(self):
+            pass
+
+    class DummyClient:
+        async def get(self, url):
+            assert url.endswith("207.194.4.18")
+            return DummyResp({"city": "Waterloo", "regionName": "Ontario", "country": "Canada"})
+
+    async def fake_client():
+        return DummyClient()
+
+    pipe.get_http_client = fake_client
+
+    req = types.SimpleNamespace(
+        headers={
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "user-agent": "Mozilla/5.0 Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
+        },
+        client=types.SimpleNamespace(host="207.194.4.18", port=0),
+    )
+
+    first = pipe._get_user_context_suffix({"name": "Justin", "email": "me@example.com"}, req)
+    assert "Waterloo" not in first
+    for task in list(pipe._ip_tasks.values()):
+        await task
+    second = pipe._get_user_context_suffix({"name": "Justin", "email": "me@example.com"}, req)
+    assert "Waterloo" in second
+    assert pipe._ip_cache.get("207.194.4.18")
+
+
 def test_apply_user_overrides_sets_log_level(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
