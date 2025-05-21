@@ -1,6 +1,6 @@
 """
-title: Web Search Toggle Filter
-id: web_search_toggle
+title: Web Search
+id: web_search_toggle_filter
 description: Enable GPT-4o Search Preview when the Web Search toggle is active.
 """
 
