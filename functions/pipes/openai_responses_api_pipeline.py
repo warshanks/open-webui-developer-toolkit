@@ -820,7 +820,8 @@ def assemble_responses_input(chat_id: str) -> list[dict]:
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
     thread = get_message_list(msg_lookup, current_id) or []
-    logger.debug(pretty_log_block(thread, "history_thread"))
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(pretty_log_block(thread, "history_thread"))
 
     input_items: list[dict] = []
     for m in thread:
@@ -918,17 +919,15 @@ def assemble_responses_payload(
 def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     """Parse an SSE data payload into a ``ResponsesEvent``.
 
-    The Responses API returns nested dictionaries which the pipeline expects as
-    objects with attribute access (``event.response.id``).  To preserve the
-    existing behaviour we convert the parsed JSON into ``SimpleNamespace``
-    instances via ``to_obj``.
+    ``json.loads`` with ``object_hook`` keeps the overhead low while still
+    allowing attribute-style access for nested objects.
     """
-    payload = to_obj(json.loads(data))
+    payload = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
     event = ResponsesEvent(type=event_type or "message")
     if isinstance(payload, SimpleNamespace):
         for key, val in vars(payload).items():
             setattr(event, key, val)
-    elif isinstance(payload, dict):
+    elif isinstance(payload, dict):  # pragma: no cover - safe guard
         for key, val in payload.items():
             setattr(event, key, val)
     return event

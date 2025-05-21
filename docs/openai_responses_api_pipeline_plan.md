@@ -118,6 +118,9 @@ Because previous_response_id is used, partial model reasoning stays in the chain
 Maintain the existing debug logging approach. Possibly buffer logs and emit them as a final citation in DEBUG mode.
 	•	Parallel Tool Execution:
 Use asyncio.gather for tool calls if multiple calls come in at once.
+        •       Streaming Performance:
+Optimize SSE parsing using ``json.loads`` with ``object_hook`` and guard debug
+formatting behind a ``DEBUG`` check to reduce CPU overhead during streaming.
 
 ⸻
 
