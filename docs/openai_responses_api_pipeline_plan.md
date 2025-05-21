@@ -119,8 +119,10 @@ Maintain the existing debug logging approach. Possibly buffer logs and emit them
 	•	Parallel Tool Execution:
 Use asyncio.gather for tool calls if multiple calls come in at once.
         •       Streaming Performance:
-Optimize SSE parsing using ``json.loads`` with ``object_hook`` and guard debug
-formatting behind a ``DEBUG`` check to reduce CPU overhead during streaming.
+Initial SSE parsing relied on ``json.loads`` with ``object_hook``.  The
+implementation now parses only the top-level keys and converts nested
+structures on demand.  Annotation regexes are precompiled and debug formatting
+is wrapped in ``DEBUG`` checks to further cut CPU cost.
 
 ⸻
 
