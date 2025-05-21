@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from pydantic import BaseModel
 
@@ -44,17 +44,17 @@ class Filter:
     async def inlet(
         self,
         body: dict,
-        __event_emitter__: Optional[Callable] = None,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
         __metadata__: Optional[dict] = None,
     ) -> dict:
         """Update the request based on the selected model."""
 
         model = body.get("model")
         if model in WEB_SEARCH_MODELS:
-            self._ensure_web_search_tool(body)
+            self._add_search_tool(body)
             return body
 
-        await self._prepare_search_preview(body, __event_emitter__, __metadata__)
+        await self._configure_search_preview(body, __event_emitter__, __metadata__)
         return body
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
@@ -77,18 +77,18 @@ class Filter:
         urls = self._extract_urls(text)
 
         for url in urls:
-            await self._emit_citation(__event_emitter__, url)
+            await self._send_citation(__event_emitter__, url)
 
         if urls:
             msg = f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
         else:
             msg = "Search not used — answer based on model's internal knowledge."
 
-        await self._emit_status(__event_emitter__, msg, done=True)
+        await self._send_status(__event_emitter__, msg, done=True)
 
         return body
 
-    def _ensure_web_search_tool(self, body: dict) -> None:
+    def _add_search_tool(self, body: dict) -> None:
         """Add the OpenAI web search tool if missing."""
 
         tools = body.setdefault("tools", [])
@@ -100,10 +100,10 @@ class Filter:
                 }
             )
 
-    async def _prepare_search_preview(
+    async def _configure_search_preview(
         self,
         body: dict,
-        emitter: Optional[Callable],
+        emitter: Optional[Callable[[dict], Awaitable[None]]],
         metadata: Optional[dict],
     ) -> None:
         """Configure GPT-4o Search Preview and emit status."""
@@ -113,7 +113,7 @@ class Filter:
         features["web_search"] = False
 
         if emitter:
-            await self._emit_status(
+            await self._send_status(
                 emitter,
                 "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
             )
@@ -135,12 +135,14 @@ class Filter:
 
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
-        matches = re.findall(r"https?://[^\s)]+\?utm_source=openai", text)
-        return matches
+        pattern = r"https?://[^\s)]+[?&]utm_source=openai[^\s)]*"
+        return re.findall(pattern, text)
 
     @staticmethod
-    async def _emit_citation(emitter: callable, url: str) -> None:
-        cleaned = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
+    async def _send_citation(emitter: Callable[[dict], Awaitable[None]], url: str) -> None:
+        cleaned = (
+            url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
+        )
         await emitter(
             {
                 "type": "citation",
@@ -155,7 +157,15 @@ class Filter:
         )
 
     @staticmethod
-    async def _emit_status(emitter: callable, description: str, *, done: bool = False) -> None:
+    async def _send_status(
+        emitter: Callable[[dict], Awaitable[None]],
+        description: str,
+        *,
+        done: bool = False,
+    ) -> None:
         await emitter(
-            {"type": "status", "data": {"description": description, "done": done, "hidden": False}}
+            {
+                "type": "status",
+                "data": {"description": description, "done": done, "hidden": False},
+            }
         )
