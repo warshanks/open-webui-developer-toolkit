@@ -93,11 +93,14 @@ def test_instruction_suffix_helpers(dummy_chat):
         },
         client=types.SimpleNamespace(host="207.194.4.18", port=0),
     )
-    ctx = pipe._get_user_context_suffix(
-        {"name": "Justin", "email": "me@example.com"}, req, include_ip=True
-    )
-    assert "user_info: Justin <me@example.com>" in ctx
-    assert "device_info:" in ctx
+    user_line = pipe._get_user_info_suffix({"name": "Justin", "email": "me@example.com"})
+    assert user_line == "user_info: Justin <me@example.com>"
+
+    browser_line = pipe._get_browser_info_suffix(req)
+    assert browser_line.startswith("browser_info:")
+
+    ip_line = pipe._get_ip_info_suffix(req)
+    assert ip_line.startswith("ip_info: 207.194.4.18")
 
 
 @pytest.mark.asyncio
@@ -135,15 +138,11 @@ async def test_ip_lookup_cached(dummy_chat):
         client=types.SimpleNamespace(host="207.194.4.18", port=0),
     )
 
-    first = pipe._get_user_context_suffix(
-        {"name": "Justin", "email": "me@example.com"}, req, include_ip=True
-    )
+    first = pipe._get_ip_info_suffix(req)
     assert "Waterloo" not in first
     for task in list(pipe._ip_tasks.values()):
         await task
-    second = pipe._get_user_context_suffix(
-        {"name": "Justin", "email": "me@example.com"}, req, include_ip=True
-    )
+    second = pipe._get_ip_info_suffix(req)
     assert "Waterloo" in second
     assert pipe._ip_cache.get("207.194.4.18")
 
