@@ -279,6 +279,12 @@ The wrapper yields any queued events before forwarding chunks from the language 
 
 When the request does not require streaming or no websocket session is active, the middleware returns the raw `Response` and schedules any heavy post-processing with `create_task`. Skipping the async wrapper in these cases keeps the code path lean and avoids unnecessary overhead.
 
+#### Avoiding async overhead
+
+Only the streaming path needs to read and emit tokens one by one. When no websocket is attached or the model response is non-streaming, `post_response_handler` is scheduled via `create_task` so the HTTP request finishes immediately while tool execution and message updates continue in the background.
+
+Wrapping a plain `Response` in an async generator would add unnecessary context switching and memory allocations. By reserving `stream_wrapper` and `stream_body_handler` for true streaming scenarios, the middleware minimises CPU usage and keeps latency low.
+
 ## Deep dive: `chat_completion_files_handler`
 `chat_completion_files_handler` collects retrieval context from uploaded files or search results. It is called after any tool or search handlers and augments the chat payload with snippets found in those files.
 
