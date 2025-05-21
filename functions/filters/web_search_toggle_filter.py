@@ -6,9 +6,10 @@ description: Enable GPT-4o Search Preview when the Web Search toggle is active.
 
 from __future__ import annotations
 
-from typing import Optional
 from datetime import datetime
 import re
+from typing import Callable, Optional
+
 from pydantic import BaseModel
 
 WEB_SEARCH_MODELS = {
@@ -17,6 +18,8 @@ WEB_SEARCH_MODELS = {
     "openai_responses.gpt-4o",
     "openai_responses.gpt-4o-mini",
 }
+
+WEB_SEARCH_PREVIEW_MODEL = "gpt-4o-search-preview"
 
 
 class Filter:
@@ -41,54 +44,17 @@ class Filter:
     async def inlet(
         self,
         body: dict,
-        __event_emitter__: Optional[callable] = None,
+        __event_emitter__: Optional[Callable] = None,
         __metadata__: Optional[dict] = None,
     ) -> dict:
-        """Modify the request body when the toggle is active."""
+        """Update the request based on the selected model."""
 
         model = body.get("model")
         if model in WEB_SEARCH_MODELS:
-            tools = body.setdefault("tools", [])
-            if not any(t.get("type") == "web_search" for t in tools):
-                tools.append(
-                    {
-                        "type": "web_search",
-                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
-                    }
-                )
+            self._ensure_web_search_tool(body)
             return body
 
-        features = body.setdefault("features", {})
-        # \U0001f9e0 Override native search and explicitly set GPT-4o route
-        features["web_search"] = False
-
-        if __event_emitter__:
-            await __event_emitter__(
-                {
-                    "type": "status",
-                    "data": {
-                        "description": "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
-                        "done": False,
-                        "hidden": False,
-                    },
-                }
-            )
-
-        body["model"] = "gpt-4o-search-preview"
-
-        metadata = __metadata__ or {}
-        timezone = metadata.get("variables", {}).get(
-            "{{CURRENT_TIMEZONE}}", "America/Vancouver"
-        )
-
-        body["web_search_options"] = {
-            "user_location": {
-                "type": "approximate",
-                "approximate": {"country": "CA", "timezone": timezone},
-            },
-            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
-        }
-
+        await self._prepare_search_preview(body, __event_emitter__, __metadata__)
         return body
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
@@ -121,6 +87,51 @@ class Filter:
         await self._emit_status(__event_emitter__, msg, done=True)
 
         return body
+
+    def _ensure_web_search_tool(self, body: dict) -> None:
+        """Add the OpenAI web search tool if missing."""
+
+        tools = body.setdefault("tools", [])
+        if not any(t.get("type") == "web_search" for t in tools):
+            tools.append(
+                {
+                    "type": "web_search",
+                    "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+                }
+            )
+
+    async def _prepare_search_preview(
+        self,
+        body: dict,
+        emitter: Optional[Callable],
+        metadata: Optional[dict],
+    ) -> None:
+        """Configure GPT-4o Search Preview and emit status."""
+
+        features = body.setdefault("features", {})
+        # 🧠 Override native search and explicitly set GPT-4o route
+        features["web_search"] = False
+
+        if emitter:
+            await self._emit_status(
+                emitter,
+                "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
+            )
+
+        body["model"] = WEB_SEARCH_PREVIEW_MODEL
+
+        timezone = (metadata or {}).get("variables", {}).get(
+            "{{CURRENT_TIMEZONE}}",
+            "America/Vancouver",
+        )
+
+        body["web_search_options"] = {
+            "user_location": {
+                "type": "approximate",
+                "approximate": {"country": "CA", "timezone": timezone},
+            },
+            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
+        }
 
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
