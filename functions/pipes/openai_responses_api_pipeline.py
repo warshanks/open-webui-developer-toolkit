@@ -708,7 +708,7 @@ class Pipe:
                 location = ", ".join(
                     part
                     for part in (
-                        data.get("city"),
+                        # data.get("city"), #City is often incorrect which can mislead LLM.  Commenting out for now.
                         data.get("regionName"),
                         data.get("country"),
                     )
