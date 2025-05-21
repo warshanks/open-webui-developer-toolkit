@@ -234,6 +234,8 @@ class Pipe:
         self.log.handlers = [handler, mem_handler]
         self.log.setLevel(logging.INFO)
         self._last_status: tuple[str, bool] | None = None
+        self._ip_cache: dict[str, str] = {}
+        self._ip_tasks: dict[str, asyncio.Task] = {}
 
     def pipes(self):
         """Return models exposed by this pipe."""
@@ -668,8 +670,34 @@ class Pipe:
         """Return today's date formatted for prompt injection."""
         return "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
 
-    @staticmethod
-    def _get_user_context_suffix(user: Dict[str, Any], request: Request | None) -> str:
+    def _schedule_ip_lookup(self, ip: str) -> None:
+        """Kick off a background task to fetch IP details if not cached."""
+        if ip in self._ip_cache or ip in self._ip_tasks or ip == "unknown":
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _fetch() -> None:
+            try:
+                client = await self.get_http_client()
+                resp = await client.get(f"http://ip-api.com/json/{ip}")
+                resp.raise_for_status()
+                data = resp.json()
+                info = ", ".join(
+                    part for part in (data.get("city"), data.get("regionName"), data.get("country")) if part
+                )
+                self._ip_cache[ip] = info
+            except Exception:
+                self._ip_cache[ip] = ""
+            finally:
+                self._ip_tasks.pop(ip, None)
+
+        self._ip_tasks[ip] = loop.create_task(_fetch())
+
+    def _get_user_context_suffix(self, user: Dict[str, Any], request: Request | None) -> str:
         """Return user and device context lines for prompt injection."""
         name = user.get("name") or ""
         email = user.get("email") or ""
@@ -683,8 +711,12 @@ class Pipe:
             ip = getattr(getattr(request, "client", None), "host", "unknown")
             ua = headers.get("user-agent", "")
             browser = simplify_user_agent(ua)
+            ip_info = self._ip_cache.get(ip)
+            if ip_info is None:
+                self._schedule_ip_lookup(ip)
+            info_suffix = f" - {ip_info}" if ip_info else ""
             lines.append(
-                f"device_info: {device_type} | {platform} | IP: {ip} | Browser: {browser}"
+                f"device_info: {device_type} | {platform} | IP: {ip}{info_suffix} | Browser: {browser}"
             )
 
         lines.append(
