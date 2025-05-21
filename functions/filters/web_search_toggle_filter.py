@@ -38,16 +38,22 @@ class Filter:
             "Ni42NSIvPjwvc3ZnPg=="
         )
 
-    def _add_web_search_tool(self, body: dict) -> None:
+    def _add_web_search_tool(self, body: dict, registry: dict | None = None) -> None:
         """Append the OpenAI web search tool if missing."""
+        entry = {
+            "type": "web_search",
+            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+        }
+
         tools = body.setdefault("tools", [])
         if not any(t.get("type") == "web_search" for t in tools):
-            tools.append(
-                {
-                    "type": "web_search",
-                    "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
-                }
-            )
+            tools.append(entry)
+
+        if registry is not None:
+            reg_tools = registry.setdefault("tools", [])
+            if not any(t.get("type") == "web_search" for t in reg_tools):
+                reg_tools.append(entry)
+
 
     def _enable_search_preview(self, body: dict, timezone: str) -> None:
         """Switch the request to GPT-4o Search Preview."""
@@ -65,12 +71,14 @@ class Filter:
         body: dict,
         __event_emitter__: Optional[callable] = None,
         __metadata__: Optional[dict] = None,
+        __tools__: Optional[dict] = None,
     ) -> dict:
         """Modify the request body when the toggle is active."""
 
         model = body.get("model")
         if model in WEB_SEARCH_MODELS:
-            self._add_web_search_tool(body)
+            self._add_web_search_tool(body, __tools__)
+
             return body
 
         features = body.setdefault("features", {})
@@ -95,6 +103,8 @@ class Filter:
         )
 
         self._enable_search_preview(body, timezone)
+
+        self._add_web_search_tool(body, __tools__)
 
         return body
 
