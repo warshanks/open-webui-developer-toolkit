@@ -247,7 +247,6 @@ async def test_pipe_stream_loop(dummy_chat):
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
         )
         tokens = []
         async for chunk in gen:
@@ -291,7 +290,6 @@ async def test_pipe_deletes_response(dummy_chat):
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
         )
     await pipe.on_shutdown()
 
@@ -341,7 +339,6 @@ async def test_debug_logs_citation_emitted(dummy_chat):
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
         )
     await pipe.on_shutdown()
 
@@ -385,7 +382,6 @@ async def test_debug_logs_citation_saved_with_tool(dummy_chat):
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
         )
     await pipe.on_shutdown()
 
@@ -438,14 +434,13 @@ async def test_debug_logs_citation_multiple_turns(dummy_chat):
         side_effect=[fake_stream1, fake_stream2],
     ), patch.object(pipe, "get_http_client", AsyncMock(return_value=object())):
         gen = pipe.pipe(
-            {},
+            {"tools": {"t": {"callable": AsyncMock(return_value="42")}}},
             user,
             None,
             emitter,
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {"t": {"callable": AsyncMock(return_value="42")}},
         )
         async for _ in gen:
             pass
@@ -482,14 +477,13 @@ async def test_tool_metadata_persisted(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
         await pipe.pipe(
-            {},
+            {"tools": tools},
             {},
             None,
             emitter,
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            tools,
         )
     await pipe.on_shutdown()
 
@@ -540,14 +534,13 @@ async def test_previous_response_cleanup(dummy_chat):
         AsyncMock(return_value=object()),
     ):
         await pipe.pipe(
-            {},
+            {"tools": {"t": {"callable": AsyncMock(return_value="42")}}},
             {},
             None,
             AsyncMock(),
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {"t": {"callable": AsyncMock(return_value="42")}},
         )
     await pipe.on_shutdown()
 
@@ -599,14 +592,13 @@ async def test_function_call_output_persisted(dummy_chat):
                 srcs.append(evt["data"])
                 m["sources"] = srcs
         gen = pipe.pipe(
-            {},
+            {"tools": tools},
             {},
             None,
             emitter,
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            tools,
         )
         async for _ in gen:
             pass
@@ -661,14 +653,13 @@ async def test_persist_tool_results_valve_off(dummy_chat):
                 srcs.append(evt["data"])
                 m["sources"] = srcs
         gen = pipe.pipe(
-            {},
+            {"tools": tools},
             {},
             None,
             emitter,
             AsyncMock(),
             [],
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            tools,
         )
         async for _ in gen:
             pass
