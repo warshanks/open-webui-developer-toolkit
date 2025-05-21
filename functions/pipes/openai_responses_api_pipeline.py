@@ -187,19 +187,32 @@ class Pipe:
         INJECT_CURRENT_DATE: bool = Field(
             default=False,
             description=(
-                "Append today's date to the system prompt when enabled."
+                "Append today's date to the system prompt. "
+                "Example: `Today's date: Thursday, May 21, 2025`."
             ),
         )
 
-        INJECT_USER_INFO: Literal[
-            "Disabled",
-            "Username and Email",
-            "Username, Email and IP",
-        ] = Field(
-            default="Disabled",
+        INJECT_USER_INFO: bool = Field(
+            default=False,
             description=(
-                "Append user information and request context to the system prompt."
-                " Options: Disabled, Username and Email, Username, Email and IP."
+                "Append the user's name and email. "
+                "Example: `user_info: Jane Doe <jane@example.com>`."
+            ),
+        )
+
+        INJECT_BROWSER_INFO: bool = Field(
+            default=False,
+            description=(
+                "Append browser details. "
+                "Example: `browser_info: Desktop | Windows | Browser: Edge 136`."
+            ),
+        )
+
+        INJECT_IP_INFO: bool = Field(
+            default=False,
+            description=(
+                "Append IP information with location if available. "
+                "Example: `ip_info: 207.194.4.18 - Waterloo, Ontario, Canada (Bell Canada)`."
             ),
         )
 
@@ -208,12 +221,9 @@ class Pipe:
         ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
         PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
         INJECT_CURRENT_DATE: Literal[True, False, "INHERIT"] = "INHERIT"
-        INJECT_USER_INFO: Literal[
-            "Disabled",
-            "Username and Email",
-            "Username, Email and IP",
-            "INHERIT",
-        ] = "INHERIT"
+        INJECT_USER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_BROWSER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_IP_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -300,11 +310,24 @@ class Pipe:
         if valves.INJECT_CURRENT_DATE:
             instructions += "\n\n" + self._get_current_date_suffix()
 
-        if valves.INJECT_USER_INFO != "Disabled":
-            include_ip = valves.INJECT_USER_INFO == "Username, Email and IP"
-            instructions += "\n\n" + self._get_user_context_suffix(
-                __user__, __request__ if include_ip else None, include_ip=include_ip
-            )
+        injection_lines: list[str] = []
+        if valves.INJECT_USER_INFO:
+            injection_lines.append(self._get_user_info_suffix(__user__))
+        if valves.INJECT_BROWSER_INFO:
+            injection_lines.append(self._get_browser_info_suffix(__request__))
+        if valves.INJECT_IP_INFO:
+            injection_lines.append(self._get_ip_info_suffix(__request__))
+        if injection_lines:
+            note_parts = []
+            if valves.INJECT_USER_INFO:
+                note_parts.append("`user_info`")
+            if valves.INJECT_BROWSER_INFO:
+                note_parts.append("`browser_info`")
+            if valves.INJECT_IP_INFO:
+                note_parts.append("`ip_info`")
+            note = "Note: " + ", ".join(note_parts) + " provided solely for AI contextual enrichment."
+            injection_lines.append(note)
+            instructions += "\n\n" + "\n".join(injection_lines)
 
         model = body.get("model", valves.MODEL_ID.split(",")[0])
         if "." in str(model):
@@ -730,42 +753,32 @@ class Pipe:
 
         self._ip_tasks[ip] = loop.create_task(_fetch())
 
-    def _get_user_context_suffix(
-        self, user: Dict[str, Any], request: Request | None, *, include_ip: bool = True
-    ) -> str:
-        """Return user and device context lines for prompt injection."""
+    def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
+        """Return a user_info line."""
         name = user.get("name") or ""
         email = user.get("email") or ""
-        lines = [f"user_info: {name} <{email}>"]
+        return f"user_info: {name} <{email}>"
 
-        if include_ip and request is not None:
-            headers = request.headers if hasattr(request, "headers") else {}
-            mobile = str(headers.get("sec-ch-ua-mobile", "")).strip('"')
-            device_type = "Mobile" if mobile in {"?1", "1"} else "Desktop"
-            platform = headers.get("sec-ch-ua-platform", "").strip('"') or "Unknown"
-            ip = getattr(getattr(request, "client", None), "host", "unknown")
-            ua = headers.get("user-agent", "")
-            browser = simplify_user_agent(ua)
-            ip_info = self._ip_cache.get(ip)
-            if ip_info is None:
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("IP info not cached for %s, scheduling lookup", ip)
-                self._schedule_ip_lookup(ip)
-            else:
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("Using cached IP info for %s -> %s", ip, ip_info)
-            info_suffix = f" - {ip_info}" if ip_info else ""
-            lines.append(
-                f"device_info: {device_type} | {platform} | IP: {ip}{info_suffix} | Browser: {browser}"
-            )
+    def _get_browser_info_suffix(self, request: Request | None) -> str:
+        """Return a browser_info line."""
+        headers = request.headers if request and hasattr(request, "headers") else {}
+        mobile = str(headers.get("sec-ch-ua-mobile", "")).strip('"')
+        device_type = "Mobile" if mobile in {"?1", "1"} else "Desktop"
+        platform = headers.get("sec-ch-ua-platform", "").strip('"') or "Unknown"
+        ua = headers.get("user-agent", "") if request else ""
+        browser = simplify_user_agent(ua)
+        return f"browser_info: {device_type} | {platform} | Browser: {browser}"
 
-        note = "Note: `user_info"
-        if include_ip and request is not None:
-            note += " and `device_info`"
-        note += " provided solely for AI contextual enrichment."
-        lines.append(note)
-
-        return "\n".join(lines)
+    def _get_ip_info_suffix(self, request: Request | None) -> str:
+        """Return an ip_info line and trigger background lookup if needed."""
+        ip = getattr(getattr(request, "client", None), "host", "unknown") if request else "unknown"
+        ip_info = self._ip_cache.get(ip)
+        if ip_info is None and ip != "unknown":
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("IP info not cached for %s, scheduling lookup", ip)
+            self._schedule_ip_lookup(ip)
+        info_suffix = f" - {ip_info}" if ip_info else ""
+        return f"ip_info: {ip}{info_suffix}"
 
 
     async def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
