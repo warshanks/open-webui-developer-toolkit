@@ -599,19 +599,7 @@ class Pipe:
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
         """Run tool calls asynchronously and return their results."""
-        tasks = []
-        for call in calls:
-            entry = registry.get(call.name)
-            if entry is None:
-                tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
-            else:
-                args = json.loads(call.arguments or "{}")
-                tasks.append(asyncio.create_task(entry["callable"](**args)))
-        try:
-            return await asyncio.gather(*tasks)
-        except Exception as ex:
-            self.log.error("Tool execution failed: %s", ex)
-            return [f"Error: {ex}"] * len(tasks)
+        return await execute_responses_tool_calls(calls, registry, self.log)
 
     async def _emit_status(
         self,
@@ -772,8 +760,8 @@ async def stream_responses(
     base_url: str,
     api_key: str,
     params: dict[str, Any],
-) -> AsyncIterator[SimpleNamespace]:
-    """Yield parsed SSE events from the Responses API."""
+) -> AsyncIterator[ResponsesEvent]:
+    """Yield parsed ``ResponsesEvent`` objects from the API."""
 
     url = base_url.rstrip("/") + "/responses"
     headers = {
@@ -795,8 +783,7 @@ async def stream_responses(
                     data = "\n".join(data_buf)
                     if data.strip() == "[DONE]":
                         return
-                    payload = json.loads(data)
-                    yield _to_obj({"type": event_type or "message", **payload})
+                    yield parse_responses_sse(event_type, data)
                 event_type, data_buf = None, []
                 continue
             if line.startswith("event:"):
@@ -965,5 +952,27 @@ def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     """Parse an SSE data payload into a ``ResponsesEvent``."""
     payload = json.loads(data)
     return ResponsesEvent(type=event_type or "message", **payload)
+
+
+async def execute_responses_tool_calls(
+    calls: list[SimpleNamespace],
+    registry: dict[str, Any],
+    log: logging.Logger | None = None,
+) -> list[Any]:
+    """Run tool calls asynchronously and return their results."""
+    tasks: list[asyncio.Task] = []
+    for call in calls:
+        entry = registry.get(call.name)
+        if entry is None:
+            tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
+        else:
+            args = json.loads(call.arguments or "{}")
+            tasks.append(asyncio.create_task(entry["callable"](**args)))
+    try:
+        return await asyncio.gather(*tasks)
+    except Exception as ex:  # pragma: no cover - log and return error results
+        if log:
+            log.error("Tool execution failed: %s", ex)
+        return [f"Error: {ex}"] * len(tasks)
 
 
