@@ -708,7 +708,7 @@ class Pipe:
                 location = ", ".join(
                     part
                     for part in (
-                        # data.get("city"), #City is often incorrect which can mislead LLM.  Commenting out for now.
+                        data.get("city"),
                         data.get("regionName"),
                         data.get("country"),
                     )
@@ -717,7 +717,7 @@ class Pipe:
                 isp = data.get("isp")
                 info = location
                 if isp:
-                    info = f"{location} ({isp})" if location else isp
+                    info = f"{location} (approx based on IP) (ISP: {isp})" if location else isp
                 self._ip_cache[ip] = info
                 if self.log.isEnabledFor(logging.DEBUG):
                     self.log.debug("IP lookup result %s -> %r", ip, info)
