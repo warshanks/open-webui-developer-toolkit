@@ -94,7 +94,7 @@ def test_instruction_suffix_helpers(dummy_chat):
         client=types.SimpleNamespace(host="207.194.4.18", port=0),
     )
     ctx = pipe._get_user_context_suffix(
-        {"name": "Justin", "email": "me@example.com"}, req
+        {"name": "Justin", "email": "me@example.com"}, req, include_ip=True
     )
     assert "user_info: Justin <me@example.com>" in ctx
     assert "device_info:" in ctx
@@ -135,11 +135,15 @@ async def test_ip_lookup_cached(dummy_chat):
         client=types.SimpleNamespace(host="207.194.4.18", port=0),
     )
 
-    first = pipe._get_user_context_suffix({"name": "Justin", "email": "me@example.com"}, req)
+    first = pipe._get_user_context_suffix(
+        {"name": "Justin", "email": "me@example.com"}, req, include_ip=True
+    )
     assert "Waterloo" not in first
     for task in list(pipe._ip_tasks.values()):
         await task
-    second = pipe._get_user_context_suffix({"name": "Justin", "email": "me@example.com"}, req)
+    second = pipe._get_user_context_suffix(
+        {"name": "Justin", "email": "me@example.com"}, req, include_ip=True
+    )
     assert "Waterloo" in second
     assert pipe._ip_cache.get("207.194.4.18")
 

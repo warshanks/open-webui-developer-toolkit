@@ -191,10 +191,15 @@ class Pipe:
             ),
         )
 
-        INJECT_USER_INFO: bool = Field(
-            default=False,
+        INJECT_USER_INFO: Literal[
+            "Disabled",
+            "Username and Email",
+            "Username, Email and IP",
+        ] = Field(
+            default="Disabled",
             description=(
-                "Append user information and request context to the system prompt when enabled."
+                "Append user information and request context to the system prompt."
+                " Options: Disabled, Username and Email, Username, Email and IP."
             ),
         )
 
@@ -203,7 +208,12 @@ class Pipe:
         ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
         PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
         INJECT_CURRENT_DATE: Literal[True, False, "INHERIT"] = "INHERIT"
-        INJECT_USER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_USER_INFO: Literal[
+            "Disabled",
+            "Username and Email",
+            "Username, Email and IP",
+            "INHERIT",
+        ] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -290,9 +300,10 @@ class Pipe:
         if valves.INJECT_CURRENT_DATE:
             instructions += "\n\n" + self._get_current_date_suffix()
 
-        if valves.INJECT_USER_INFO:
+        if valves.INJECT_USER_INFO != "Disabled":
+            include_ip = valves.INJECT_USER_INFO == "Username, Email and IP"
             instructions += "\n\n" + self._get_user_context_suffix(
-                __user__, __request__
+                __user__, __request__ if include_ip else None, include_ip=include_ip
             )
 
         model = body.get("model", valves.MODEL_ID.split(",")[0])
@@ -719,13 +730,15 @@ class Pipe:
 
         self._ip_tasks[ip] = loop.create_task(_fetch())
 
-    def _get_user_context_suffix(self, user: Dict[str, Any], request: Request | None) -> str:
+    def _get_user_context_suffix(
+        self, user: Dict[str, Any], request: Request | None, *, include_ip: bool = True
+    ) -> str:
         """Return user and device context lines for prompt injection."""
         name = user.get("name") or ""
         email = user.get("email") or ""
         lines = [f"user_info: {name} <{email}>"]
 
-        if request is not None:
+        if include_ip and request is not None:
             headers = request.headers if hasattr(request, "headers") else {}
             mobile = str(headers.get("sec-ch-ua-mobile", "")).strip('"')
             device_type = "Mobile" if mobile in {"?1", "1"} else "Desktop"
@@ -746,9 +759,11 @@ class Pipe:
                 f"device_info: {device_type} | {platform} | IP: {ip}{info_suffix} | Browser: {browser}"
             )
 
-        lines.append(
-            "Note: `user_info` and `device_info` provided solely for AI contextual enrichment."
-        )
+        note = "Note: `user_info"
+        if include_ip and request is not None:
+            note += " and `device_info`"
+        note += " provided solely for AI contextual enrichment."
+        lines.append(note)
 
         return "\n".join(lines)
 

@@ -10,11 +10,15 @@ The `openai_responses` pipeline supports two optional valves that enrich the sys
 Today's date: Thursday, May 21, 2025
 ```
 
-* **INJECT_USER_INFO** – when enabled the user's name and email are appended. If
-  request data is available, a short `device_info` line is also added summarising
-  the client platform, browser and IP address. The IP is lazily resolved using
-  [ip-api.com](http://ip-api.com) and cached, so the approximate location and ISP
-  appear on subsequent requests. This information is marked as context only.
+* **INJECT_USER_INFO** – controls how much user context is appended. Options:
+  * `Disabled` – no information added (default).
+  * `Username and Email` – adds a `user_info` line with the user's name and email.
+  * `Username, Email and IP` – also adds a `device_info` line summarising the
+    client platform, browser and IP address. The IP is lazily resolved using
+    [ip-api.com](http://ip-api.com) and cached so the approximate location and ISP
+    appear on subsequent requests. This information is marked as context only.
+
+Example output when using `Username, Email and IP`:
 
 ```
 user_info: Justin Kropp <jkropp@glcsolutions.ca>
