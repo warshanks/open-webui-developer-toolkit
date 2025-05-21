@@ -122,7 +122,9 @@ Use asyncio.gather for tool calls if multiple calls come in at once.
 Initial SSE parsing relied on ``json.loads`` with ``object_hook``.  The
 implementation now parses only the top-level keys and converts nested
 structures on demand.  Annotation regexes are precompiled and debug formatting
-is wrapped in ``DEBUG`` checks to further cut CPU cost.
+is wrapped in ``DEBUG`` checks to further cut CPU cost.  Unused
+``to_obj``/``to_dict`` helpers were dropped and usage aggregation no longer
+recursively copies objects, trimming a bit more CPU work.
 
 ⸻
 

@@ -146,15 +146,6 @@ def test_update_usage_accumulates(dummy_chat):
         "loops": 2,
     }
 
-
-def test_to_obj_to_dict_roundtrip(dummy_chat):
-    pipeline = _reload_pipeline()
-    data = {"a": {"b": [1, {"c": 2}]}, "d": (3, 4)}
-    obj = pipeline.to_obj(data)
-    roundtrip = pipeline.to_dict(obj)
-    assert roundtrip == data
-
-
 def test_parse_responses_sse_handles_extra_fields(dummy_chat):
     pipeline = _reload_pipeline()
     raw = json.dumps({"annotation": {"title": "t"}, "delta": "x"})
