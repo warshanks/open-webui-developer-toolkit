@@ -7,6 +7,8 @@ description: Enable GPT-4o Search Preview when the Web Search toggle is active.
 from __future__ import annotations
 
 from typing import Optional
+from datetime import datetime
+import re
 from pydantic import BaseModel
 
 
@@ -71,23 +73,59 @@ class Filter:
         return body
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
+        """Emit citations from the response and a final status update."""
 
-        # PLEASE IMPLEMENT THIS POST PROCESSING
+        if not __event_emitter__:
+            return body
 
-        """
-        The outlet should retrieve the last message from body.get("messages", []) and extract all the URLs that end with ?utm_source=openai.  It should then emitt citations for each and emitt a status message with "✅ Web search complete — {citation_count} source{'s' if citation_count != 1 else ''} cited.".  If it didn't find any it should emitt a status of "Search not used — answer based on model's internal knowledge."
+        last_msg = (body.get("messages") or [])[-1] if body.get("messages") else None
+        content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
 
-        """
+        if isinstance(content_blocks, list):
+            text = " ".join(
+                b.get("text", str(b)) if isinstance(b, dict) else str(b)
+                for b in content_blocks
+            )
+        else:
+            text = str(content_blocks or "")
 
-        await __event_emitter__(
+        urls = self._extract_urls(text)
+
+        for url in urls:
+            await self._emit_citation(__event_emitter__, url)
+
+        if urls:
+            msg = f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
+        else:
+            msg = "Search not used — answer based on model's internal knowledge."
+
+        await self._emit_status(__event_emitter__, msg, done=True)
+
+        return body
+
+    @staticmethod
+    def _extract_urls(text: str) -> list[str]:
+        matches = re.findall(r"https?://[^\s)]+\?utm_source=openai", text)
+        return matches
+
+    @staticmethod
+    async def _emit_citation(emitter: callable, url: str) -> None:
+        cleaned = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
+        await emitter(
             {
-                "type": "status",
+                "type": "citation",
                 "data": {
-                    "description": "",
-                    "done": True,
-                    "hidden": False,
+                    "document": [cleaned],
+                    "metadata": [
+                        {"date_accessed": datetime.now().isoformat(), "source": cleaned}
+                    ],
+                    "source": {"name": cleaned, "url": cleaned},
                 },
             }
         )
 
-        return body
+    @staticmethod
+    async def _emit_status(emitter: callable, description: str, *, done: bool = False) -> None:
+        await emitter(
+            {"type": "status", "data": {"description": description, "done": done, "hidden": False}}
+        )
