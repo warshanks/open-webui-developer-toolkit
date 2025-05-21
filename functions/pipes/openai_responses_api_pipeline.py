@@ -107,7 +107,7 @@ ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 
 
-@dataclass
+@dataclass(slots=True)
 class ResponsesEvent:
     """Parsed SSE event."""
 
@@ -117,6 +117,7 @@ class ResponsesEvent:
     item_id: str | None = None
     item: Any | None = None
     response: Any | None = None
+    annotation: Any | None = None
 
 
 class Pipe:
@@ -902,19 +903,29 @@ def assemble_responses_payload(
 
 def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     """Parse an SSE data payload into a ``ResponsesEvent`` with minimal overhead."""
-    loads = json.loads
-    payload = loads(data)
-    if "response" in payload and isinstance(payload["response"], dict):
-        payload["response"] = SimpleNamespace(**payload["response"])
-    if "item" in payload and isinstance(payload["item"], dict):
-        payload["item"] = SimpleNamespace(**payload["item"])
-    if "annotation" in payload and isinstance(payload["annotation"], dict):
-        payload["annotation"] = SimpleNamespace(**payload["annotation"])
+    payload = json.loads(data)
 
-    event = ResponsesEvent(type=event_type or "message")
-    for key, val in payload.items():
-        setattr(event, key, val)
-    return event
+    event_type = payload.get("type", event_type or "message")
+
+    item = payload.get("item")
+    if isinstance(item, dict):
+        item = SimpleNamespace(**item)
+    response = payload.get("response")
+    if isinstance(response, dict):
+        response = SimpleNamespace(**response)
+    annotation = payload.get("annotation")
+    if isinstance(annotation, dict):
+        annotation = SimpleNamespace(**annotation)
+
+    return ResponsesEvent(
+        type=event_type,
+        delta=payload.get("delta"),
+        text=payload.get("text"),
+        item_id=payload.get("item_id"),
+        item=item,
+        response=response,
+        annotation=annotation,
+    )
 
 
 async def execute_responses_tool_calls(
