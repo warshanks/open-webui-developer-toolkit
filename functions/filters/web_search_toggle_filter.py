@@ -54,6 +54,7 @@ class Filter:
             if not any(t.get("type") == "web_search" for t in reg_tools):
                 reg_tools.append(entry)
 
+
     def _enable_search_preview(self, body: dict, timezone: str) -> None:
         """Switch the request to GPT-4o Search Preview."""
         body["model"] = "gpt-4o-search-preview"
@@ -77,6 +78,7 @@ class Filter:
         model = body.get("model")
         if model in WEB_SEARCH_MODELS:
             self._add_web_search_tool(body, __tools__)
+
             return body
 
         features = body.setdefault("features", {})
@@ -101,6 +103,7 @@ class Filter:
         )
 
         self._enable_search_preview(body, timezone)
+
         self._add_web_search_tool(body, __tools__)
 
         return body
