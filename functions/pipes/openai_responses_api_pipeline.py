@@ -248,15 +248,15 @@ class Pipe:
         start_ns = time.perf_counter_ns()
         self._last_status = None
         self._debug_logs.clear()
-        self._apply_user_overrides(__user__.get("valves"))
+        valves = self._apply_user_overrides(__user__.get("valves"))
 
-        if self.valves.ENABLE_NATIVE_TOOL_CALLING:
+        if valves.ENABLE_NATIVE_TOOL_CALLING:
             await self._ensure_native_function_calling(__metadata__)
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
             self.log_name,
-            body.get("model", self.valves.MODEL_ID),
+            body.get("model", valves.MODEL_ID),
             __user__.get("email", "anon"),
             __metadata__["chat_id"],
             __metadata__["message_id"],
@@ -267,7 +267,7 @@ class Pipe:
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
 
-        model = body.get("model", self.valves.MODEL_ID.split(",")[0])
+        model = body.get("model", valves.MODEL_ID.split(",")[0])
         if "." in str(model):
             model = str(model).split(".", 1)[1]
 
@@ -276,11 +276,11 @@ class Pipe:
             tools = None
         else:
             tools = prepare_tools(__tools__)
-            if self.valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
+            if valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
                 tools.append(
                     {
                         "type": "web_search",
-                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+                        "search_context_size": valves.SEARCH_CONTEXT_SIZE,
                     }
                 )
 
@@ -289,7 +289,7 @@ class Pipe:
             self.log.debug(pretty_log_block(instructions, "instructions"))
 
         base_params = await assemble_responses_payload(
-            self.valves,
+            valves,
             chat_id,
             body,
             instructions,
@@ -303,7 +303,7 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
 
-        for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
+        for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug("Loop iteration #%d", loop_count)
             if loop_count > 1:
@@ -333,7 +333,10 @@ class Pipe:
                 if self.log.isEnabledFor(logging.DEBUG):
                     self.log.debug("response_stream created for loop #%d", loop_count)
                 async for event in stream_responses(
-                    client, self.valves.BASE_URL, self.valves.API_KEY, request_params
+                    client,
+                    valves.BASE_URL,
+                    valves.API_KEY,
+                    request_params,
                 ):
                     et = event.type
                     if self.log.isEnabledFor(logging.DEBUG):
@@ -439,7 +442,7 @@ class Pipe:
                             ],
                             "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
                         }
-                        if self.valves.PERSIST_TOOL_RESULTS:
+                        if valves.PERSIST_TOOL_RESULTS:
                             citation_data["_fc"] = [
                                 {
                                     "call_id": call.call_id,
@@ -454,15 +457,15 @@ class Pipe:
 
             # Clean up the server-side state unless the user opted to keep it
             # TODO Ensure that the stored response is deleted.  Doesn't seem to work with LiteLLM Response API.
-            remaining = self.valves.MAX_TOOL_CALLS - loop_count
-            if loop_count == self.valves.MAX_TOOL_CALLS:
+            remaining = valves.MAX_TOOL_CALLS - loop_count
+            if loop_count == valves.MAX_TOOL_CALLS:
                 request_params["tool_choice"] = "none"
                 entry = {
                     "role": "assistant",
                     "content": [
                         {
                             "type": "output_text",
-                            "text": f"[Internal thought] Final iteration ({loop_count}/{self.valves.MAX_TOOL_CALLS}). Tool-calling phase is over; I'll produce my final answer now.",
+                            "text": f"[Internal thought] Final iteration ({loop_count}/{valves.MAX_TOOL_CALLS}). Tool-calling phase is over; I'll produce my final answer now.",
                         }
                     ],
                 }
@@ -472,13 +475,13 @@ class Pipe:
                         "Appended to temp_input: %s",
                         json.dumps(entry, indent=2),
                     )
-            elif loop_count == 2 and self.valves.MAX_TOOL_CALLS > 2:
+            elif loop_count == 2 and valves.MAX_TOOL_CALLS > 2:
                 entry = {
                     "role": "assistant",
                     "content": [
                         {
                             "type": "output_text",
-                            "text": f"[Internal thought] I've just received the initial tool results from iteration 1. I'm now continuing an iterative tool interaction with up to {self.valves.MAX_TOOL_CALLS} iterations.",
+                            "text": f"[Internal thought] I've just received the initial tool results from iteration 1. I'm now continuing an iterative tool interaction with up to {valves.MAX_TOOL_CALLS} iterations.",
                         }
                     ],
                 }
@@ -494,7 +497,7 @@ class Pipe:
                     "content": [
                         {
                             "type": "output_text",
-                            "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS}. Next iteration is answer-only; any remaining tool calls must happen now.",
+                            "text": f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS}. Next iteration is answer-only; any remaining tool calls must happen now.",
                         }
                     ],
                 }
@@ -510,7 +513,7 @@ class Pipe:
                     "content": [
                         {
                             "type": "output_text",
-                            "text": f"[Internal thought] Iteration {loop_count}/{self.valves.MAX_TOOL_CALLS} ({remaining} remaining, no action needed).",
+                            "text": f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS} ({remaining} remaining, no action needed).",
                         }
                     ],
                 }
@@ -545,19 +548,19 @@ class Pipe:
             try:
                 await delete_response(
                     client,
-                    self.valves.BASE_URL,
-                    self.valves.API_KEY,
+                    valves.BASE_URL,
+                    valves.API_KEY,
                     rid,
                 )
             except Exception as ex:  # pragma: no cover - logging only
                 self.log.warning("Failed to delete response %s: %s", rid, ex)
 
-        if last_response_id and not self.valves.STORE_RESPONSE:
+        if last_response_id and not valves.STORE_RESPONSE:
             try:
                 await delete_response(
                     client,
-                    self.valves.BASE_URL,
-                    self.valves.API_KEY,
+                    valves.BASE_URL,
+                    valves.API_KEY,
                     last_response_id,
                 )
             except Exception as ex:  # pragma: no cover - logging only
@@ -600,10 +603,14 @@ class Pipe:
         self._last_status = current
         await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-    def _apply_user_overrides(self, user_valves: BaseModel | None) -> None:
-        """Override valve settings with user-provided values."""
+    def _apply_user_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
+        """Return a ``Valves`` instance with user overrides applied."""
+        valves = self.valves
         if not user_valves:
-            return
+            self.log.setLevel(
+                getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
+            )
+            return valves
 
         dump = (
             user_valves.model_dump(exclude_none=True)
@@ -615,20 +622,20 @@ class Pipe:
         }
 
         base = (
-            self.valves.model_dump()
-            if hasattr(self.valves, "model_dump")
-            else self.valves.dict()
+            valves.model_dump() if hasattr(valves, "model_dump") else valves.dict()
         )
         updated = deep_update(base, overrides)
-        self.valves = self.Valves(**updated)
+        valves = self.Valves(**updated)
 
         if self.log.isEnabledFor(logging.DEBUG):
             for setting, val in overrides.items():
                 self.log.debug("User override → %s set to %r", setting, val)
 
         self.log.setLevel(
-            getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
+            getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
         )
+
+        return valves
 
     async def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
         """Enable native function calling for a model if not already active."""

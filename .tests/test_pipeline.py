@@ -90,8 +90,9 @@ def test_apply_user_overrides_sets_log_level(dummy_chat):
             return self._vals
 
     overrides = Dummy(CUSTOM_LOG_LEVEL="DEBUG")
-    pipe._apply_user_overrides(overrides)
-    assert pipe.valves.CUSTOM_LOG_LEVEL == "DEBUG"
+    new_valves = pipe._apply_user_overrides(overrides)
+    assert pipe.valves.CUSTOM_LOG_LEVEL != "DEBUG"
+    assert new_valves.CUSTOM_LOG_LEVEL == "DEBUG"
     import logging
 
     assert pipe.log.level == logging.DEBUG
