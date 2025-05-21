@@ -38,24 +38,45 @@ class Filter:
             "Ni42NSIvPjwvc3ZnPg=="
         )
 
+    def _add_web_search_tool(self, body: dict, registry: dict | None = None) -> None:
+        """Append the OpenAI web search tool if missing."""
+        entry = {
+            "type": "web_search",
+            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+        }
+
+        tools = body.setdefault("tools", [])
+        if not any(t.get("type") == "web_search" for t in tools):
+            tools.append(entry)
+
+        if registry is not None:
+            reg_tools = registry.setdefault("tools", [])
+            if not any(t.get("type") == "web_search" for t in reg_tools):
+                reg_tools.append(entry)
+
+    def _enable_search_preview(self, body: dict, timezone: str) -> None:
+        """Switch the request to GPT-4o Search Preview."""
+        body["model"] = "gpt-4o-search-preview"
+        body["web_search_options"] = {
+            "user_location": {
+                "type": "approximate",
+                "approximate": {"country": "CA", "timezone": timezone},
+            },
+            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
+        }
+
     async def inlet(
         self,
         body: dict,
         __event_emitter__: Optional[callable] = None,
         __metadata__: Optional[dict] = None,
+        __tools__: Optional[dict] = None,
     ) -> dict:
         """Modify the request body when the toggle is active."""
 
         model = body.get("model")
         if model in WEB_SEARCH_MODELS:
-            tools = body.setdefault("tools", [])
-            if not any(t.get("type") == "web_search" for t in tools):
-                tools.append(
-                    {
-                        "type": "web_search",
-                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
-                    }
-                )
+            self._add_web_search_tool(body, __tools__)
             return body
 
         features = body.setdefault("features", {})
@@ -74,20 +95,13 @@ class Filter:
                 }
             )
 
-        body["model"] = "gpt-4o-search-preview"
-
         metadata = __metadata__ or {}
         timezone = metadata.get("variables", {}).get(
             "{{CURRENT_TIMEZONE}}", "America/Vancouver"
         )
 
-        body["web_search_options"] = {
-            "user_location": {
-                "type": "approximate",
-                "approximate": {"country": "CA", "timezone": timezone},
-            },
-            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
-        }
+        self._enable_search_preview(body, timezone)
+        self._add_web_search_tool(body, __tools__)
 
         return body
 
@@ -95,7 +109,7 @@ class Filter:
         """Emit citations from the response and a final status update."""
 
         model = body.get("model")
-        if not model in WEB_SEARCH_MODELS:
+        if model not in WEB_SEARCH_MODELS:
             last_msg = (body.get("messages") or [])[-1] if body.get("messages") else None
             content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
     
