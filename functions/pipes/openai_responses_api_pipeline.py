@@ -672,7 +672,13 @@ class Pipe:
 
     def _schedule_ip_lookup(self, ip: str) -> None:
         """Kick off a background task to fetch IP details if not cached."""
-        if ip in self._ip_cache or ip in self._ip_tasks or ip == "unknown":
+        if ip in self._ip_cache:
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("Using cached IP info for %s -> %s", ip, self._ip_cache[ip])
+            return
+        if ip in self._ip_tasks or ip == "unknown":
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("IP lookup already scheduled or IP unknown: %s", ip)
             return
 
         try:
@@ -681,16 +687,32 @@ class Pipe:
             return
 
         async def _fetch() -> None:
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("Retrieving IP info for %s", ip)
             try:
                 client = await self.get_http_client()
                 resp = await client.get(f"http://ip-api.com/json/{ip}")
                 resp.raise_for_status()
                 data = resp.json()
-                info = ", ".join(
-                    part for part in (data.get("city"), data.get("regionName"), data.get("country")) if part
+                location = ", ".join(
+                    part
+                    for part in (
+                        data.get("city"),
+                        data.get("regionName"),
+                        data.get("country"),
+                    )
+                    if part
                 )
+                isp = data.get("isp")
+                info = location
+                if isp:
+                    info = f"{location} ({isp})" if location else isp
                 self._ip_cache[ip] = info
-            except Exception:
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("IP lookup result %s -> %r", ip, info)
+            except Exception as exc:  # pragma: no cover - network errors
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("IP lookup failed for %s: %s", ip, exc)
                 self._ip_cache[ip] = ""
             finally:
                 self._ip_tasks.pop(ip, None)
@@ -713,7 +735,12 @@ class Pipe:
             browser = simplify_user_agent(ua)
             ip_info = self._ip_cache.get(ip)
             if ip_info is None:
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("IP info not cached for %s, scheduling lookup", ip)
                 self._schedule_ip_lookup(ip)
+            else:
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("Using cached IP info for %s -> %s", ip, ip_info)
             info_suffix = f" - {ip_info}" if ip_info else ""
             lines.append(
                 f"device_info: {device_type} | {platform} | IP: {ip}{info_suffix} | Browser: {browser}"
