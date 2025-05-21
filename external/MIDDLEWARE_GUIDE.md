@@ -273,6 +273,11 @@ When streaming, the original generator is wrapped so extra events can be injecte
 ```
 
 The wrapper yields any queued events before forwarding chunks from the language model.  Each payload is also passed through configured outlet filters so extensions can modify the stream.
+### Async streaming strategy
+
+`stream_body_handler` iterates over `response.body_iterator` using `async for` so tokens can be parsed and forwarded the moment they arrive. Each piece of data is filtered then emitted to the websocket via `event_emitter`, ensuring the UI updates without blocking the main event loop. The surrounding `stream_wrapper` is itself an async generator passed to `StreamingResponse`, which preserves backpressure when the client is slow to consume updates.
+
+When the request does not require streaming or no websocket session is active, the middleware returns the raw `Response` and schedules any heavy post-processing with `create_task`. Skipping the async wrapper in these cases keeps the code path lean and avoids unnecessary overhead.
 
 ## Deep dive: `chat_completion_files_handler`
 `chat_completion_files_handler` collects retrieval context from uploaded files or search results. It is called after any tool or search handlers and augments the chat payload with snippets found in those files.
