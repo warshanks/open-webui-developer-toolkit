@@ -86,7 +86,7 @@ Retain **one** file: `openai_responses_api_pipeline.py`. Within it:
    - `ResponsesEvent` (dataclass) for parsed SSE lines: includes `type`, `delta`, etc.
 
 2. **Helper Functions** (for example; names can vary):
-   - `assemble_responses_payload(valves: Valves, chat_id: str) -> dict`  
+   - `async def assemble_responses_payload(valves: Valves, chat_id: str) -> dict`
      Builds the input payload for the OpenAI Responses API.
    - `parse_responses_sse(raw_sse_line: str) -> ResponsesEvent`  
      Converts an SSE line into a typed event object.
