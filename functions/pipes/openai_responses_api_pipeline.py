@@ -292,6 +292,7 @@ class Pipe:
             instructions,
             tools,
             __user__.get("email"),
+            input_messages,
         )
         request_params = base_params
         usage_total: dict[str, Any] = {}
@@ -299,8 +300,6 @@ class Pipe:
         cleanup_ids: list[str] = []
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
-
-        content = ""
 
         for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
@@ -351,25 +350,20 @@ class Pipe:
                     if et == "response.reasoning_summary_part.added":
                         if not is_model_thinking:
                             is_model_thinking = True
-                            content += "<think>"
                             yield "<think>"
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        content += event.delta
                         yield event.delta
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        content += "\n\n---\n\n"
                         yield "\n\n---\n\n"
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            content += "</think>\n"
                             yield "</think>\n"
                         continue
                     if et == "response.output_text.delta":
-                        content += event.delta
                         yield event.delta
                         continue
                     if et == "response.output_text.done":
@@ -858,11 +852,15 @@ def assemble_responses_payload(
     instructions: str,
     tools: list[dict[str, Any]],
     user_email: str | None,
+    input_messages: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Combine chat history and parameters into a request payload."""
     model = body.get("model", valves.MODEL_ID.split(",")[0])
     if "." in str(model):
         model = str(model).split(".", 1)[1]
+    if input_messages is None:
+        input_messages = assemble_responses_input(chat_id)
+
     params = {
         "model": model,
         "tools": tools,
@@ -877,7 +875,7 @@ def assemble_responses_payload(
         "truncation": "auto",
         "stream": True,
         "store": True,
-        "input": assemble_responses_input(chat_id),
+        "input": input_messages,
     }
 
     reasoning_effort = body.get("reasoning_effort", "none")
