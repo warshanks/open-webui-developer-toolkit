@@ -78,6 +78,28 @@ def test_extract_instructions(dummy_chat):
     assert pipeline.Pipe._extract_instructions(body) == "two"
 
 
+def test_instruction_suffix_helpers(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    date_line = pipe._get_current_date_suffix()
+    assert "Today's date:" in date_line
+
+    req = types.SimpleNamespace(
+        headers={
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "user-agent": "Mozilla/5.0 Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
+        },
+        client=types.SimpleNamespace(host="207.194.4.18", port=0),
+    )
+    ctx = pipe._get_user_context_suffix(
+        {"name": "Justin", "email": "me@example.com"}, req
+    )
+    assert "user_info: Justin <me@example.com>" in ctx
+    assert "device_info:" in ctx
+
+
 def test_apply_user_overrides_sets_log_level(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
@@ -752,4 +774,10 @@ async def test_tools_removed_for_unsupported_model(dummy_chat):
 
     assert "tools" not in captured_params[0]
     assert "tool_choice" not in captured_params[0]
+
+
+def test_simplify_user_agent_helper(dummy_chat):
+    pipeline = _reload_pipeline()
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36"
+    assert pipeline.simplify_user_agent(ua) == "Chrome 136"
 

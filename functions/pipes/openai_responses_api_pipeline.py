@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.16
+version: 1.6.17
 license: MIT
 requirements: httpx
 
@@ -17,6 +17,7 @@ requirements: httpx
 ✅ Usage Stats: passthrough (to OpenWebUI GUI)
 ✅ Gateway Compatible: Supports LiteLLM and similar API gateways that support response API.
 ✅ Customizable logging: Set at a pipe or per-user level via Valves. If set to 'debug', adds citation for easy access.
+✅ Optional injection of today's date and user context into the system prompt.
 ✅ Optimized Native Tool Calling:
    - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
    - Live status updates showing running tools.
@@ -34,6 +35,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.17: Valves to inject the current date and user/device context into the system prompt.
 • 1.6.16: Valve to control persisting tool results in chat history.
 • 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
 • 1.6.11: Disabled HTTP/2 to prevent stream stalls; optimized connection pooling.
@@ -182,10 +184,26 @@ class Pipe:
             description="Select logging level.",
         )
 
+        INJECT_CURRENT_DATE: bool = Field(
+            default=False,
+            description=(
+                "Append today's date to the system prompt when enabled."
+            ),
+        )
+
+        INJECT_USER_INFO: bool = Field(
+            default=False,
+            description=(
+                "Append user information and request context to the system prompt when enabled."
+            ),
+        )
+
     class UserValves(BaseModel):
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
         ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
         PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_CURRENT_DATE: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_USER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -266,6 +284,14 @@ class Pipe:
         chat_id = __metadata__["chat_id"]
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
+
+        if valves.INJECT_CURRENT_DATE:
+            instructions += "\n\n" + self._get_current_date_suffix()
+
+        if valves.INJECT_USER_INFO:
+            instructions += "\n\n" + self._get_user_context_suffix(
+                __user__, __request__
+            )
 
         model = body.get("model", valves.MODEL_ID.split(",")[0])
         if "." in str(model):
@@ -637,6 +663,37 @@ class Pipe:
 
         return valves
 
+    @staticmethod
+    def _get_current_date_suffix() -> str:
+        """Return today's date formatted for prompt injection."""
+        return "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
+
+    @staticmethod
+    def _get_user_context_suffix(user: Dict[str, Any], request: Request | None) -> str:
+        """Return user and device context lines for prompt injection."""
+        name = user.get("name") or ""
+        email = user.get("email") or ""
+        lines = [f"user_info: {name} <{email}>"]
+
+        if request is not None:
+            headers = request.headers if hasattr(request, "headers") else {}
+            mobile = str(headers.get("sec-ch-ua-mobile", "")).strip('"')
+            device_type = "Mobile" if mobile in {"?1", "1"} else "Desktop"
+            platform = headers.get("sec-ch-ua-platform", "").strip('"') or "Unknown"
+            ip = getattr(getattr(request, "client", None), "host", "unknown")
+            ua = headers.get("user-agent", "")
+            browser = simplify_user_agent(ua)
+            lines.append(
+                f"device_info: {device_type} | {platform} | IP: {ip} | Browser: {browser}"
+            )
+
+        lines.append(
+            "Note: `user_info` and `device_info` provided solely for AI contextual enrichment."
+        )
+
+        return "\n".join(lines)
+
+
     async def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
         """Enable native function calling for a model if not already active."""
         if metadata.get("function_calling") == "native":
@@ -853,6 +910,25 @@ def pretty_log_block(data: Any, label: str = "") -> str:
         content = str(data)
     label_line = f"{label} =" if label else ""
     return f"\n{'-' * 40}\n{label_line}\n{content}\n{'-' * 40}"
+
+
+def simplify_user_agent(ua: str) -> str:
+    """Return a short ``Browser Version`` string from ``ua``."""
+    if not ua:
+        return "Unknown"
+    patterns = [
+        (r"Edg(?:e|A)?/(?P<ver>[0-9.]+)", "Edge"),
+        (r"OPR/(?P<ver>[0-9.]+)", "Opera"),
+        (r"Chrome/(?P<ver>[0-9.]+)", "Chrome"),
+        (r"Firefox/(?P<ver>[0-9.]+)", "Firefox"),
+        (r"Version/(?P<ver>[0-9.]+).*Safari/", "Safari"),
+        (r"Safari/(?P<ver>[0-9.]+)", "Safari"),
+    ]
+    for pat, name in patterns:
+        m = re.search(pat, ua)
+        if m:
+            return f"{name} {m.group('ver').split('.')[0]}"
+    return ua.split()[0]
 
 
 async def assemble_responses_payload(
