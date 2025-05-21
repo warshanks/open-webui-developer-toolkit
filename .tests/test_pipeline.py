@@ -138,6 +138,21 @@ def test_build_params_drops_reasoning_for_base_model(dummy_chat):
     assert "reasoning" not in params
 
 
+def test_assemble_payload_omits_tool_fields_when_none(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+    params = pipeline.assemble_responses_payload(
+        pipe.valves,
+        "chat1",
+        {},
+        "ins",
+        None,
+        None,
+    )
+    assert "tools" not in params
+    assert "tool_choice" not in params
+
+
 def test_update_usage_accumulates(dummy_chat):
     pipeline = _reload_pipeline()
     total = {}
@@ -693,4 +708,42 @@ def test_pipes_returns_multiple_models(dummy_chat):
         {"id": "gpt-4o", "name": "OpenAI: gpt-4o"},
         {"id": "gpt-4o-mini", "name": "OpenAI: gpt-4o-mini"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_tools_removed_for_unsupported_model(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_text.delta", delta="ok"),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    captured_params = []
+
+    async def fake_stream(client, base_url, api_key, params):
+        captured_params.append(params)
+        for e in events:
+            yield e
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        await pipe.pipe(
+            {"model": "openai_responses.chatgpt-4o-latest"},
+            {},
+            None,
+            AsyncMock(),
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        )
+    await pipe.on_shutdown()
+
+    assert "tools" not in captured_params[0]
+    assert "tool_choice" not in captured_params[0]
 
