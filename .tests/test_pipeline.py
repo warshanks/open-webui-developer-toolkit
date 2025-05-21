@@ -50,7 +50,7 @@ def test_build_responses_payload(dummy_chat):
         },
     }
 
-    payload = pipeline.build_responses_payload("chat1")
+    payload = pipeline.assemble_responses_input("chat1")
     assert payload == [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
         {"role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
@@ -101,7 +101,14 @@ def test_build_params_includes_reasoning(dummy_chat):
     pipe.valves.REASON_EFFORT = "high"
     pipe.valves.REASON_SUMMARY = "concise"
     body = {"model": "openai_responses.o3", "max_tokens": 50, "temperature": 0.4, "top_p": 0.9}
-    params = pipe._build_params(body, "ins", [{"type": "function"}], "me@example.com")
+    params = pipeline.assemble_responses_payload(
+        pipe.valves,
+        "chat1",
+        body,
+        "ins",
+        [{"type": "function"}],
+        "me@example.com",
+    )
     assert params["tool_choice"] == "auto"
     assert params["max_output_tokens"] == 50
     assert params["temperature"] == 0.4
@@ -115,7 +122,14 @@ def test_build_params_drops_reasoning_for_base_model(dummy_chat):
     pipe = pipeline.Pipe()
     pipe.valves.REASON_EFFORT = "high"
     body = {"model": "openai_responses.gpt-4.1"}
-    params = pipe._build_params(body, "ins", [], None)
+    params = pipeline.assemble_responses_payload(
+        pipe.valves,
+        "chat1",
+        body,
+        "ins",
+        [],
+        None,
+    )
     assert "reasoning" not in params
 
 
@@ -135,8 +149,8 @@ def test_update_usage_accumulates(dummy_chat):
 def test_to_obj_to_dict_roundtrip(dummy_chat):
     pipeline = _reload_pipeline()
     data = {"a": {"b": [1, {"c": 2}]}, "d": (3, 4)}
-    obj = pipeline._to_obj(data)
-    roundtrip = pipeline._to_dict(obj)
+    obj = pipeline.to_obj(data)
+    roundtrip = pipeline.to_dict(obj)
     assert roundtrip == data
 
 
@@ -170,7 +184,7 @@ def test_build_responses_payload_complex(dummy_chat):
             },
         },
     }
-    payload = pipeline.build_responses_payload("chat1")
+    payload = pipeline.assemble_responses_input("chat1")
     assert payload == [
         {
             "role": "user",
@@ -593,7 +607,7 @@ async def test_function_call_output_persisted(dummy_chat):
             pass
     await pipe.on_shutdown()
 
-    payload = pipeline.build_responses_payload("chat1")
+    payload = pipeline.assemble_responses_input("chat1")
     assert {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"} in payload
     assert {"type": "function_call_output", "call_id": "c1", "output": "42"} in payload
 

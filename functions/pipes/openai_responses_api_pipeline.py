@@ -272,7 +272,7 @@ class Pipe:
 
         client = await self.get_http_client()
         chat_id = __metadata__["chat_id"]
-        input_messages = build_responses_payload(chat_id)
+        input_messages = assemble_responses_input(chat_id)
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
 
@@ -434,7 +434,7 @@ class Pipe:
                 break
 
             if pending_calls:
-                results = await self._execute_tools(pending_calls, __tools__)
+                results = await self._execute_tool_calls(pending_calls, __tools__)
                 for call, result in zip(pending_calls, results):
                     function_call_output = {
                         "type": "function_call_output",
@@ -595,7 +595,7 @@ class Pipe:
                 }
             )
 
-    async def _execute_tools(
+    async def _execute_tool_calls(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
         """Run tool calls asynchronously and return their results."""
@@ -671,39 +671,6 @@ class Pipe:
 
         metadata["function_calling"] = "native"
 
-    def _build_params(
-        self,
-        body: dict[str, Any],
-        instructions: str,
-        tools: list[dict[str, Any]],
-        user_email: str | None,
-    ) -> dict[str, Any]:
-        """Create the request payload for the Responses API."""
-        model = body.get("model", self.valves.MODEL_ID.split(",")[0])
-        if "." in str(model):
-            model = str(model).split(".", 1)[1]
-        params = {
-            "model": model,
-            "tools": tools,
-            "tool_choice": "auto" if tools else "none",
-            "instructions": instructions,
-            "parallel_tool_calls": self.valves.PARALLEL_TOOL_CALLS,
-            "max_output_tokens": body.get("max_tokens"),
-            "temperature": body.get("temperature") or 1.0,
-            "top_p": body.get("top_p") or 1.0,
-            "user": user_email,
-            "text": {"format": {"type": "text"}},
-            "truncation": "auto",
-            "stream": True,
-            "store": True,
-        }
-        if model in REASONING_MODELS and (self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY):
-            params["reasoning"] = {}
-            if self.valves.REASON_EFFORT:
-                params["reasoning"]["effort"] = self.valves.REASON_EFFORT
-            if self.valves.REASON_SUMMARY:
-                params["reasoning"]["summary"] = self.valves.REASON_SUMMARY
-        return params
 
     async def get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
@@ -741,7 +708,7 @@ class Pipe:
     @staticmethod
     def _update_usage(total: dict[str, Any], current: dict[str, Any], loops: int) -> None:
         """Aggregate token usage stats."""
-        current = _to_dict(current)
+        current = to_dict(current)
         current["loops"] = loops
         for key, value in current.items():
             if key == "loops":
@@ -792,23 +759,23 @@ async def stream_responses(
                 data_buf.append(line[len("data:"):].strip())
 
 
-def _to_obj(data: Any) -> Any:
+def to_obj(data: Any) -> Any:
     """Recursively convert dictionaries to SimpleNamespace objects."""
     if isinstance(data, dict):
-        return SimpleNamespace(**{k: _to_obj(v) for k, v in data.items()})
+        return SimpleNamespace(**{k: to_obj(v) for k, v in data.items()})
     if isinstance(data, list):
-        return [_to_obj(v) for v in data]
+        return [to_obj(v) for v in data]
     return data
 
 
-def _to_dict(ns: Any) -> Any:
+def to_dict(ns: Any) -> Any:
     """Recursively convert SimpleNamespace objects to dictionaries."""
     if isinstance(ns, SimpleNamespace):
-        return {k: _to_dict(v) for k, v in vars(ns).items()}
+        return {k: to_dict(v) for k, v in vars(ns).items()}
     if isinstance(ns, list):
-        return [_to_dict(v) for v in ns]
+        return [to_dict(v) for v in ns]
     if isinstance(ns, tuple):
-        return tuple(_to_dict(v) for v in ns)
+        return tuple(to_dict(v) for v in ns)
     return ns
 
 
@@ -846,7 +813,7 @@ def prepare_tools(registry: dict | None) -> list[dict]:
     return tools_out
 
 
-def build_responses_payload(chat_id: str) -> list[dict]:
+def assemble_responses_input(chat_id: str) -> list[dict]:
     """Convert WebUI chat history to Responses API input format."""
     logger.debug("Retrieving message history for chat_id=%s", chat_id)
     chat = Chats.get_chat_by_id(chat_id).chat
@@ -935,7 +902,7 @@ def assemble_responses_payload(
         "truncation": "auto",
         "stream": True,
         "store": True,
-        "input": build_responses_payload(chat_id),
+        "input": assemble_responses_input(chat_id),
     }
 
     if model in REASONING_MODELS and (valves.REASON_EFFORT or valves.REASON_SUMMARY):
@@ -954,10 +921,10 @@ def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     The Responses API returns nested dictionaries which the pipeline expects as
     objects with attribute access (``event.response.id``).  To preserve the
     existing behaviour we convert the parsed JSON into ``SimpleNamespace``
-    instances via ``_to_obj``.
+    instances via ``to_obj``.
     """
     payload = json.loads(data)
-    payload = _to_obj(payload)
+    payload = to_obj(payload)
     return ResponsesEvent(type=event_type or "message", **payload)
 
 
