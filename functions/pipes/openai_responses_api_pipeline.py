@@ -13,10 +13,10 @@ requirements: httpx
 ------------------------------------------------------------------------------
 ✅ o3/o4-mini o-series support (including visible <think> reasoning summaries)
 ✅ Image Input: Directly upload images into conversations.
-✅ Web Search Tool: Built-in optional web search (powered by OpenAI web_search tool)
+✅ Built-in Web Search: Enabled via Pipe valve (powered by OpenAI web_search tool)
 ✅ Usage Stats: passthrough (to OpenWebUI GUI)
-✅ Supports cache pricing (up to 75% discount for input tokens that hit OpenAI Cache)
-✅ Gateway Compatible: Supports LiteLLM and similar API gateways.
+✅ Gateway Compatible: Supports LiteLLM and similar API gateways that support response API.
+✅ Customizable logging: Set at a pipe or per-user level via Valves. If set to 'debug', adds citation for easy access.
 ✅ Optimized Native Tool Calling:
    - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
    - Live status updates showing running tools.
