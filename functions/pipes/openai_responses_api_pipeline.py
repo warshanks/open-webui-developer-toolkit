@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.14
+version: 1.6.15
 license: MIT
 requirements: httpx
 
@@ -50,6 +50,10 @@ Read more about OpenAI Responses API:
 -----------------------------------------------------------------------------
 🛠
 -----------------------------------------------------------------------------
+• 1.6.15 (2025-05-18)
+    - Added valve to enable or disable native tool calling.
+    - Native tool calling skips unsupported models: chatgpt-4o-latest and codex-mini-latest.
+    - Reasoning effort now taken from request body instead of valve.
 • 1.6.11 (2025-05-17)
     - Disabled HTTP/2 to prevent mid-stream stalls
     - Optimized connection pooling for high concurrency
@@ -101,6 +105,7 @@ EMOJI_LEVELS = {
 # Feature support by model
 WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
 REASONING_MODELS = {"o3", "o4-mini"}
+NATIVE_TOOL_UNSUPPORTED_MODELS = {"chatgpt-4o-latest", "codex-mini-latest"}
 
 # Precompiled regex for citation annotations
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
@@ -152,12 +157,10 @@ class Pipe:
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
 
-        REASON_EFFORT: Literal["low", "medium", "high", None] = Field(
-            default=None,
-            description=(
-                "Reasoning effort level for o-series models (supported by: o3, o4-mini)."
-            ),
-        )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
+        ENABLE_NATIVE_TOOL_CALLING: bool = Field(
+            default=True,
+            description="Enable native tool calling for supported models.",
+        )
 
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
@@ -200,6 +203,7 @@ class Pipe:
 
     class UserValves(BaseModel):
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
+        ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -264,7 +268,8 @@ class Pipe:
         self._debug_logs.clear()
         self._apply_user_overrides(__user__.get("valves"))
 
-        self._ensure_native_function_calling(__metadata__)
+        if self.valves.ENABLE_NATIVE_TOOL_CALLING:
+            self._ensure_native_function_calling(__metadata__)
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
@@ -657,6 +662,9 @@ class Pipe:
 
         model_dict = metadata.get("model") or {}
         model_id = model_dict.get("id") if isinstance(model_dict, dict) else model_dict
+        if model_id in NATIVE_TOOL_UNSUPPORTED_MODELS:
+            self.log.debug("Model %s does not support native tool calling", model_id)
+            return
         self.log.debug("Enabling native function calling for %s", model_id)
 
         model_info = Models.get_model_by_id(model_id) if model_id else None
@@ -891,10 +899,13 @@ def assemble_responses_payload(
         "input": assemble_responses_input(chat_id),
     }
 
-    if model in REASONING_MODELS and (valves.REASON_EFFORT or valves.REASON_SUMMARY):
+    reasoning_effort = body.get("reasoning_effort", "none")
+    if model in REASONING_MODELS and (
+        reasoning_effort != "none" or valves.REASON_SUMMARY
+    ):
         params["reasoning"] = {}
-        if valves.REASON_EFFORT:
-            params["reasoning"]["effort"] = valves.REASON_EFFORT
+        if reasoning_effort != "none":
+            params["reasoning"]["effort"] = reasoning_effort
         if valves.REASON_SUMMARY:
             params["reasoning"]["summary"] = valves.REASON_SUMMARY
 

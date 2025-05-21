@@ -99,9 +99,14 @@ def test_apply_user_overrides_sets_log_level(dummy_chat):
 def test_build_params_includes_reasoning(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
-    pipe.valves.REASON_EFFORT = "high"
     pipe.valves.REASON_SUMMARY = "concise"
-    body = {"model": "openai_responses.o3", "max_tokens": 50, "temperature": 0.4, "top_p": 0.9}
+    body = {
+        "model": "openai_responses.o3",
+        "max_tokens": 50,
+        "temperature": 0.4,
+        "top_p": 0.9,
+        "reasoning_effort": "high",
+    }
     params = pipeline.assemble_responses_payload(
         pipe.valves,
         "chat1",
@@ -121,8 +126,7 @@ def test_build_params_includes_reasoning(dummy_chat):
 def test_build_params_drops_reasoning_for_base_model(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
-    pipe.valves.REASON_EFFORT = "high"
-    body = {"model": "openai_responses.gpt-4.1"}
+    body = {"model": "openai_responses.gpt-4.1", "reasoning_effort": "high"}
     params = pipeline.assemble_responses_payload(
         pipe.valves,
         "chat1",
