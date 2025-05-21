@@ -734,8 +734,6 @@ async def stream_responses(
         event_type: str | None = None
         data_buf: list[str] = []
         async for raw in resp.aiter_lines():
-            # Yield to the event loop to keep the UI responsive
-            await asyncio.sleep(0)
             line = raw.rstrip("\r")
             if line.startswith(":"):
                 continue
