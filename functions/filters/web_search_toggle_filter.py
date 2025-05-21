@@ -6,10 +6,9 @@ description: Enable GPT-4o Search Preview when the Web Search toggle is active.
 
 from __future__ import annotations
 
+from typing import Optional
 from datetime import datetime
 import re
-from typing import Awaitable, Callable, Optional
-
 from pydantic import BaseModel
 
 WEB_SEARCH_MODELS = {
@@ -18,8 +17,6 @@ WEB_SEARCH_MODELS = {
     "openai_responses.gpt-4o",
     "openai_responses.gpt-4o-mini",
 }
-
-WEB_SEARCH_PREVIEW_MODEL = "gpt-4o-search-preview"
 
 
 class Filter:
@@ -44,85 +41,44 @@ class Filter:
     async def inlet(
         self,
         body: dict,
-        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
+        __event_emitter__: Optional[callable] = None,
         __metadata__: Optional[dict] = None,
     ) -> dict:
-        """Update the request based on the selected model."""
+        """Modify the request body when the toggle is active."""
 
         model = body.get("model")
         if model in WEB_SEARCH_MODELS:
-            self._add_search_tool(body)
+            tools = body.setdefault("tools", [])
+            if not any(t.get("type") == "web_search" for t in tools):
+                tools.append(
+                    {
+                        "type": "web_search",
+                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+                    }
+                )
             return body
 
-        await self._configure_search_preview(body, __event_emitter__, __metadata__)
-        return body
+        features = body.setdefault("features", {})
+        # \U0001f9e0 Override native search and explicitly set GPT-4o route
+        features["web_search"] = False
 
-    async def outlet(self, body: dict, __event_emitter__=None) -> dict:
-        """Emit citations from the response and a final status update."""
-
-        if not __event_emitter__:
-            return body
-
-        last_msg = (body.get("messages") or [])[-1] if body.get("messages") else None
-        content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
-
-        if isinstance(content_blocks, list):
-            text = " ".join(
-                b.get("text", str(b)) if isinstance(b, dict) else str(b)
-                for b in content_blocks
-            )
-        else:
-            text = str(content_blocks or "")
-
-        urls = self._extract_urls(text)
-
-        for url in urls:
-            await self._send_citation(__event_emitter__, url)
-
-        if urls:
-            msg = f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
-        else:
-            msg = "Search not used — answer based on model's internal knowledge."
-
-        await self._send_status(__event_emitter__, msg, done=True)
-
-        return body
-
-    def _add_search_tool(self, body: dict) -> None:
-        """Add the OpenAI web search tool if missing."""
-
-        tools = body.setdefault("tools", [])
-        if not any(t.get("type") == "web_search" for t in tools):
-            tools.append(
+        if __event_emitter__:
+            await __event_emitter__(
                 {
-                    "type": "web_search",
-                    "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+                    "type": "status",
+                    "data": {
+                        "description": "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
+                        "done": False,
+                        "hidden": False,
+                    },
                 }
             )
 
-    async def _configure_search_preview(
-        self,
-        body: dict,
-        emitter: Optional[Callable[[dict], Awaitable[None]]],
-        metadata: Optional[dict],
-    ) -> None:
-        """Configure GPT-4o Search Preview and emit status."""
+        body["model"] = "gpt-4o-search-preview"
 
-        features = body.setdefault("features", {})
-        # 🧠 Override native search and explicitly set GPT-4o route
-        features["web_search"] = False
-
-        if emitter:
-            await self._send_status(
-                emitter,
-                "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
-            )
-
-        body["model"] = WEB_SEARCH_PREVIEW_MODEL
-
-        timezone = (metadata or {}).get("variables", {}).get(
-            "{{CURRENT_TIMEZONE}}",
-            "America/Vancouver",
+        metadata = __metadata__ or {}
+        timezone = metadata.get("variables", {}).get(
+            "{{CURRENT_TIMEZONE}}", "America/Vancouver"
         )
 
         body["web_search_options"] = {
@@ -133,16 +89,46 @@ class Filter:
             "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
         }
 
-    @staticmethod
-    def _extract_urls(text: str) -> list[str]:
-        pattern = r"https?://[^\s)]+[?&]utm_source=openai[^\s)]*"
-        return re.findall(pattern, text)
+        return body
+
+    async def outlet(self, body: dict, __event_emitter__=None) -> dict:
+        """Emit citations from the response and a final status update."""
+
+        model = body.get("model")
+        if not model in WEB_SEARCH_MODELS:
+            last_msg = (body.get("messages") or [])[-1] if body.get("messages") else None
+            content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
+    
+            if isinstance(content_blocks, list):
+                text = " ".join(
+                    b.get("text", str(b)) if isinstance(b, dict) else str(b)
+                    for b in content_blocks
+                )
+            else:
+                text = str(content_blocks or "")
+    
+            urls = self._extract_urls(text)
+    
+            for url in urls:
+                await self._emit_citation(__event_emitter__, url)
+    
+            if urls:
+                msg = f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
+            else:
+                msg = "Search not used — answer based on model's internal knowledge."
+    
+            await self._emit_status(__event_emitter__, msg, done=True)
+    
+            return body
 
     @staticmethod
-    async def _send_citation(emitter: Callable[[dict], Awaitable[None]], url: str) -> None:
-        cleaned = (
-            url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
-        )
+    def _extract_urls(text: str) -> list[str]:
+        matches = re.findall(r"https?://[^\s)]+\?utm_source=openai", text)
+        return matches
+
+    @staticmethod
+    async def _emit_citation(emitter: callable, url: str) -> None:
+        cleaned = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
         await emitter(
             {
                 "type": "citation",
@@ -157,15 +143,7 @@ class Filter:
         )
 
     @staticmethod
-    async def _send_status(
-        emitter: Callable[[dict], Awaitable[None]],
-        description: str,
-        *,
-        done: bool = False,
-    ) -> None:
+    async def _emit_status(emitter: callable, description: str, *, done: bool = False) -> None:
         await emitter(
-            {
-                "type": "status",
-                "data": {"description": description, "done": done, "hidden": False},
-            }
+            {"type": "status", "data": {"description": description, "done": done, "hidden": False}}
         )
