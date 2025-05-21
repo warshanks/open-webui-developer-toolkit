@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.16
+version: 1.6.17
 license: MIT
 requirements: httpx
 
@@ -17,6 +17,7 @@ requirements: httpx
 ✅ Usage Stats: passthrough (to OpenWebUI GUI)
 ✅ Gateway Compatible: Supports LiteLLM and similar API gateways that support response API.
 ✅ Customizable logging: Set at a pipe or per-user level via Valves. If set to 'debug', adds citation for easy access.
+✅ Optional date & user injection: Valves can append today's date and requester info to the system prompt.
 ✅ Optimized Native Tool Calling:
    - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
    - Live status updates showing running tools.
@@ -34,6 +35,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.17: Valves to inject current date and user info into the system prompt.
 • 1.6.16: Valve to control persisting tool results in chat history.
 • 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
 • 1.6.11: Disabled HTTP/2 to prevent stream stalls; optimized connection pooling.
@@ -182,10 +184,22 @@ class Pipe:
             description="Select logging level.",
         )
 
+        INJECT_DATE: bool = Field(
+            default=False,
+            description="Append today's date to the system prompt when enabled.",
+        )
+
+        INJECT_USER_INFO: bool = Field(
+            default=False,
+            description="Append user details (name, email, IP, browser) to the system prompt when enabled.",
+        )
+
     class UserValves(BaseModel):
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
         ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
         PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_DATE: Literal[True, False, "INHERIT"] = "INHERIT"
+        INJECT_USER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -266,6 +280,19 @@ class Pipe:
         chat_id = __metadata__["chat_id"]
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
+        if valves.INJECT_DATE:
+            date_str = datetime.now().strftime("%A, %B %d, %Y")
+            instructions = instructions.rstrip() + f"\n\nToday's date: {date_str}"
+        if valves.INJECT_USER_INFO:
+            info_lines = [f"User: {__user__.get('name', '')} ({__user__.get('email', '')})"]
+            if __request__ is not None:
+                ip = getattr(getattr(__request__, 'client', None), 'host', None)
+                if ip:
+                    info_lines.append(f"IP: {ip}")
+                ua = __request__.headers.get("user-agent") if __request__.headers else None
+                if ua:
+                    info_lines.append(f"Browser: {ua}")
+            instructions = instructions.rstrip() + "\n\n" + "\n".join(info_lines)
 
         model = body.get("model", valves.MODEL_ID.split(",")[0])
         if "." in str(model):
