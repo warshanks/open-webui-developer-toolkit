@@ -1,4 +1,5 @@
 from importlib.util import spec_from_file_location, module_from_spec
+import json
 import sys
 from pathlib import Path
 import types
@@ -152,6 +153,15 @@ def test_to_obj_to_dict_roundtrip(dummy_chat):
     obj = pipeline.to_obj(data)
     roundtrip = pipeline.to_dict(obj)
     assert roundtrip == data
+
+
+def test_parse_responses_sse_handles_extra_fields(dummy_chat):
+    pipeline = _reload_pipeline()
+    raw = json.dumps({"annotation": {"title": "t"}, "delta": "x"})
+    event = pipeline.parse_responses_sse("response.output_text.annotation.added", raw)
+    assert event.type == "response.output_text.annotation.added"
+    assert event.delta == "x"
+    assert getattr(event, "annotation").title == "t"
 
 
 def test_build_responses_payload_complex(dummy_chat):

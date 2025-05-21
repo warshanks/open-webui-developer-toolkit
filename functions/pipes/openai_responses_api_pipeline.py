@@ -923,9 +923,15 @@ def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     existing behaviour we convert the parsed JSON into ``SimpleNamespace``
     instances via ``to_obj``.
     """
-    payload = json.loads(data)
-    payload = to_obj(payload)
-    return ResponsesEvent(type=event_type or "message", **payload)
+    payload = to_obj(json.loads(data))
+    event = ResponsesEvent(type=event_type or "message")
+    if isinstance(payload, SimpleNamespace):
+        for key, val in vars(payload).items():
+            setattr(event, key, val)
+    elif isinstance(payload, dict):
+        for key, val in payload.items():
+            setattr(event, key, val)
+    return event
 
 
 async def execute_responses_tool_calls(
