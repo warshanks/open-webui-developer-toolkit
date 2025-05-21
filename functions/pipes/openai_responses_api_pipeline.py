@@ -9,65 +9,37 @@ license: MIT
 requirements: httpx
 
 ------------------------------------------------------------------------------
-📌 OVERVIEW
+🚀 CURRENT FEATURES
 ------------------------------------------------------------------------------
-This pipeline brings OpenAI Responses API with Open WebUI, enabling features not possible via Completions API.
+✅ o3/o4-mini o-series support (including visible <think> reasoning summaries)
+✅ Image Input: Directly upload images into conversations.
+✅ Web Search Tool: Built-in optional web search (powered by OpenAI web_search tool)
+✅ Usage Stats: passthrough (to OpenWebUI GUI)
+✅ Supports cache pricing (up to 75% discount for input tokens that hit OpenAI Cache)
+✅ Gateway Compatible: Supports LiteLLM and similar API gateways.
+✅ Optimized Native Tool Calling:
+   - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
+   - Live status updates showing running tools.
+   - Tool outputs captured as citations for traceability & transparancy.
+   - Persistent tool results (`function_call`/`function_call_output`) in conversation history.
+   - Automatically enables 'Native tool calling' in OpenWebUI model parm (if not set already).
+   
+------------------------------------------------------------------------------
+🛠️ ROADMAP (PLANNED FEATURES)
+------------------------------------------------------------------------------
+⏳ Image Output: Direct generation of images using gpt-image-1 / dall-e-3 / dall-e-2
+⏳ Document/File Input: Upload PDFs or other files directly as conversational context.
+⏳ File Search Tool: Integration with OpenAI’s `file_search` feature.
 
-Key Features:
-   1) Supports o3/o4-mini reasoning models (including visible <think> reasoning summaries)
-   2) Image input support (output support coming soon...)
-   3) Optional built-in web search tool (powered by OpenAI web_search tool)
-   4) Usage stats passthrough (to OpenWebUI GUI)
-   5) Supports cache pricing (up to 75% discount for input tokens that hit OpenAI Cache)
-   6) Support LiteLLM and other Response API compatible gateways.
-   7) Optimized native tool calling:
-        - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
-        - Status emitters show which tool(s) the model is calling
-        - Tool results are emitted as citations for traceability & transparancy.
-        - Tool results are retained in conversation history (function_call/function_call_output) so users can ask follow up questions
-        - Retain reasoning tokens across tool turns (loops).
-            o3/o4-mini internal reasoning tokens aren't externally visible and therefore can't be passed back into the model.
-            To work around this, the pipe temporarily uses previous_response_id to retain context within tool turn loops.
-            This allows reasoning models to call turns mid-reasoning, get tool result and continue reasoning.
-            This is ONLY possible with the responses API and sigificantly improves speed, reduces cost (since model doesn't need
-            to re-reasoning) and improved ability.
-
-Future Improvements:
-   TODO - Image output support
-   TODO - Document input support (e.g., PDFs, other files via __files__ parameter in pipe() function).
-   TODO - Consider adding support for file_search (built-in OpenAI tool)
-
-Notes:
-   - This pipeline is experimental. USE AT YOUR OWN RISK.
-   - Set `MODEL_ID` to a comma separated list to expose multiple models.
-   - Tool calling requires 'OpenWebUI Model Advanced Params → Function Calling → set to "Native"'
-
-Read more about OpenAI Responses API:
-- https://openai.com/index/new-tools-for-building-agents/
-- https://platform.openai.com/docs/quickstart?api-mode=responses
-- https://platform.openai.com/docs/api-reference/responses
-
------------------------------------------------------------------------------
-🛠
------------------------------------------------------------------------------
-• 1.6.15 (2025-05-18)
-    - Added valve to enable or disable native tool calling.
-    - Native tool calling skips unsupported models: chatgpt-4o-latest and codex-mini-latest.
-    - Reasoning effort now taken from request body instead of valve.
-• 1.6.11 (2025-05-17)
-    - Disabled HTTP/2 to prevent mid-stream stalls
-    - Optimized connection pooling for high concurrency
-• 1.6.10 (2025-05-16)
-    - Switched streaming implementation to use plain HTTP via httpx
-    - Dropped the OpenAI SDK dependency
-    - Added lightweight SSE parser for Responses API events
-• 1.6.9 (2025-05-12)
-    - Updated requirements to "openai>=1.78.0" (library will automatically install when pipe in initialized).
-    - Added UserValves class to allow users to override system valve settings.
-    - Improved logging
-• 1.6.8 (2025-05-09)
-    - Improved logging formating and control. Replaced DEBUG (on/off) valve with more granular CUSTOM_LOG_LEVEL (DEBUG/INFO/WARNING/ERROR).
-    - Refactored code for improved readability and maintainability.
+------------------------------------------------------------------------------
+🛠 CHANGE LOG
+------------------------------------------------------------------------------
+• 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
+• 1.6.11: Disabled HTTP/2 to prevent stream stalls; optimized connection pooling.
+• 1.6.10: Switched streaming from OpenAI SDK to direct HTTP via httpx; lightweight SSE parser added.
+• 1.6.9: Updated dependency to `openai>=1.78.0`; introduced `UserValves` for per-user config overrides; enhanced logging.
+• 1.6.8: Added granular `CUSTOM_LOG_LEVEL` control; refactored codebase for readability and maintenance.
+────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
