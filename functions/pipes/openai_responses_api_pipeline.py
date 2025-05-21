@@ -949,15 +949,8 @@ def assemble_responses_payload(
 
 
 def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
-    """Parse an SSE data payload into a ``ResponsesEvent``.
-
-    The Responses API returns nested dictionaries which the pipeline expects as
-    objects with attribute access (``event.response.id``).  To preserve the
-    existing behaviour we convert the parsed JSON into ``SimpleNamespace``
-    instances via ``_to_obj``.
-    """
+    """Parse an SSE data payload into a ``ResponsesEvent``."""
     payload = json.loads(data)
-    payload = _to_obj(payload)
     return ResponsesEvent(type=event_type or "message", **payload)
 
 
