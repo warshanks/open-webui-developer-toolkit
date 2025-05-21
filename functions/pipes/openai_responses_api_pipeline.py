@@ -102,6 +102,10 @@ EMOJI_LEVELS = {
 WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
 REASONING_MODELS = {"o3", "o4-mini"}
 
+# Precompiled regex for citation annotations
+ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
+ANNOT_URL_RE = re.compile(r"url='([^']*)'")
+
 
 @dataclass
 class ResponsesEvent:
@@ -408,8 +412,8 @@ class Pipe:
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(getattr(event, "annotation", ""))
-                        title_m = re.search(r"title='([^']*)'", raw)
-                        url_m = re.search(r"url='([^']*)'", raw)
+                        title_m = ANNOT_TITLE_RE.search(raw)
+                        url_m = ANNOT_URL_RE.search(raw)
                         title = title_m.group(1) if title_m else "Unknown Title"
                         url = url_m.group(1) if url_m else ""
                         url = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
@@ -917,19 +921,19 @@ def assemble_responses_payload(
 
 
 def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
-    """Parse an SSE data payload into a ``ResponsesEvent``.
+    """Parse an SSE data payload into a ``ResponsesEvent`` with minimal overhead."""
 
-    ``json.loads`` with ``object_hook`` keeps the overhead low while still
-    allowing attribute-style access for nested objects.
-    """
-    payload = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
+    payload = json.loads(data)
+    if "response" in payload and isinstance(payload["response"], dict):
+        payload["response"] = SimpleNamespace(**payload["response"])
+    if "item" in payload and isinstance(payload["item"], dict):
+        payload["item"] = SimpleNamespace(**payload["item"])
+    if "annotation" in payload and isinstance(payload["annotation"], dict):
+        payload["annotation"] = SimpleNamespace(**payload["annotation"])
+
     event = ResponsesEvent(type=event_type or "message")
-    if isinstance(payload, SimpleNamespace):
-        for key, val in vars(payload).items():
-            setattr(event, key, val)
-    elif isinstance(payload, dict):  # pragma: no cover - safe guard
-        for key, val in payload.items():
-            setattr(event, key, val)
+    for key, val in payload.items():
+        setattr(event, key, val)
     return event
 
 
