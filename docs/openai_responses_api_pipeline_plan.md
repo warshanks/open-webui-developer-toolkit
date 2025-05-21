@@ -124,8 +124,7 @@ implementation now parses only the top-level keys and converts nested
 structures on demand.  Annotation regexes are precompiled and debug formatting
 is wrapped in ``DEBUG`` checks to further cut CPU cost.  Unused
 ``to_obj``/``to_dict`` helpers were dropped and usage aggregation no longer
-recursively copies objects.  Parsed SSE events now use a ``dataclass`` with
-``slots=True`` and direct field mapping to reduce per-event overhead.
+recursively copies objects, trimming a bit more CPU work.
 
 ⸻
 
