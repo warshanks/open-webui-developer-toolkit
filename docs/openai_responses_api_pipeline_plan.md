@@ -67,7 +67,7 @@ Below is a task breakdown with _suggested_ statuses. The AI (or human) can check
 
 | **Task ID** | **Title**                                     | **Description**                                                                                                                                                                                                                               | **Status** | **Notes / Links** |
 |-------------|-----------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|-------------------|
-| **1**       | **Extract Helpers**                           | 1. Create small, focused helper functions for SSE parsing and assembling OpenAI payloads.<br> 2. Preserve existing logic but isolate it in well‑named functions. <br> 3. Add placeholders in the code for future tests. | In Progress |                   |
+| **1**       | **Extract Helpers**                           | 1. Create small, focused helper functions for SSE parsing and assembling OpenAI payloads.<br> 2. Preserve existing logic but isolate it in well‑named functions. <br> 3. Add placeholders in the code for future tests. | In Progress | `parse_responses_sse`, `execute_responses_tool_calls`, `assemble_responses_input` implemented. Removed obsolete `_build_params`; renamed `_execute_tool_calls` helper. Fixed dataclass mapping bug in `parse_responses_sse`. |
 | **2**       | **Refactor `pipe()`**                        | 1. Rewrite `Pipe.pipe()` to orchestrate the new helpers (payload building, streaming, tool calls, final cleanup). <br> 2. Keep the event emission order consistent with WebUI’s `process_chat_response`. <br> 3. Ensure partial results are stored properly. | In Progress |                   |
 | **3**       | **Integrate Middleware Imports**              | 1. Identify duplicated logic that can be replaced with `open_webui.utils.middleware` or similar. <br> 2. Replace references safely, ensuring no feature gaps.                                                                                     | In Progress |                   |
 | **4**       | **Implement Cleanup**                         | 1. After streaming and tool calls, call `DELETE /v1/responses/{id}` to remove stored responses if `previous_response_id` was used. <br> 2. Ensure errors do not block cleanup.                                                                    | In Progress |                   |
@@ -118,6 +118,14 @@ Because previous_response_id is used, partial model reasoning stays in the chain
 Maintain the existing debug logging approach. Possibly buffer logs and emit them as a final citation in DEBUG mode.
 	•	Parallel Tool Execution:
 Use asyncio.gather for tool calls if multiple calls come in at once.
+        •       Streaming Performance:
+Initial SSE parsing relied on ``json.loads`` with ``object_hook``.  The
+implementation now parses only the top-level keys and converts nested
+structures on demand.  Annotation regexes are precompiled and debug formatting
+is wrapped in ``DEBUG`` checks to further cut CPU cost.  Unused
+``to_obj``/``to_dict`` helpers were dropped and usage aggregation no longer
+recursively copies objects.  Parsed SSE events now use a ``dataclass`` with
+``slots=True`` and direct field mapping to reduce per-event overhead.
 
 ⸻
 

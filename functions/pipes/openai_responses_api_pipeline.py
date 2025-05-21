@@ -1,69 +1,46 @@
 """
 title: OpenAI Responses API Pipeline
-id: openai_responses_api_pipeline
+id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.13
+version: 1.6.16
 license: MIT
 requirements: httpx
 
 ------------------------------------------------------------------------------
-📌 OVERVIEW
+🚀 CURRENT FEATURES
 ------------------------------------------------------------------------------
-This pipeline brings OpenAI Responses API with Open WebUI, enabling features not possible via Completions API.
+✅ o3/o4-mini o-series support (including visible <think> reasoning summaries)
+✅ Image Input: Directly upload images into conversations.
+✅ Built-in Web Search: Enabled via Pipe valve (powered by OpenAI web_search tool)
+✅ Usage Stats: passthrough (to OpenWebUI GUI)
+✅ Gateway Compatible: Supports LiteLLM and similar API gateways that support response API.
+✅ Customizable logging: Set at a pipe or per-user level via Valves. If set to 'debug', adds citation for easy access.
+✅ Optimized Native Tool Calling:
+   - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
+   - Live status updates showing running tools.
+   - Tool outputs captured as citations for traceability & transparancy.
+   - Persistent tool results (`function_call`/`function_call_output`) in conversation history (valve-controlled).
+   - Automatically enables 'Native tool calling' in OpenWebUI model parm (if not set already).
+   
+------------------------------------------------------------------------------
+🛠️ ROADMAP (PLANNED FEATURES)
+------------------------------------------------------------------------------
+⏳ Image Output: Direct generation of images using gpt-image-1 / dall-e-3 / dall-e-2
+⏳ Document/File Input: Upload PDFs or other files directly as conversational context.
+⏳ File Search Tool: Integration with OpenAI’s `file_search` feature.
 
-Key Features:
-   1) Supports o3/o4-mini reasoning models (including visible <think> reasoning summaries)
-   2) Image input support (output support coming soon...)
-   3) Optional built-in web search tool (powered by OpenAI web_search tool)
-   4) Usage stats passthrough (to OpenWebUI GUI)
-   5) Supports cache pricing (up to 75% discount for input tokens that hit OpenAI Cache)
-   6) Support LiteLLM and other Response API compatible gateways.
-   7) Optimized native tool calling:
-        - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
-        - Status emitters show which tool(s) the model is calling
-        - Tool results are emitted as citations for traceability & transparancy.
-        - Tool results are retained in conversation history (function_call/function_call_output) so users can ask follow up questions
-        - Retain reasoning tokens across tool turns (loops).
-            o3/o4-mini internal reasoning tokens aren't externally visible and therefore can't be passed back into the model.
-            To work around this, the pipe temporarily uses previous_response_id to retain context within tool turn loops.
-            This allows reasoning models to call turns mid-reasoning, get tool result and continue reasoning.
-            This is ONLY possible with the responses API and sigificantly improves speed, reduces cost (since model doesn't need
-            to re-reasoning) and improved ability.
-
-Future Improvements:
-   TODO - Image output support
-   TODO - Document input support (e.g., PDFs, other files via __files__ parameter in pipe() function).
-   TODO - Consider adding support for file_search (built-in OpenAI tool)
-
-Notes:
-   - This pipeline is experimental. USE AT YOUR OWN RISK.
-   - Duplicate/clone this pipeline if you want multiple models.
-   - Tool calling requires 'OpenWebUI Model Advanced Params → Function Calling → set to "Native"'
-
-Read more about OpenAI Responses API:
-- https://openai.com/index/new-tools-for-building-agents/
-- https://platform.openai.com/docs/quickstart?api-mode=responses
-- https://platform.openai.com/docs/api-reference/responses
-
------------------------------------------------------------------------------
-🛠
------------------------------------------------------------------------------
-• 1.6.11 (2025-05-17)
-    - Disabled HTTP/2 to prevent mid-stream stalls
-    - Optimized connection pooling for high concurrency
-• 1.6.10 (2025-05-16)
-    - Switched streaming implementation to use plain HTTP via httpx
-    - Dropped the OpenAI SDK dependency
-    - Added lightweight SSE parser for Responses API events
-• 1.6.9 (2025-05-12)
-    - Updated requirements to "openai>=1.78.0" (library will automatically install when pipe in initialized).
-    - Added UserValves class to allow users to override system valve settings.
-    - Improved logging
-• 1.6.8 (2025-05-09)
-    - Improved logging formating and control. Replaced DEBUG (on/off) valve with more granular CUSTOM_LOG_LEVEL (DEBUG/INFO/WARNING/ERROR).
-    - Refactored code for improved readability and maintainability.
+------------------------------------------------------------------------------
+🛠 CHANGE LOG
+------------------------------------------------------------------------------
+• 1.6.16: Valve to control persisting tool results in chat history.
+• 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
+• 1.6.11: Disabled HTTP/2 to prevent stream stalls; optimized connection pooling.
+• 1.6.10: Switched streaming from OpenAI SDK to direct HTTP via httpx; lightweight SSE parser added.
+• 1.6.9: Updated dependency to `openai>=1.78.0`; introduced `UserValves` for per-user config overrides; enhanced logging.
+• 1.6.8: Added granular `CUSTOM_LOG_LEVEL` control; refactored codebase for readability and maintenance.
+────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -84,6 +61,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 import httpx
 from fastapi import Request
 from open_webui.models.chats import Chats
+from open_webui.models.models import Models, ModelForm, ModelParams
 from open_webui.utils.misc import deep_update, get_message_list
 from pydantic import BaseModel, Field
 
@@ -97,8 +75,17 @@ EMOJI_LEVELS = {
     logging.CRITICAL: "\U0001F525",
 }
 
+# Feature support by model
+WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
+REASONING_MODELS = {"o3", "o4-mini"}
+NATIVE_TOOL_UNSUPPORTED_MODELS = {"chatgpt-4o-latest", "codex-mini-latest"}
 
-@dataclass
+# Precompiled regex for citation annotations
+ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
+ANNOT_URL_RE = re.compile(r"url='([^']*)'")
+
+
+@dataclass(slots=True)
 class ResponsesEvent:
     """Parsed SSE event."""
 
@@ -108,6 +95,7 @@ class ResponsesEvent:
     item_id: str | None = None
     item: Any | None = None
     response: Any | None = None
+    annotation: Any | None = None
 
 
 class Pipe:
@@ -131,31 +119,36 @@ class Pipe:
         MODEL_ID: str = Field(
             default="gpt-4.1",
             description=(
-                "Model ID used to generate responses. Defaults to 'gpt-4.1'. Note: The model ID must be a valid OpenAI model ID. E.g. 'gpt-4o', 'o3', etc."
+                "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-model
 
         REASON_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
             description=(
-                "Reasoning summary style for o-series models (if your OpenAI org has access). OpenAI may require identify verification before enabling. Leave blank to disable (default)."
+                "Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
 
-        REASON_EFFORT: Literal["low", "medium", "high", None] = Field(
-            default=None,
-            description=(
-                "Reasoning effort level for o-series models. "
-                "Leave blank to disable (default)."
-            ),
-        )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
+        ENABLE_NATIVE_TOOL_CALLING: bool = Field(
+            default=True,
+            description="Enable native tool calling for supported models.",
+        )
 
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
             description=(
-                "Whether to enable OpenAI's built-in 'web_search' tool. If True, adds {'type': 'web_search'} to tools (unless already present). Note: Tool occurs additional charge each time the model calls it"
+                "Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini)."
             ),
         )  # Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses
+
+        PERSIST_TOOL_RESULTS: bool = Field(
+            default=True,
+            description=(
+                "Persist tool call results across conversation turns. When disabled,"
+                " tool results are not stored in the chat history."
+            ),
+        )
 
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -191,16 +184,18 @@ class Pipe:
 
     class UserValves(BaseModel):
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
+        ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
+        PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
         self.valves = self.Valves()
-        self.name = f"OpenAI: {self.valves.MODEL_ID}"  # TODO fix this as MODEL_ID value can't be accessed from within __init__.
+        self.log_name = "OpenAI Responses"
         self._client: httpx.AsyncClient | None = None
         self._transport: httpx.AsyncHTTPTransport | None = None
         self._client_lock = asyncio.Lock()
 
-        self.log = logging.getLogger(self.name)
+        self.log = logging.getLogger(self.log_name)
         self.log.propagate = False
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"))
@@ -213,14 +208,19 @@ class Pipe:
                 self.buf = buf
 
             def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
-                if record.levelno == logging.DEBUG:
-                    msg = self.format(record)
-                    self.buf.append(msg)
+                msg = self.format(record)
+                self.buf.append(msg)
 
         mem_handler = _MemHandler(self._debug_logs)
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         self.log.handlers = [handler, mem_handler]
         self.log.setLevel(logging.INFO)
+        self._last_status: tuple[str, bool] | None = None
+
+    def pipes(self):
+        """Return models exposed by this pipe."""
+        models = [m.strip() for m in self.valves.MODEL_ID.split(',') if m.strip()]
+        return [{"id": mid, "name": f"OpenAI: {mid}"} for mid in models]
 
     async def on_shutdown(self) -> None:
         """Clean up the HTTP client."""
@@ -246,28 +246,17 @@ class Pipe:
         Stream responses from OpenAI and handle tool calls.
         """
         start_ns = time.perf_counter_ns()
+        self._last_status = None
         self._debug_logs.clear()
         self._apply_user_overrides(__user__.get("valves"))
 
-        if __tools__ and __metadata__.get("function_calling") != "native":
-            await __event_emitter__(
-                {
-                    "type": "message",
-                    "data": {
-                        "content": (
-                            "🛑 Tools detected, but native function calling is disabled.\n\n"
-                            "To enable tools in this chat, switch Function Calling to 'Native'."
-                        ),
-                    },
-                }
-            )
-            self.log.error("Tools present but native function calling disabled")
-            return
+        if self.valves.ENABLE_NATIVE_TOOL_CALLING:
+            self._ensure_native_function_calling(__metadata__)
 
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
-            self.name,
-            self.valves.MODEL_ID,
+            self.log_name,
+            body.get("model", self.valves.MODEL_ID),
             __user__.get("email", "anon"),
             __metadata__["chat_id"],
             __metadata__["message_id"],
@@ -275,12 +264,16 @@ class Pipe:
 
         client = await self.get_http_client()
         chat_id = __metadata__["chat_id"]
-        input_messages = build_responses_payload(chat_id)
+        input_messages = assemble_responses_input(chat_id)
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
 
+        model = body.get("model", self.valves.MODEL_ID.split(",")[0])
+        if "." in str(model):
+            model = str(model).split(".", 1)[1]
+
         tools = prepare_tools(__tools__)
-        if self.valves.ENABLE_WEB_SEARCH:
+        if self.valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
             tools.append(
                 {
                     "type": "web_search",
@@ -385,54 +378,30 @@ class Pipe:
                     if et == "response.output_item.added":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": f"🔧 Running {item.name}...",
-                                        "done": False,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, f"🔧 Running {item.name}..."
                             )
                         elif getattr(item, "type", None) == "web_search_call":
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": "🔍 Searching the internet...",
-                                        "done": False,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, "🔍 Searching the internet..."
                             )
                         continue
                     if et == "response.output_item.done":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": f"🔧 Running {item.name}...",
-                                        "done": True,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, f"🔧 Running {item.name}...", done=True
                             )
                         elif getattr(item, "type", None) == "web_search_call":
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": "🔍 Searching the internet...",
-                                        "done": True,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, "🔍 Searching the internet...", done=True
                             )
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(getattr(event, "annotation", ""))
-                        title_m = re.search(r"title='([^']*)'", raw)
-                        url_m = re.search(r"url='([^']*)'", raw)
+                        title_m = ANNOT_TITLE_RE.search(raw)
+                        url_m = ANNOT_URL_RE.search(raw)
                         title = title_m.group(1) if title_m else "Unknown Title"
                         url = url_m.group(1) if url_m else ""
                         url = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
@@ -457,7 +426,7 @@ class Pipe:
                 break
 
             if pending_calls:
-                results = await self._execute_tools(pending_calls, __tools__)
+                results = await self._execute_tool_calls(pending_calls, __tools__)
                 for call, result in zip(pending_calls, results):
                     function_call_output = {
                         "type": "function_call_output",
@@ -466,27 +435,26 @@ class Pipe:
                     }
                     temp_input.insert(0, function_call_output)
                     if __event_emitter__:
-                        citation_event = {
-                            "type": "citation",
-                            "data": {
-                                "document": [f"{call.name}({call.arguments})\n\n{result}"],
-                                "metadata": [
-                                    {
-                                        "date_accessed": datetime.now().isoformat(),
-                                        "source": call.name.replace("_", " ").title(),
-                                    }
-                                ],
-                                "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
-                                "_fc": [
-                                    {
-                                        "call_id": call.call_id,
-                                        "name": call.name,
-                                        "arguments": call.arguments,
-                                        "output": str(result),
-                                    }
-                                ],
-                            },
+                        citation_data = {
+                            "document": [f"{call.name}({call.arguments})\n\n{result}"],
+                            "metadata": [
+                                {
+                                    "date_accessed": datetime.now().isoformat(),
+                                    "source": call.name.replace("_", " ").title(),
+                                }
+                            ],
+                            "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
                         }
+                        if self.valves.PERSIST_TOOL_RESULTS:
+                            citation_data["_fc"] = [
+                                {
+                                    "call_id": call.call_id,
+                                    "name": call.name,
+                                    "arguments": call.arguments,
+                                    "output": str(result),
+                                }
+                            ]
+                        citation_event = {"type": "citation", "data": citation_data}
                         await __event_emitter__(citation_event)
                 continue
 
@@ -560,12 +528,7 @@ class Pipe:
                     )
             break
 
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {"description": "✅ Tool phase complete", "done": True},
-            }
-        )
+        await self._emit_status(__event_emitter__, "", done=True)
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
@@ -623,23 +586,25 @@ class Pipe:
                 }
             )
 
-    async def _execute_tools(
+    async def _execute_tool_calls(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
         """Run tool calls asynchronously and return their results."""
-        tasks = []
-        for call in calls:
-            entry = registry.get(call.name)
-            if entry is None:
-                tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
-            else:
-                args = json.loads(call.arguments or "{}")
-                tasks.append(asyncio.create_task(entry["callable"](**args)))
-        try:
-            return await asyncio.gather(*tasks)
-        except Exception as ex:
-            self.log.error("Tool execution failed: %s", ex)
-            return [f"Error: {ex}"] * len(tasks)
+        return await execute_responses_tool_calls(calls, registry, self.log)
+
+    async def _emit_status(
+        self,
+        emitter: Callable[[dict[str, Any]], Awaitable[None]],
+        description: str,
+        *,
+        done: bool = False,
+    ) -> None:
+        """Emit a status update if it differs from the last one."""
+        current = (description, done)
+        if self._last_status == current:
+            return
+        self._last_status = current
+        await emitter({"type": "status", "data": {"description": description, "done": done}})
 
     def _apply_user_overrides(self, user_valves: BaseModel | None) -> None:
         """Override valve settings with user-provided values."""
@@ -671,36 +636,35 @@ class Pipe:
             getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
         )
 
-    def _build_params(
-        self,
-        body: dict[str, Any],
-        instructions: str,
-        tools: list[dict[str, Any]],
-        user_email: str | None,
-    ) -> dict[str, Any]:
-        """Create the request payload for the Responses API."""
-        params = {
-            "model": self.valves.MODEL_ID,
-            "tools": tools,
-            "tool_choice": "auto" if tools else "none",
-            "instructions": instructions,
-            "parallel_tool_calls": self.valves.PARALLEL_TOOL_CALLS,
-            "max_output_tokens": body.get("max_tokens"),
-            "temperature": body.get("temperature") or 1.0,
-            "top_p": body.get("top_p") or 1.0,
-            "user": user_email,
-            "text": {"format": {"type": "text"}},
-            "truncation": "auto",
-            "stream": True,
-            "store": True,
-        }
-        if self.valves.REASON_EFFORT or self.valves.REASON_SUMMARY:
-            params["reasoning"] = {}
-            if self.valves.REASON_EFFORT:
-                params["reasoning"]["effort"] = self.valves.REASON_EFFORT
-            if self.valves.REASON_SUMMARY:
-                params["reasoning"]["summary"] = self.valves.REASON_SUMMARY
-        return params
+    def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
+        """Enable native function calling for a model if not already active."""
+        if metadata.get("function_calling") == "native":
+            return
+
+        model_dict = metadata.get("model") or {}
+        model_id = model_dict.get("id") if isinstance(model_dict, dict) else model_dict
+        if model_id in NATIVE_TOOL_UNSUPPORTED_MODELS:
+            self.log.debug("Model %s does not support native tool calling", model_id)
+            return
+        self.log.debug("Enabling native function calling for %s", model_id)
+
+        model_info = Models.get_model_by_id(model_id) if model_id else None
+        if model_info:
+            model_data = model_info.model_dump()
+            model_data["params"]["function_calling"] = "native"
+            model_data["params"] = ModelParams(**model_data["params"])
+            updated = Models.update_model_by_id(model_info.id, ModelForm(**model_data))
+            if updated:
+                self.log.info(
+                    "✅ Set model %s to native function calling", model_info.id
+                )
+            else:
+                self.log.error("❌ Failed to update model %s", model_info.id)
+        else:
+            self.log.warning("⚠️ Model info not found for id %s", model_id)
+
+        metadata["function_calling"] = "native"
+
 
     async def get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
@@ -737,18 +701,20 @@ class Pipe:
 
     @staticmethod
     def _update_usage(total: dict[str, Any], current: dict[str, Any], loops: int) -> None:
-        """Aggregate token usage stats."""
-        current = _to_dict(current)
-        current["loops"] = loops
+        """Aggregate token usage stats without unnecessary conversions."""
+        if isinstance(current, SimpleNamespace):
+            current = vars(current)
+        current = current or {}
         for key, value in current.items():
-            if key == "loops":
-                continue
-            if isinstance(value, int):
+            if isinstance(value, SimpleNamespace):
+                value = vars(value)
+            if isinstance(value, (int, float)):
                 total[key] = total.get(key, 0) + value
             elif isinstance(value, dict):
-                total.setdefault(key, {})
+                inner = total.setdefault(key, {})
                 for subkey, subval in value.items():
-                    total[key][subkey] = total[key].get(subkey, 0) + subval
+                    if isinstance(subval, (int, float)):
+                        inner[subkey] = inner.get(subkey, 0) + subval
         total["loops"] = loops
 
 
@@ -757,8 +723,8 @@ async def stream_responses(
     base_url: str,
     api_key: str,
     params: dict[str, Any],
-) -> AsyncIterator[SimpleNamespace]:
-    """Yield parsed SSE events from the Responses API."""
+) -> AsyncIterator[ResponsesEvent]:
+    """Yield parsed ``ResponsesEvent`` objects from the API."""
 
     url = base_url.rstrip("/") + "/responses"
     headers = {
@@ -780,36 +746,13 @@ async def stream_responses(
                     data = "\n".join(data_buf)
                     if data.strip() == "[DONE]":
                         return
-                    payload = json.loads(data)
-                    yield _to_obj({"type": event_type or "message", **payload})
+                    yield parse_responses_sse(event_type, data)
                 event_type, data_buf = None, []
                 continue
             if line.startswith("event:"):
                 event_type = line[len("event:"):].strip()
             elif line.startswith("data:"):
                 data_buf.append(line[len("data:"):].strip())
-
-
-def _to_obj(data: Any) -> Any:
-    """Recursively convert dictionaries to SimpleNamespace objects."""
-    if isinstance(data, dict):
-        return SimpleNamespace(**{k: _to_obj(v) for k, v in data.items()})
-    if isinstance(data, list):
-        return [_to_obj(v) for v in data]
-    return data
-
-
-def _to_dict(ns: Any) -> Any:
-    """Recursively convert SimpleNamespace objects to dictionaries."""
-    if isinstance(ns, SimpleNamespace):
-        return {k: _to_dict(v) for k, v in vars(ns).items()}
-    if isinstance(ns, list):
-        return [_to_dict(v) for v in ns]
-    if isinstance(ns, tuple):
-        return tuple(_to_dict(v) for v in ns)
-    return ns
-
-
 async def delete_response(
     client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
 ) -> None:
@@ -844,14 +787,15 @@ def prepare_tools(registry: dict | None) -> list[dict]:
     return tools_out
 
 
-def build_responses_payload(chat_id: str) -> list[dict]:
+def assemble_responses_input(chat_id: str) -> list[dict]:
     """Convert WebUI chat history to Responses API input format."""
     logger.debug("Retrieving message history for chat_id=%s", chat_id)
     chat = Chats.get_chat_by_id(chat_id).chat
     msg_lookup = chat["history"]["messages"]
     current_id = chat["history"]["currentId"]
     thread = get_message_list(msg_lookup, current_id) or []
-    logger.debug(pretty_log_block(thread, "history_thread"))
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(pretty_log_block(thread, "history_thread"))
 
     input_items: list[dict] = []
     for m in thread:
@@ -916,8 +860,11 @@ def assemble_responses_payload(
     user_email: str | None,
 ) -> dict[str, Any]:
     """Combine chat history and parameters into a request payload."""
+    model = body.get("model", valves.MODEL_ID.split(",")[0])
+    if "." in str(model):
+        model = str(model).split(".", 1)[1]
     params = {
-        "model": valves.MODEL_ID,
+        "model": model,
         "tools": tools,
         "tool_choice": "auto" if tools else "none",
         "instructions": instructions,
@@ -930,13 +877,16 @@ def assemble_responses_payload(
         "truncation": "auto",
         "stream": True,
         "store": True,
-        "input": build_responses_payload(chat_id),
+        "input": assemble_responses_input(chat_id),
     }
 
-    if valves.REASON_EFFORT or valves.REASON_SUMMARY:
+    reasoning_effort = body.get("reasoning_effort", "none")
+    if model in REASONING_MODELS and (
+        reasoning_effort != "none" or valves.REASON_SUMMARY
+    ):
         params["reasoning"] = {}
-        if valves.REASON_EFFORT:
-            params["reasoning"]["effort"] = valves.REASON_EFFORT
+        if reasoning_effort != "none":
+            params["reasoning"]["effort"] = reasoning_effort
         if valves.REASON_SUMMARY:
             params["reasoning"]["summary"] = valves.REASON_SUMMARY
 
@@ -944,8 +894,51 @@ def assemble_responses_payload(
 
 
 def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
-    """Parse an SSE data payload into a ``ResponsesEvent``."""
+    """Parse an SSE data payload into a ``ResponsesEvent`` with minimal overhead."""
     payload = json.loads(data)
-    return ResponsesEvent(type=event_type or "message", **payload)
+
+    event_type = payload.get("type", event_type or "message")
+
+    item = payload.get("item")
+    if isinstance(item, dict):
+        item = SimpleNamespace(**item)
+    response = payload.get("response")
+    if isinstance(response, dict):
+        response = SimpleNamespace(**response)
+    annotation = payload.get("annotation")
+    if isinstance(annotation, dict):
+        annotation = SimpleNamespace(**annotation)
+
+    return ResponsesEvent(
+        type=event_type,
+        delta=payload.get("delta"),
+        text=payload.get("text"),
+        item_id=payload.get("item_id"),
+        item=item,
+        response=response,
+        annotation=annotation,
+    )
+
+
+async def execute_responses_tool_calls(
+    calls: list[SimpleNamespace],
+    registry: dict[str, Any],
+    log: logging.Logger | None = None,
+) -> list[Any]:
+    """Run tool calls asynchronously and return their results."""
+    tasks: list[asyncio.Task] = []
+    for call in calls:
+        entry = registry.get(call.name)
+        if entry is None:
+            tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
+        else:
+            args = json.loads(call.arguments or "{}")
+            tasks.append(asyncio.create_task(entry["callable"](**args)))
+    try:
+        return await asyncio.gather(*tasks)
+    except Exception as ex:  # pragma: no cover - log and return error results
+        if log:
+            log.error("Tool execution failed: %s", ex)
+        return [f"Error: {ex}"] * len(tasks)
 
 
