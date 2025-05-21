@@ -300,7 +300,6 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
 
-        content = ""
 
         for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
@@ -351,25 +350,20 @@ class Pipe:
                     if et == "response.reasoning_summary_part.added":
                         if not is_model_thinking:
                             is_model_thinking = True
-                            content += "<think>"
                             yield "<think>"
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        content += event.delta
                         yield event.delta
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        content += "\n\n---\n\n"
                         yield "\n\n---\n\n"
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            content += "</think>\n"
                             yield "</think>\n"
                         continue
                     if et == "response.output_text.delta":
-                        content += event.delta
                         yield event.delta
                         continue
                     if et == "response.output_text.done":
