@@ -562,7 +562,7 @@ class Pipe:
         await __event_emitter__(
             {
                 "type": "status",
-                "data": {"description": "✅ Tool phase complete", "done": True},
+                "data": {"description": "", "done": True},
             }
         )
 
