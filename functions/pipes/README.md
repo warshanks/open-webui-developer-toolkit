@@ -23,8 +23,3 @@ building the request payload, streaming Server-Sent Events (SSE), and executing
 tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `assemble_responses_payload`, `assemble_responses_input`, `stream_responses`,
 and `execute_responses_tool_calls`.
-
-The `openai_responses_api_pipeline.py` pipe exposes several **valves** that
-toggle features.  `INJECT_DATE` appends today's date to the system prompt while
-`INJECT_USER_INFO` inserts the requester's name, email, IP address, and browser
-details.
