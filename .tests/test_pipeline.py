@@ -617,6 +617,73 @@ async def test_function_call_output_persisted(dummy_chat):
     assert {"type": "function_call_output", "call_id": "c1", "output": "42"} in payload
 
 
+@pytest.mark.asyncio
+async def test_persist_tool_results_valve_off(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+    pipe.valves.PERSIST_TOOL_RESULTS = False
+
+    dummy_chat["history"] = {
+        "currentId": "u1",
+        "messages": {
+            "u1": {"role": "user", "content": [{"text": "hi"}], "parentId": None},
+            "m1": {"role": "assistant", "parentId": "u1"},
+        },
+    }
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(
+            type="response.output_item.added",
+            item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}"),
+        ),
+        types.SimpleNamespace(
+            type="response.output_item.done",
+            item=types.SimpleNamespace(type="function_call", name="t", call_id="c1", arguments="{}"),
+        ),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(*_a, **_kw):
+        for e in events:
+            yield e
+
+    tools = {"t": {"callable": AsyncMock(return_value="42")}}
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        async def emitter(evt: dict):
+            if evt.get("type") == "citation":
+                msgs = dummy_chat["history"].setdefault("messages", {})
+                m = msgs.setdefault("m1", {"role": "assistant"})
+                srcs = list(m.get("sources", []))
+                srcs.append(evt["data"])
+                m["sources"] = srcs
+        gen = pipe.pipe(
+            {},
+            {},
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            tools,
+        )
+        async for _ in gen:
+            pass
+    await pipe.on_shutdown()
+
+    payload = pipeline.assemble_responses_input("chat1")
+    assert {
+        "type": "function_call",
+        "call_id": "c1",
+        "name": "t",
+        "arguments": "{}",
+    } not in payload
+    assert not dummy_chat["history"]["messages"]["m1"]["sources"][0].get("_fc")
+
+
 def test_pipes_returns_multiple_models(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()

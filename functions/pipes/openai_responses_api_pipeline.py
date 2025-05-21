@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.15
+version: 1.6.16
 license: MIT
 requirements: httpx
 
@@ -21,7 +21,7 @@ requirements: httpx
    - True parallel tool calling support (i.e., gather multiple tool calls within a single turn and execute in parallel)
    - Live status updates showing running tools.
    - Tool outputs captured as citations for traceability & transparancy.
-   - Persistent tool results (`function_call`/`function_call_output`) in conversation history.
+   - Persistent tool results (`function_call`/`function_call_output`) in conversation history (valve-controlled).
    - Automatically enables 'Native tool calling' in OpenWebUI model parm (if not set already).
    
 ------------------------------------------------------------------------------
@@ -34,6 +34,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.16: Valve to control persisting tool results in chat history.
 • 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
 • 1.6.11: Disabled HTTP/2 to prevent stream stalls; optimized connection pooling.
 • 1.6.10: Switched streaming from OpenAI SDK to direct HTTP via httpx; lightweight SSE parser added.
@@ -141,6 +142,14 @@ class Pipe:
             ),
         )  # Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses
 
+        PERSIST_TOOL_RESULTS: bool = Field(
+            default=True,
+            description=(
+                "Persist tool call results across conversation turns. When disabled,"
+                " tool results are not stored in the chat history."
+            ),
+        )
+
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
             description=(
@@ -176,6 +185,7 @@ class Pipe:
     class UserValves(BaseModel):
         CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
         ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
+        PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -425,27 +435,26 @@ class Pipe:
                     }
                     temp_input.insert(0, function_call_output)
                     if __event_emitter__:
-                        citation_event = {
-                            "type": "citation",
-                            "data": {
-                                "document": [f"{call.name}({call.arguments})\n\n{result}"],
-                                "metadata": [
-                                    {
-                                        "date_accessed": datetime.now().isoformat(),
-                                        "source": call.name.replace("_", " ").title(),
-                                    }
-                                ],
-                                "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
-                                "_fc": [
-                                    {
-                                        "call_id": call.call_id,
-                                        "name": call.name,
-                                        "arguments": call.arguments,
-                                        "output": str(result),
-                                    }
-                                ],
-                            },
+                        citation_data = {
+                            "document": [f"{call.name}({call.arguments})\n\n{result}"],
+                            "metadata": [
+                                {
+                                    "date_accessed": datetime.now().isoformat(),
+                                    "source": call.name.replace("_", " ").title(),
+                                }
+                            ],
+                            "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
                         }
+                        if self.valves.PERSIST_TOOL_RESULTS:
+                            citation_data["_fc"] = [
+                                {
+                                    "call_id": call.call_id,
+                                    "name": call.name,
+                                    "arguments": call.arguments,
+                                    "output": str(result),
+                                }
+                            ]
+                        citation_event = {"type": "citation", "data": citation_data}
                         await __event_emitter__(citation_event)
                 continue
 
