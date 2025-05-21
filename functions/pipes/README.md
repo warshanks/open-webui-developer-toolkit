@@ -23,3 +23,7 @@ building the request payload, streaming Server-Sent Events (SSE), and executing
 tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `assemble_responses_payload`, `assemble_responses_input`, `stream_responses`,
 and `execute_responses_tool_calls`.
+
+Version 1.6.17 introduces an optional **smooth streaming** valve
+(`SMOOTH_STREAM_MS`) to buffer SSE token deltas and emit them at a
+fixed interval. Set the value to `0` to disable buffering.
