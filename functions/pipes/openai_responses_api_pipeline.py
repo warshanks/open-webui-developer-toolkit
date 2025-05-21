@@ -240,6 +240,7 @@ class Pipe:
         __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],  # unused
         __files__: list[dict[str, Any]],
         __metadata__: dict[str, Any],
+        __tools__: dict[str, Any],
     ) -> AsyncIterator[str]:
         """
         Stream responses from OpenAI and handle tool calls.
@@ -271,7 +272,7 @@ class Pipe:
         if "." in str(model):
             model = str(model).split(".", 1)[1]
 
-        tools = prepare_tools(body.get("tools"))
+        tools = prepare_tools(__tools__)
         if self.valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
             tools.append(
                 {
@@ -425,7 +426,7 @@ class Pipe:
                 break
 
             if pending_calls:
-                results = await self._execute_tool_calls(pending_calls, body.get("tools", {}))
+                results = await self._execute_tool_calls(pending_calls, __tools__)
                 for call, result in zip(pending_calls, results):
                     function_call_output = {
                         "type": "function_call_output",
