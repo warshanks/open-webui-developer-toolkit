@@ -224,6 +224,7 @@ class Pipe:
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         self.log.handlers = [handler, mem_handler]
         self.log.setLevel(logging.INFO)
+        self._last_status: tuple[str, bool] | None = None
 
     def pipes(self):
         """Return models exposed by this pipe."""
@@ -254,6 +255,7 @@ class Pipe:
         Stream responses from OpenAI and handle tool calls.
         """
         start_ns = time.perf_counter_ns()
+        self._last_status = None
         self._debug_logs.clear()
         self._apply_user_overrides(__user__.get("valves"))
 
@@ -384,48 +386,24 @@ class Pipe:
                     if et == "response.output_item.added":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": f"🔧 Running {item.name}...",
-                                        "done": False,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, f"🔧 Running {item.name}..."
                             )
                         elif getattr(item, "type", None) == "web_search_call":
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": "🔍 Searching the internet...",
-                                        "done": False,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, "🔍 Searching the internet..."
                             )
                         continue
                     if et == "response.output_item.done":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": f"🔧 Running {item.name}...",
-                                        "done": True,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, f"🔧 Running {item.name}...", done=True
                             )
                         elif getattr(item, "type", None) == "web_search_call":
-                            await __event_emitter__(
-                                {
-                                    "type": "status",
-                                    "data": {
-                                        "description": "🔍 Searching the internet...",
-                                        "done": True,
-                                    },
-                                }
+                            await self._emit_status(
+                                __event_emitter__, "🔍 Searching the internet...", done=True
                             )
                         continue
                     if et == "response.output_text.annotation.added":
@@ -559,12 +537,7 @@ class Pipe:
                     )
             break
 
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {"description": "", "done": True},
-            }
-        )
+        await self._emit_status(__event_emitter__, "", done=True)
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
@@ -639,6 +612,20 @@ class Pipe:
         except Exception as ex:
             self.log.error("Tool execution failed: %s", ex)
             return [f"Error: {ex}"] * len(tasks)
+
+    async def _emit_status(
+        self,
+        emitter: Callable[[dict[str, Any]], Awaitable[None]],
+        description: str,
+        *,
+        done: bool = False,
+    ) -> None:
+        """Emit a status update if it differs from the last one."""
+        current = (description, done)
+        if self._last_status == current:
+            return
+        self._last_status = current
+        await emitter({"type": "status", "data": {"description": description, "done": done}})
 
     def _apply_user_overrides(self, user_valves: BaseModel | None) -> None:
         """Override valve settings with user-provided values."""
