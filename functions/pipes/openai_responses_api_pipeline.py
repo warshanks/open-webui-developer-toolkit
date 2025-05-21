@@ -264,7 +264,6 @@ class Pipe:
 
         client = await self.get_http_client()
         chat_id = __metadata__["chat_id"]
-        input_messages = assemble_responses_input(chat_id)
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
 
@@ -296,7 +295,6 @@ class Pipe:
             instructions,
             tools,
             __user__.get("email"),
-            input_messages,
         )
         request_params = base_params
         usage_total: dict[str, Any] = {}
@@ -308,9 +306,7 @@ class Pipe:
         for loop_count in range(1, self.valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug("Loop iteration #%d", loop_count)
-            if loop_count == 1:
-                request_params.update({"input": input_messages})
-            else:
+            if loop_count > 1:
                 request_params.update(
                     {
                         "previous_response_id": last_response_id,
