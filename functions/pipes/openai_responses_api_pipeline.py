@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.13
+version: 1.6.14
 license: MIT
 requirements: httpx
 
@@ -711,18 +711,20 @@ class Pipe:
 
     @staticmethod
     def _update_usage(total: dict[str, Any], current: dict[str, Any], loops: int) -> None:
-        """Aggregate token usage stats."""
-        current = to_dict(current)
-        current["loops"] = loops
+        """Aggregate token usage stats without unnecessary conversions."""
+        if isinstance(current, SimpleNamespace):
+            current = vars(current)
+        current = current or {}
         for key, value in current.items():
-            if key == "loops":
-                continue
-            if isinstance(value, int):
+            if isinstance(value, SimpleNamespace):
+                value = vars(value)
+            if isinstance(value, (int, float)):
                 total[key] = total.get(key, 0) + value
             elif isinstance(value, dict):
-                total.setdefault(key, {})
+                inner = total.setdefault(key, {})
                 for subkey, subval in value.items():
-                    total[key][subkey] = total[key].get(subkey, 0) + subval
+                    if isinstance(subval, (int, float)):
+                        inner[subkey] = inner.get(subkey, 0) + subval
         total["loops"] = loops
 
 
@@ -761,28 +763,6 @@ async def stream_responses(
                 event_type = line[len("event:"):].strip()
             elif line.startswith("data:"):
                 data_buf.append(line[len("data:"):].strip())
-
-
-def to_obj(data: Any) -> Any:
-    """Recursively convert dictionaries to SimpleNamespace objects."""
-    if isinstance(data, dict):
-        return SimpleNamespace(**{k: to_obj(v) for k, v in data.items()})
-    if isinstance(data, list):
-        return [to_obj(v) for v in data]
-    return data
-
-
-def to_dict(ns: Any) -> Any:
-    """Recursively convert SimpleNamespace objects to dictionaries."""
-    if isinstance(ns, SimpleNamespace):
-        return {k: to_dict(v) for k, v in vars(ns).items()}
-    if isinstance(ns, list):
-        return [to_dict(v) for v in ns]
-    if isinstance(ns, tuple):
-        return tuple(to_dict(v) for v in ns)
-    return ns
-
-
 async def delete_response(
     client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
 ) -> None:
@@ -922,8 +902,8 @@ def assemble_responses_payload(
 
 def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
     """Parse an SSE data payload into a ``ResponsesEvent`` with minimal overhead."""
-
-    payload = json.loads(data)
+    loads = json.loads
+    payload = loads(data)
     if "response" in payload and isinstance(payload["response"], dict):
         payload["response"] = SimpleNamespace(**payload["response"])
     if "item" in payload and isinstance(payload["item"], dict):
