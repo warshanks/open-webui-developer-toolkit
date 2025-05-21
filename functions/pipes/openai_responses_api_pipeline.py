@@ -272,14 +272,18 @@ class Pipe:
         if "." in str(model):
             model = str(model).split(".", 1)[1]
 
-        tools = prepare_tools(__tools__)
-        if self.valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
-            tools.append(
-                {
-                    "type": "web_search",
-                    "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
-                }
-            )
+        tools: list[dict[str, Any]] | None
+        if model in NATIVE_TOOL_UNSUPPORTED_MODELS:
+            tools = None
+        else:
+            tools = prepare_tools(__tools__)
+            if self.valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
+                tools.append(
+                    {
+                        "type": "web_search",
+                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+                    }
+                )
 
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(pretty_log_block(tools, "tools"))
@@ -850,11 +854,14 @@ def assemble_responses_payload(
     chat_id: str,
     body: dict[str, Any],
     instructions: str,
-    tools: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
     user_email: str | None,
     input_messages: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """Combine chat history and parameters into a request payload."""
+    """Combine chat history and parameters into a request payload.
+
+    ``tools`` may be ``None`` to omit tool-related fields entirely.
+    """
     model = body.get("model", valves.MODEL_ID.split(",")[0])
     if "." in str(model):
         model = str(model).split(".", 1)[1]
@@ -863,8 +870,6 @@ def assemble_responses_payload(
 
     params = {
         "model": model,
-        "tools": tools,
-        "tool_choice": "auto" if tools else "none",
         "instructions": instructions,
         "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
         "max_output_tokens": body.get("max_tokens"),
@@ -877,6 +882,10 @@ def assemble_responses_payload(
         "store": True,
         "input": input_messages,
     }
+
+    if tools is not None:
+        params["tools"] = tools
+        params["tool_choice"] = "auto" if tools else "none"
 
     reasoning_effort = body.get("reasoning_effort", "none")
     if model in REASONING_MODELS and (
