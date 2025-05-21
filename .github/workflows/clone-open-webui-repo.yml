@@ -28,7 +28,7 @@ jobs:
           rm -rf external/open-webui/.git   # keep files, drop their .git dir
 
       # 3. Commit & push only when there’s a change
-      - name: Commit if needed
+      - name: Commit if needed (ignore .gitignore)
         env:
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
@@ -36,10 +36,14 @@ jobs:
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           set -euo pipefail
-          git add -A
+
+          # Force-add external/open-webui to ignore any .gitignore rules
+          git add -f external/open-webui
+
           if git diff --cached --quiet ; then
             echo "No updates – nothing to commit."
             exit 0
           fi
+
           git commit -m "chore: weekly OpenWebUI snapshot (auto-sync)"
           git push origin HEAD
