@@ -11,6 +11,13 @@ from datetime import datetime
 import re
 from pydantic import BaseModel
 
+WEB_SEARCH_MODELS = {
+    "openai_responses.gpt-4.1",
+    "openai_responses.gpt-4.1-mini",
+    "openai_responses.gpt-4o",
+    "openai_responses.gpt-4o-mini",
+}
+
 
 class Filter:
     class Valves(BaseModel):
@@ -38,6 +45,18 @@ class Filter:
         __metadata__: Optional[dict] = None,
     ) -> dict:
         """Modify the request body when the toggle is active."""
+
+        model = body.get("model")
+        if model in WEB_SEARCH_MODELS:
+            tools = body.setdefault("tools", [])
+            if not any(t.get("type") == "web_search" for t in tools):
+                tools.append(
+                    {
+                        "type": "web_search",
+                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+                    }
+                )
+            return body
 
         features = body.setdefault("features", {})
         # \U0001f9e0 Override native search and explicitly set GPT-4o route
