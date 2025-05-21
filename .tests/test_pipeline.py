@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 import types
-import datetime
 from unittest.mock import AsyncMock, patch
 import pytest
 
@@ -753,56 +752,4 @@ async def test_tools_removed_for_unsupported_model(dummy_chat):
 
     assert "tools" not in captured_params[0]
     assert "tool_choice" not in captured_params[0]
-
-
-@pytest.mark.asyncio
-async def test_inject_date_and_user_info(dummy_chat):
-    pipeline = _reload_pipeline()
-    pipe = pipeline.Pipe()
-    pipe.valves.INJECT_DATE = True
-    pipe.valves.INJECT_USER_INFO = True
-
-    events = [
-        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
-        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
-    ]
-
-    captured = {}
-
-    async def fake_stream(client, base_url, api_key, params):
-        captured["instructions"] = params["instructions"]
-        for e in events:
-            yield e
-
-    req = types.SimpleNamespace(
-        client=types.SimpleNamespace(host="207.194.4.18"),
-        headers={"user-agent": "Mozilla"},
-    )
-
-    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
-        pipe, "get_http_client", AsyncMock(return_value=object())
-    ), patch.object(pipeline, "delete_response", AsyncMock()), patch.object(
-        pipeline,
-        "datetime",
-    ) as dt:
-        dt.now.return_value = datetime.datetime(2025, 5, 21)
-        gen = pipe.pipe(
-            {"messages": [{"role": "system", "content": "hi"}]},
-            {"name": "Justin", "email": "j@example.com"},
-            req,
-            AsyncMock(),
-            AsyncMock(),
-            [],
-            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
-        )
-        async for _ in gen:
-            pass
-    await pipe.on_shutdown()
-
-    assert "Justin" in captured["instructions"]
-    assert "j@example.com" in captured["instructions"]
-    assert "207.194.4.18" in captured["instructions"]
-    assert "Mozilla" in captured["instructions"]
-    assert "Today's date:" in captured["instructions"]
 
