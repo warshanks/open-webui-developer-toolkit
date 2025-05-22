@@ -103,6 +103,18 @@ class ResponsesEvent:
     annotation: Any | None = None
 
 
+class _MemHandler(logging.Handler):
+    """In-memory log handler for per-request debug capture."""
+
+    def __init__(self, buf: list[str]) -> None:
+        super().__init__(logging.DEBUG)
+        self.buf = buf
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
+        msg = self.format(record)
+        self.buf.append(msg)
+
+
 class Pipe:
     """Pipeline to interact with the OpenAI Responses API."""
     class Valves(BaseModel):
@@ -243,22 +255,8 @@ class Pipe:
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"))
         handler.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True)
-        self._debug_logs: list[str] = []
-
-        class _MemHandler(logging.Handler):
-            def __init__(self, buf: list[str]) -> None:
-                super().__init__(logging.DEBUG)
-                self.buf = buf
-
-            def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
-                msg = self.format(record)
-                self.buf.append(msg)
-
-        mem_handler = _MemHandler(self._debug_logs)
-        mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
-        self.log.handlers = [handler, mem_handler]
+        self.log.handlers = [handler]
         self.log.setLevel(logging.INFO)
-        self._last_status: tuple[str, bool] | None = None
         self._ip_cache: dict[str, str] = {}
         self._ip_tasks: dict[str, asyncio.Task] = {}
 
@@ -291,8 +289,11 @@ class Pipe:
         Stream responses from OpenAI and handle tool calls.
         """
         start_ns = time.perf_counter_ns()
-        self._last_status = None
-        self._debug_logs.clear()
+        last_status: list[tuple[str, bool] | None] = [None]
+        debug_logs: list[str] = []
+        mem_handler = _MemHandler(debug_logs)
+        mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+        self.log.addHandler(mem_handler)
         valves = self._apply_user_overrides(__user__.get("valves"))
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
@@ -448,11 +449,15 @@ class Pipe:
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             await self._emit_status(
-                                __event_emitter__, f"🔧 Running {item.name}..."
+                                __event_emitter__,
+                                f"🔧 Running {item.name}...",
+                                last_status,
                             )
                         elif getattr(item, "type", None) == "web_search_call":
                             await self._emit_status(
-                                __event_emitter__, "🔍 Searching the internet..."
+                                __event_emitter__,
+                                "🔍 Searching the internet...",
+                                last_status,
                             )
                         continue
                     if et == "response.output_item.done":
@@ -460,11 +465,17 @@ class Pipe:
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
                             await self._emit_status(
-                                __event_emitter__, f"🔧 Running {item.name}...", done=True
+                                __event_emitter__,
+                                f"🔧 Running {item.name}...",
+                                last_status,
+                                done=True,
                             )
                         elif getattr(item, "type", None) == "web_search_call":
                             await self._emit_status(
-                                __event_emitter__, "🔍 Searching the internet...", done=True
+                                __event_emitter__,
+                                "🔍 Searching the internet...",
+                                last_status,
+                                done=True,
                             )
                         continue
                     if et == "response.output_text.annotation.added":
@@ -580,7 +591,7 @@ class Pipe:
                     )
             break
 
-        await self._emit_status(__event_emitter__, "", done=True)
+        await self._emit_status(__event_emitter__, "", last_status, done=True)
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
@@ -622,12 +633,12 @@ class Pipe:
             except Exception as ex:  # pragma: no cover - logging only
                 self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
 
-        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs and __event_emitter__:
+        if self.log.isEnabledFor(logging.DEBUG) and debug_logs and __event_emitter__:
             await __event_emitter__(
                 {
                     "type": "citation",
                     "data": {
-                        "document": ["\n".join(self._debug_logs)],
+                        "document": ["\n".join(debug_logs)],
                         "metadata": [
                             {
                                 "date_accessed": datetime.now().isoformat(),
@@ -639,6 +650,8 @@ class Pipe:
                 }
             )
 
+        self.log.removeHandler(mem_handler)
+
     async def _execute_tool_calls(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
@@ -649,6 +662,7 @@ class Pipe:
         self,
         emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
         description: str,
+        last_status: list[tuple[str, bool] | None],
         *,
         done: bool = False,
     ) -> None:
@@ -656,9 +670,9 @@ class Pipe:
         if emitter is None:
             return
         current = (description, done)
-        if self._last_status == current:
+        if last_status[0] == current:
             return
-        self._last_status = current
+        last_status[0] = current
         await emitter({"type": "status", "data": {"description": description, "done": done}})
 
     def _apply_user_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
