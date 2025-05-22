@@ -540,64 +540,32 @@ class Pipe:
             # Clean up the server-side state unless the user opted to keep it
             # TODO Ensure that the stored response is deleted.  Doesn't seem to work with LiteLLM Response API.
             remaining = valves.MAX_TOOL_CALLS - loop_count
+            thought = ""
             if loop_count == valves.MAX_TOOL_CALLS:
                 request_params["tool_choice"] = "none"
-                entry = {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": f"[Internal thought] Final iteration ({loop_count}/{valves.MAX_TOOL_CALLS}). Tool-calling phase is over; I'll produce my final answer now.",
-                        }
-                    ],
-                }
-                temp_input.append(entry)
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                thought = (
+                    f"[Internal thought] Final iteration ({loop_count}/{valves.MAX_TOOL_CALLS}). "
+                    "Tool-calling phase is over; I'll produce my final answer now."
+                )
             elif loop_count == 2 and valves.MAX_TOOL_CALLS > 2:
-                entry = {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": f"[Internal thought] I've just received the initial tool results from iteration 1. I'm now continuing an iterative tool interaction with up to {valves.MAX_TOOL_CALLS} iterations.",
-                        }
-                    ],
-                }
-                temp_input.append(entry)
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                thought = (
+                    f"[Internal thought] I've just received the initial tool results from iteration 1. "
+                    f"I'm now continuing an iterative tool interaction with up to {valves.MAX_TOOL_CALLS} iterations."
+                )
             elif remaining == 1:
-                entry = {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS}. Next iteration is answer-only; any remaining tool calls must happen now.",
-                        }
-                    ],
-                }
-                temp_input.append(entry)
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                thought = (
+                    f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS}. "
+                    "Next iteration is answer-only; any remaining tool calls must happen now."
+                )
             elif loop_count > 2:
+                thought = (
+                    f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS} "
+                    f"({remaining} remaining, no action needed)."
+                )
+            if thought:
                 entry = {
                     "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS} ({remaining} remaining, no action needed).",
-                        }
-                    ],
+                    "content": [{"type": "output_text", "text": thought}],
                 }
                 temp_input.append(entry)
                 if self.log.isEnabledFor(logging.DEBUG):
