@@ -212,6 +212,26 @@ async def test_build_params_drops_reasoning_for_base_model(dummy_chat):
 
 
 @pytest.mark.asyncio
+async def test_high_model_variants(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+    body = {
+        "model": "openai_responses.o3-mini-high",
+        "reasoning_effort": "low",
+    }
+    params = await pipeline.prepare_payload(
+        pipe.valves,
+        body,
+        "ins",
+        [],
+        "me@example.com",
+        chat_id="chat1",
+    )
+    assert params["model"] == "o3-mini"
+    assert params["reasoning"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
 async def test_assemble_payload_omits_tool_fields_when_none(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
