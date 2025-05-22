@@ -106,6 +106,11 @@ class Filter:
 
         self._add_web_search_tool(body, __tools__)
 
+        # GPT-4o Search Preview doesn't support normal tool calling. Ensure the
+        # request payload clears the ``tools`` field so any previously
+        # configured tools are ignored by the pipeline.
+        body["tools"] = None
+
         return body
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
