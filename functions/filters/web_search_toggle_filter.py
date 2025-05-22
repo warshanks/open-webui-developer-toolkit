@@ -55,17 +55,6 @@ class Filter:
                 reg_tools.append(entry)
 
 
-    def _enable_search_preview(self, body: dict, timezone: str) -> None:
-        """Switch the request to GPT-4o Search Preview."""
-        body["model"] = "gpt-4o-search-preview"
-        body["web_search_options"] = {
-            "user_location": {
-                "type": "approximate",
-                "approximate": {"country": "CA", "timezone": timezone},
-            },
-            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
-        }
-
     async def inlet(
         self,
         body: dict,
@@ -101,8 +90,14 @@ class Filter:
         timezone = metadata.get("variables", {}).get(
             "{{CURRENT_TIMEZONE}}", "America/Vancouver"
         )
-
-        self._enable_search_preview(body, timezone)
+        body["model"] = "gpt-4o-search-preview"
+        body["web_search_options"] = {
+            "user_location": {
+                "type": "approximate",
+                "approximate": {"country": "CA", "timezone": timezone},
+            },
+            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
+        }
 
         self._add_web_search_tool(body, __tools__)
 
@@ -116,40 +111,37 @@ class Filter:
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
         """Emit citations from the response and a final status update."""
 
-        model = body.get("model")
-        if model not in WEB_SEARCH_MODELS:
-            last_msg = (body.get("messages") or [])[-1] if body.get("messages") else None
-            content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
-    
-            if isinstance(content_blocks, list):
-                text = " ".join(
-                    b.get("text", str(b)) if isinstance(b, dict) else str(b)
-                    for b in content_blocks
-                )
-            else:
-                text = str(content_blocks or "")
-    
-            urls = self._extract_urls(text)
-    
-            for url in urls:
-                await self._emit_citation(__event_emitter__, url)
-    
-            if urls:
-                msg = f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
-            else:
-                msg = "Search not used — answer based on model's internal knowledge."
-    
-            await self._emit_status(__event_emitter__, msg, done=True)
-
+        if body.get("model") in WEB_SEARCH_MODELS:
             return body
+
+        messages = body.get("messages") or []
+        last_msg = messages[-1] if messages else None
+        content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
+
+        if isinstance(content_blocks, list):
+            text = " ".join(
+                b.get("text", str(b)) if isinstance(b, dict) else str(b)
+                for b in content_blocks
+            )
+        else:
+            text = str(content_blocks or "")
+
+        urls = self._extract_urls(text)
+        for url in urls:
+            await self._emit_citation(__event_emitter__, url)
+
+        msg = (
+            f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
+            if urls
+            else "Search not used — answer based on model's internal knowledge."
+        )
+        await self._emit_status(__event_emitter__, msg, done=True)
 
         return body
 
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
-        pattern = r"https?://[^\s)]+(?:\?|&)utm_source=openai[^\s)]*"
-        matches = re.findall(pattern, text)
-        return matches
+        return re.findall(r"https?://[^\s)]+(?:\?|&)utm_source=openai[^\s)]*", text)
 
     @staticmethod
     async def _emit_citation(emitter: callable | None, url: str) -> None:
