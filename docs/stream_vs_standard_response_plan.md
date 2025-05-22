@@ -12,7 +12,9 @@ to extend.
 1. **Introduce two helper methods**:
    - `_streaming_response(...)` – implements the current streaming loop.
    - `_non_streaming_response(...)` – wraps the existing `get_responses()` call
-     and yields the final text.
+     and yields the final text. It must also mirror the tool call loop so
+     responses containing `function_call` items are processed the same way as in
+     streaming mode.
 2. **Switch `pipe()`** to check `body.get("stream", False)` and delegate to the
    appropriate helper.
 3. Each helper will receive the prepared request parameters, http client and
@@ -29,6 +31,8 @@ paths for easier maintenance.
    - call `get_responses()`
    - emit usage stats and completion events
    - yield the final assistant text when available.
+   - detect any `function_call` items and run them using the same loop logic as
+     streaming mode so tool results are embedded before returning.
 2. Move the current streaming loop into
    `Pipe._stream_response(...)`. It retains the SSE handling and tool
    call logic unchanged.
@@ -81,5 +85,6 @@ The response body contains the final `output` array and a `usage` object.
 ## Implementation Tips
 1. Keep the new helper methods private (`_stream_response` and `_non_stream_response`).
 2. Reuse existing utilities: `get_responses`, `stream_responses` and `extract_response_text`.
-3. Update `Pipe.pipe()` to only set up state then delegate to the helper based on `stream`.
-4. Ensure usage stats aggregation and event emission remain unchanged.
+3. Factor out any common tool handling into a helper so streaming and non-streaming share the same logic for executing and recording function calls.
+4. Update `Pipe.pipe()` to only set up state then delegate to the helper based on `stream`.
+5. Ensure usage stats aggregation and event emission remain unchanged.
