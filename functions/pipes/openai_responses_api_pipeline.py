@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.18
+version: 1.6.19
 license: MIT
 requirements: httpx
 
@@ -35,6 +35,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.19: Added support for 'o3-mini-high' and 'o4-mini-high' model aliases.
 • 1.6.18: Compatibility fixes for WebUI task models (optional chat_id and emitter).
 • 1.6.17: Valves to inject the current date and user/device context into the system prompt.
 • 1.6.16: Valve to control persisting tool results in chat history.
@@ -124,6 +125,8 @@ class Pipe:
             default="gpt-4.1",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI."
+                " Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map"
+                " to 'o3-mini' and 'o4-mini' with reasoning effort forced to high."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-model
 
@@ -1011,6 +1014,10 @@ async def prepare_payload(
 ) -> dict[str, Any]:
     """Return the JSON payload for the Responses API."""
     model = (body.get("model") or valves.MODEL_ID.split(",")[0]).split(".", 1)[-1]
+    reasoning_effort = body.get("reasoning_effort", "none")
+    if model in {"o3-mini-high", "o4-mini-high"}:
+        model = model.replace("-high", "")
+        reasoning_effort = "high"
     if chat_history is None:
         if chat_id:
             chat_history = await load_chat_input(chat_id)
@@ -1036,7 +1043,6 @@ async def prepare_payload(
         params["tools"] = tools
         params["tool_choice"] = "auto" if tools else "none"
 
-    reasoning_effort = body.get("reasoning_effort", "none")
     if model in REASONING_MODELS and (
         reasoning_effort != "none" or valves.REASON_SUMMARY
     ):
