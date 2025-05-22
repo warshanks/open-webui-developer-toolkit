@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.18
+version: 1.6.19
 license: MIT
 requirements: httpx
 
@@ -35,6 +35,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.19: Split streaming and standard response handling into helper methods.
 • 1.6.18: Compatibility fixes for WebUI task models (optional chat_id and emitter).
 • 1.6.17: Valves to inject the current date and user/device context into the system prompt.
 • 1.6.16: Valve to control persisting tool results in chat history.
@@ -364,43 +365,73 @@ class Pipe:
         )
         request_params = base_params
         usage_total: dict[str, Any] = {}
-        last_response_id = None
+
+        responder = self._stream_response if body.get("stream", False) else self._non_stream_response
+        async for chunk in responder(
+            client,
+            request_params,
+            valves,
+            __event_emitter__,
+            __tools__,
+            __metadata__,
+            start_ns,
+            usage_total,
+        ):
+            yield chunk
+
+    async def _non_stream_response(
+        self,
+        client: httpx.AsyncClient,
+        params: dict[str, Any],
+        valves: "Pipe.Valves",
+        emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        _tools: dict[str, Any],
+        metadata: dict[str, Any],
+        start_ns: int,
+        usage_total: dict[str, Any],
+    ) -> AsyncIterator[str]:
+        response = await get_responses(client, valves.BASE_URL, valves.API_KEY, params)
+        text = extract_response_text(response)
+        if text:
+            yield text
+        if response.get("usage"):
+            self._update_usage(usage_total, response["usage"], 1)
+        await self._emit_status(emitter, "", done=True)
+        self.log.info(
+            "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
+            metadata.get("chat_id"),
+            (time.perf_counter_ns() - start_ns) / 1e6,
+            usage_total.get("loops", 1),
+            usage_total.get("input_tokens", 0),
+            usage_total.get("output_tokens", 0),
+            usage_total.get("total_tokens", 0),
+        )
+        if usage_total and emitter:
+            await emitter({"type": "chat:completion", "data": {"usage": usage_total}})
+        if emitter:
+            await emitter({"type": "chat:completion", "data": {"done": True}})
+
+    async def _stream_response(
+        self,
+        client: httpx.AsyncClient,
+        params: dict[str, Any],
+        valves: "Pipe.Valves",
+        emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        tools: dict[str, Any],
+        metadata: dict[str, Any],
+        start_ns: int,
+        usage_total: dict[str, Any],
+    ) -> AsyncIterator[str]:
+        last_response_id: str | None = None
         cleanup_ids: list[str] = []
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
-
-        if not body.get("stream", True):
-            response = await get_responses(
-                client, valves.BASE_URL, valves.API_KEY, request_params
-            )
-            text = extract_response_text(response)
-            if text:
-                yield text
-            if response.get("usage"):
-                self._update_usage(usage_total, response["usage"], 1)
-            await self._emit_status(__event_emitter__, "", done=True)
-            self.log.info(
-                "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
-                __metadata__["chat_id"],
-                (time.perf_counter_ns() - start_ns) / 1e6,
-                usage_total.get("loops", 1),
-                usage_total.get("input_tokens", 0),
-                usage_total.get("output_tokens", 0),
-                usage_total.get("total_tokens", 0),
-            )
-            if usage_total and __event_emitter__:
-                await __event_emitter__(
-                    {"type": "chat:completion", "data": {"usage": usage_total}}
-                )
-            if __event_emitter__:
-                await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
-            return
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug("Loop iteration #%d", loop_count)
             if loop_count > 1:
-                request_params.update(
+                params.update(
                     {
                         "previous_response_id": last_response_id,
                         "input": temp_input,
@@ -408,18 +439,8 @@ class Pipe:
                 )
                 temp_input = []
             if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug(
-                    pretty_log_block(
-                        request_params.get("input", []),
-                        f"turn_input_{loop_count}",
-                    )
-                )
-                self.log.debug(
-                    pretty_log_block(
-                        request_params,
-                        f"openai_request_params_{loop_count}",
-                    )
-                )
+                self.log.debug(pretty_log_block(params.get("input", []), f"turn_input_{loop_count}"))
+                self.log.debug(pretty_log_block(params, f"openai_request_params_{loop_count}"))
 
             try:
                 pending_calls: list[SimpleNamespace] = []
@@ -429,7 +450,7 @@ class Pipe:
                     client,
                     valves.BASE_URL,
                     valves.API_KEY,
-                    request_params,
+                    params,
                 ):
                     et = event.type
                     if self.log.isEnabledFor(logging.DEBUG):
@@ -463,30 +484,21 @@ class Pipe:
                         yield event.delta
                         continue
                     if et == "response.output_text.done":
-                        # This delta marks the end of the current output block.
                         continue
                     if et == "response.output_item.added":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
-                            await self._emit_status(
-                                __event_emitter__, f"🔧 Running {item.name}..."
-                            )
+                            await self._emit_status(emitter, f"🔧 Running {item.name}...")
                         elif getattr(item, "type", None) == "web_search_call":
-                            await self._emit_status(
-                                __event_emitter__, "🔍 Searching the internet..."
-                            )
+                            await self._emit_status(emitter, "🔍 Searching the internet...")
                         continue
                     if et == "response.output_item.done":
                         item = getattr(event, "item", None)
                         if getattr(item, "type", None) == "function_call":
                             pending_calls.append(item)
-                            await self._emit_status(
-                                __event_emitter__, f"🔧 Running {item.name}...", done=True
-                            )
+                            await self._emit_status(emitter, f"🔧 Running {item.name}...", done=True)
                         elif getattr(item, "type", None) == "web_search_call":
-                            await self._emit_status(
-                                __event_emitter__, "🔍 Searching the internet...", done=True
-                            )
+                            await self._emit_status(emitter, "🔍 Searching the internet...", done=True)
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(getattr(event, "annotation", ""))
@@ -495,8 +507,8 @@ class Pipe:
                         title = title_m.group(1) if title_m else "Unknown Title"
                         url = url_m.group(1) if url_m else ""
                         url = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
-                        if __event_emitter__:
-                            await __event_emitter__(
+                        if emitter:
+                            await emitter(
                                 {
                                     "type": "citation",
                                     "data": {
@@ -514,14 +526,12 @@ class Pipe:
                         continue
                     if et == "response.completed":
                         if event.response.usage:
-                            self._update_usage(
-                                usage_total, event.response.usage, loop_count
-                            )
+                            self._update_usage(usage_total, event.response.usage, loop_count)
                         continue
             except Exception as ex:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
-                if __event_emitter__:
-                    await __event_emitter__(
+                if emitter:
+                    await emitter(
                         {
                             "type": "message",
                             "data": {
@@ -532,7 +542,7 @@ class Pipe:
                 break
 
             if pending_calls:
-                results = await self._execute_tool_calls(pending_calls, __tools__)
+                results = await self._execute_tool_calls(pending_calls, tools)
                 for call, result in zip(pending_calls, results):
                     function_call_output = {
                         "type": "function_call_output",
@@ -540,7 +550,7 @@ class Pipe:
                         "output": str(result),
                     }
                     temp_input.insert(0, function_call_output)
-                    if __event_emitter__:
+                    if emitter:
                         citation_data = {
                             "document": [f"{call.name}({call.arguments})\n\n{result}"],
                             "metadata": [
@@ -561,14 +571,12 @@ class Pipe:
                                 }
                             ]
                         citation_event = {"type": "citation", "data": citation_data}
-                        await __event_emitter__(citation_event)
+                        await emitter(citation_event)
                 continue
 
-            # Clean up the server-side state unless the user opted to keep it
-            # TODO Ensure that the stored response is deleted.  Doesn't seem to work with LiteLLM Response API.
             remaining = valves.MAX_TOOL_CALLS - loop_count
             if loop_count == valves.MAX_TOOL_CALLS:
-                request_params["tool_choice"] = "none"
+                params["tool_choice"] = "none"
                 entry = {
                     "role": "assistant",
                     "content": [
@@ -580,10 +588,7 @@ class Pipe:
                 }
                 temp_input.append(entry)
                 if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                    self.log.debug("Appended to temp_input: %s", json.dumps(entry, indent=2))
             elif loop_count == 2 and valves.MAX_TOOL_CALLS > 2:
                 entry = {
                     "role": "assistant",
@@ -596,10 +601,7 @@ class Pipe:
                 }
                 temp_input.append(entry)
                 if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                    self.log.debug("Appended to temp_input: %s", json.dumps(entry, indent=2))
             elif remaining == 1:
                 entry = {
                     "role": "assistant",
@@ -612,10 +614,7 @@ class Pipe:
                 }
                 temp_input.append(entry)
                 if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                    self.log.debug("Appended to temp_input: %s", json.dumps(entry, indent=2))
             elif loop_count > 2:
                 entry = {
                     "role": "assistant",
@@ -628,17 +627,14 @@ class Pipe:
                 }
                 temp_input.append(entry)
                 if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                    self.log.debug("Appended to temp_input: %s", json.dumps(entry, indent=2))
             break
 
-        await self._emit_status(__event_emitter__, "", done=True)
+        await self._emit_status(emitter, "", done=True)
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
-            __metadata__["chat_id"],
+            metadata.get("chat_id"),
             (time.perf_counter_ns() - start_ns) / 1e6,
             usage_total.get("loops", 1),
             usage_total.get("input_tokens", 0),
@@ -646,38 +642,26 @@ class Pipe:
             usage_total.get("total_tokens", 0),
         )
 
-        if usage_total and __event_emitter__:
-            await __event_emitter__(
-                {"type": "chat:completion", "data": {"usage": usage_total}}
-            )
+        if usage_total and emitter:
+            await emitter({"type": "chat:completion", "data": {"usage": usage_total}})
 
-        if __event_emitter__:
-            await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
+        if emitter:
+            await emitter({"type": "chat:completion", "data": {"done": True}})
 
         for rid in cleanup_ids:
             try:
-                await delete_response(
-                    client,
-                    valves.BASE_URL,
-                    valves.API_KEY,
-                    rid,
-                )
+                await delete_response(client, valves.BASE_URL, valves.API_KEY, rid)
             except Exception as ex:  # pragma: no cover - logging only
                 self.log.warning("Failed to delete response %s: %s", rid, ex)
 
         if last_response_id and not valves.STORE_RESPONSE:
             try:
-                await delete_response(
-                    client,
-                    valves.BASE_URL,
-                    valves.API_KEY,
-                    last_response_id,
-                )
+                await delete_response(client, valves.BASE_URL, valves.API_KEY, last_response_id)
             except Exception as ex:  # pragma: no cover - logging only
                 self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
 
-        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs and __event_emitter__:
-            await __event_emitter__(
+        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs and emitter:
+            await emitter(
                 {
                     "type": "citation",
                     "data": {
