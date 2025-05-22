@@ -37,3 +37,18 @@ paths for easier maintenance.
    `if body.get("stream", False):`.
 4. Both helpers return an async generator yielding text chunks so the
    caller can iterate normally.
+## Understanding the Responses API
+The OpenAI Responses API behaves differently depending on the `stream` parameter.
+When `"stream": true` the server returns a stream of Server Sent Events (SSE).
+Events arrive in this order:
+- `response.created`
+- `response.in_progress`
+- a sequence of `response.output_text.delta` events, each containing a chunk of text
+- `response.completed` once generation is finished
+
+With `"stream": false` (or when the field is missing) the request resolves
+with a single JSON payload containing the final `output` array and usage stats.
+
+Both modes accept the same request parameters. We will check
+`body.get("stream", False)` in `Pipe.pipe()` to dispatch to either
+`_stream_response` or `_non_stream_response`.
