@@ -52,3 +52,34 @@ with a single JSON payload containing the final `output` array and usage stats.
 Both modes accept the same request parameters. We will check
 `body.get("stream", False)` in `Pipe.pipe()` to dispatch to either
 `_stream_response` or `_non_stream_response`.
+
+## API Request Schema
+- **model**: the short model id (e.g. `gpt-4.1`) without date suffix.
+- **instructions**: optional system instructions string.
+- **input**: a list of items (`{role, content}`) derived from chat history.
+- **tools**: optional list of `{type:"function", name, description, parameters}` definitions.
+- **parallel_tool_calls**: boolean controlling parallel tool execution.
+- **stream**: when `true` the server emits SSE events, when `false` it returns JSON.
+
+## Example (stream=true)
+```
+curl https://api.openai.com/v1/responses \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{"model":"gpt-4.1","input":"Hello","stream":true}'
+```
+The API sends a series of events such as `response.created`, many
+`response.output_text.delta` events and finally `response.completed`.
+
+## Example (stream=false)
+```
+curl https://api.openai.com/v1/responses \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{"model":"gpt-4.1","input":"Hello"}'
+```
+The response body contains the final `output` array and a `usage` object.
+
+## Implementation Tips
+1. Keep the new helper methods private (`_stream_response` and `_non_stream_response`).
+2. Reuse existing utilities: `get_responses`, `stream_responses` and `extract_response_text`.
+3. Update `Pipe.pipe()` to only set up state then delegate to the helper based on `stream`.
+4. Ensure usage stats aggregation and event emission remain unchanged.
