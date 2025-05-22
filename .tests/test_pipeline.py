@@ -828,3 +828,17 @@ def test_simplify_user_agent_helper(dummy_chat):
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36"
     assert pipeline.simplify_user_agent(ua) == "Chrome 136"
 
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_sync_function(dummy_chat):
+    pipeline = _reload_pipeline()
+    call = types.SimpleNamespace(name="t", arguments="{}")
+
+    def sync_tool() -> str:
+        return "42"
+
+    results = await pipeline.execute_responses_tool_calls(
+        [call], {"t": {"callable": sync_tool}}
+    )
+    assert results == ["42"]
+

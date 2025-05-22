@@ -59,6 +59,7 @@ from datetime import datetime
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
+import inspect
 
 import httpx
 from fastapi import Request
@@ -1109,7 +1110,11 @@ async def execute_responses_tool_calls(
             tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
         else:
             args = json.loads(call.arguments or "{}")
-            tasks.append(asyncio.create_task(entry["callable"](**args)))
+            func = entry["callable"]
+            if inspect.iscoroutinefunction(func):
+                tasks.append(asyncio.create_task(func(**args)))
+            else:
+                tasks.append(asyncio.to_thread(func, **args))
     try:
         return await asyncio.gather(*tasks)
     except Exception as ex:  # pragma: no cover - log and return error results
