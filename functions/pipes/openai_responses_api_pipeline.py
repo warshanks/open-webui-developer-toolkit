@@ -727,54 +727,38 @@ class Pipe:
         """Return today's date formatted for prompt injection."""
         return "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
 
+    async def _lookup_ip_info(self, ip: str) -> None:
+        """Resolve ``ip`` and store the result in the cache."""
+        try:
+            client = await self.get_http_client()
+            resp = await client.get(f"http://ip-api.com/json/{ip}")
+            resp.raise_for_status()
+            data = resp.json()
+            location = ", ".join(
+                filter(None, (data.get("city"), data.get("regionName"), data.get("country")))
+            )
+            isp = data.get("isp") or ""
+            info = f"{location} (approx based on IP) (ISP: {isp})" if isp else location
+        except Exception as exc:  # pragma: no cover - network errors
+            info = ""
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("IP lookup failed for %s: %s", ip, exc)
+        self._ip_cache[ip] = info
+        self._ip_tasks.pop(ip, None)
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug("IP lookup result %s -> %r", ip, info)
+
     def _schedule_ip_lookup(self, ip: str) -> None:
         """Kick off a background task to fetch IP details if not cached."""
-        if ip in self._ip_cache:
+        if ip in self._ip_cache or ip in self._ip_tasks or ip == "unknown":
             if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("Using cached IP info for %s -> %s", ip, self._ip_cache[ip])
+                self.log.debug("IP lookup skipped for %s", ip)
             return
-        if ip in self._ip_tasks or ip == "unknown":
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("IP lookup already scheduled or IP unknown: %s", ip)
-            return
-
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-
-        async def _fetch() -> None:
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("Retrieving IP info for %s", ip)
-            try:
-                client = await self.get_http_client()
-                resp = await client.get(f"http://ip-api.com/json/{ip}")
-                resp.raise_for_status()
-                data = resp.json()
-                location = ", ".join(
-                    part
-                    for part in (
-                        data.get("city"),
-                        data.get("regionName"),
-                        data.get("country"),
-                    )
-                    if part
-                )
-                isp = data.get("isp")
-                info = location
-                if isp:
-                    info = f"{location} (approx based on IP) (ISP: {isp})" if location else isp
-                self._ip_cache[ip] = info
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("IP lookup result %s -> %r", ip, info)
-            except Exception as exc:  # pragma: no cover - network errors
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("IP lookup failed for %s: %s", ip, exc)
-                self._ip_cache[ip] = ""
-            finally:
-                self._ip_tasks.pop(ip, None)
-
-        self._ip_tasks[ip] = loop.create_task(_fetch())
+        self._ip_tasks[ip] = loop.create_task(self._lookup_ip_info(ip))
 
     def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
         """Return a user_info line."""
