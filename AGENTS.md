@@ -1,56 +1,51 @@
-# open-webui-developer-toolkit • Contributor & Agent Guide
+This repository provides **extensions (pipes, filters, tools)** for the
+[Open WebUI](https://github.com/open-webui/open-webui).
 
-Welcome! This repo contains **extensions (pipes, filters, tools)** for
-[Open WebUI](https://github.com/open-webui/open-webui). Each extension is a
-single Python file. A helper script under `.scripts/` publishes the files to a
-running WebUI instance.
+## Repository Structure & Instructions
 
----
+| Path                               | Purpose                        | What you (or an agent) can do             |
+| ---------------------------------- | ------------------------------ | ----------------------------------------- |
+| **`functions/pipes/`**             | Single-file **pipes** (Python) | Add new pipe files or fix existing ones   |
+| **`functions/filters/`**           | Single-file **filters**        | Add new filter files or fix existing ones |
+| **`tools/`**                       | Standalone **tools**           | Add new tool files or fix existing ones   |
+| **`open-webui-reference/`**        | Upstream architecture notes    | Add or update new documentation           |
+| **`.scripts/publish_to_webui.py`** | CLI uploader (keep name)       | Edit only if the WebUI API changes        |
+| **`docs/`**                        | Additional internal notes      | Add new or update existing docs           |
 
-## Repository Map (👀 greppable names)
+**Note**: Use exact filenames if you need to search for references (e.g., `grep -R openai_responses_api_pipeline.py`).
 
-| Path | What lives here | Agent-safe actions |
-|------|-----------------|--------------------|
-| **`functions/pipes/`** | single-file *pipes* (Python) | add/fix pipe files |
-| **`functions/filters/`** | single-file *filters* | add/fix filter files |
-| **`tools/`** | standalone *tools* | add/fix tool files |
-| **`open-webui-reference/`** | upstream architecture notes | add new docs |
-| **`.scripts/publish_to_webui.py`** | uploader CLI (don’t rename) | edit if API changes |
-| **`docs/`** | additional internal notes | add new docs |
+## Upstream Reference (Read-Only)
 
-*Codex tip:* grep for the **exact filename** you need, e.g. `grep -R openai_responses_api_pipeline.py`.
+* The `external/open-webui/` folder mirrors the upstream project. **Do not** modify or commit changes here.
 
----
+## Testing
 
-## Upstream reference (read-only)
-If present, the `external/open-webui/` folder mirrors the upstream project. Use it for
-reference only—do **not** edit or commit changes inside that path.
+* Run linting and tests with:
 
----
+  ```bash
+  nox -s lint tests
+  ```
 
-## Tests
-Run linting and tests with `nox`:
+* `nox` adds `src` to `PYTHONPATH`, then runs:
 
-```bash
-nox -s lint tests
-```
+  1. **ruff** for linting
+  2. **pytest** for tests
 
-`nox` uses the current Python environment, adds `src` to `PYTHONPATH` and
-executes `ruff` followed by `pytest`. Fixtures in `.tests/conftest.py` stub out
-`open_webui` so tests stay fast and isolated.
-
----
+* Fixtures in `.tests/conftest.py` mock out `open_webui` so tests run quickly and remain isolated.
 
 ## Documentation
-Every top-level folder contains a small `README.md` explaining what lives in that
-directory. Update these docs whenever you learn something new about how the
-extensions work or notice behaviour changes. Keep the notes brief so future
-agents can scan them quickly. For upstream insights, edit the matching
-`*_GUIDE.md` file under `external/`.
+
+* Each top-level folder has a `README.md` explaining what's inside. **Keep these brief** and updated whenever:
+
+  * You learn something new about how extensions work.
+  * Behavior changes.
+* For upstream details, update the corresponding `*_GUIDE.md` under `external/`.
 
 ## Coding Best Practices
-When adding new extensions or tools, favor simplicity:
-- Keep functions small and clear.
-- Inline variables used only once to avoid needless indirection.
-- Flatten nested logic when possible and avoid over-abstraction.
-- Apply KISS (Keep It Simple, Stupid) and DRY (Don't Repeat Yourself) principles.
+
+1. **Keep functions small and clear**—avoid unnecessary indirection.
+2. **Flatten nested logic** and reduce complexity whenever possible.
+3. **Follow KISS** (Keep It Simple, Stupid) and **DRY** (Don’t Repeat Yourself).
+4. **Inline variables** if they’re used only once.
+
+That’s it! Keep everything simple, documented, and well-tested so future agents can dive in quickly.
