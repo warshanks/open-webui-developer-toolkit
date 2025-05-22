@@ -83,3 +83,8 @@ The response body contains the final `output` array and a `usage` object.
 2. Reuse existing utilities: `get_responses`, `stream_responses` and `extract_response_text`.
 3. Update `Pipe.pipe()` to only set up state then delegate to the helper based on `stream`.
 4. Ensure usage stats aggregation and event emission remain unchanged.
+
+## Status
+The refactor was implemented in version 1.6.19. `Pipe.pipe()` now delegates to
+`_stream_response` or `_non_stream_response` based on `body.get("stream", False)`
+and both helpers yield text chunks while handling usage statistics.
