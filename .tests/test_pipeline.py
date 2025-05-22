@@ -330,7 +330,7 @@ async def test_pipe_stream_loop(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
         gen = pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             emitter,
@@ -374,7 +374,7 @@ async def test_pipe_deletes_response(dummy_chat):
         pipeline, "delete_response", AsyncMock()
     ) as del_mock, patch.object(pipe, "get_http_client", AsyncMock(return_value=object())):
         await pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             emitter,
@@ -424,7 +424,7 @@ async def test_debug_logs_citation_emitted(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
         await pipe.pipe(
-            {},
+            {"stream": True},
             user,
             None,
             emitter,
@@ -468,7 +468,7 @@ async def test_debug_logs_citation_saved_with_tool(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ), patch.object(pipe, "_store_citation") as store_mock:
         await pipe.pipe(
-            {},
+            {"stream": True},
             user,
             None,
             AsyncMock(),
@@ -528,7 +528,7 @@ async def test_debug_logs_citation_multiple_turns(dummy_chat):
         side_effect=[fake_stream1, fake_stream2],
     ), patch.object(pipe, "get_http_client", AsyncMock(return_value=object())):
         gen = pipe.pipe(
-            {},
+            {"stream": True},
             user,
             None,
             emitter,
@@ -572,7 +572,7 @@ async def test_tool_metadata_persisted(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
         await pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             emitter,
@@ -630,7 +630,7 @@ async def test_previous_response_cleanup(dummy_chat):
         AsyncMock(return_value=object()),
     ):
         await pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             AsyncMock(),
@@ -689,7 +689,7 @@ async def test_function_call_output_persisted(dummy_chat):
                 srcs.append(evt["data"])
                 m["sources"] = srcs
         gen = pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             emitter,
@@ -751,7 +751,7 @@ async def test_persist_tool_results_valve_off(dummy_chat):
                 srcs.append(evt["data"])
                 m["sources"] = srcs
         gen = pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             emitter,
@@ -808,7 +808,7 @@ async def test_tools_removed_for_unsupported_model(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
         await pipe.pipe(
-            {"model": "openai_responses.chatgpt-4o-latest"},
+            {"model": "openai_responses.chatgpt-4o-latest", "stream": True},
             {},
             None,
             AsyncMock(),
@@ -883,7 +883,7 @@ async def test_pipe_without_emitter(dummy_chat):
         pipe, "get_http_client", AsyncMock(return_value=object())
     ):
         gen = pipe.pipe(
-            {},
+            {"stream": True},
             {},
             None,
             None,
