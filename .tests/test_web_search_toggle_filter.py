@@ -64,3 +64,12 @@ def test_outlet_handles_missing_emitter():
     assert out is body
 
 
+def test_outlet_returns_body_for_supported_model():
+    mod = _load_filter()
+    flt = mod.Filter()
+    body = {"model": "openai_responses.gpt-4o"}
+
+    out = asyncio.run(flt.outlet(body, __event_emitter__=None))
+    assert out is body
+
+
