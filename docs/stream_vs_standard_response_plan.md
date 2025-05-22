@@ -22,3 +22,18 @@ to extend.
 
 This refactor keeps the public interface intact while isolating the two code
 paths for easier maintenance.
+
+## Implementation Steps
+1. Move the non-streaming branch of `pipe()` into
+   `Pipe._non_stream_response(...)`. The method should:
+   - call `get_responses()`
+   - emit usage stats and completion events
+   - yield the final assistant text when available.
+2. Move the current streaming loop into
+   `Pipe._stream_response(...)`. It retains the SSE handling and tool
+   call logic unchanged.
+3. In `Pipe.pipe()`, compute shared variables and assemble the request
+   payload. Then delegate to one of the helpers using
+   `if body.get("stream", False):`.
+4. Both helpers return an async generator yielding text chunks so the
+   caller can iterate normally.
