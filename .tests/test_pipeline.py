@@ -842,3 +842,59 @@ async def test_execute_tool_calls_sync_function(dummy_chat):
     )
     assert results == ["42"]
 
+
+@pytest.mark.asyncio
+async def test_assemble_payload_without_chat_id(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+    body = {
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    params = await pipeline.assemble_responses_payload(
+        pipe.valves,
+        None,
+        body,
+        "ins",
+        None,
+        None,
+    )
+    assert params["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pipe_without_emitter(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_text.delta", delta="ok"),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(*_a, **_kw):
+        for e in events:
+            yield e
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        gen = pipe.pipe(
+            {},
+            {},
+            None,
+            None,
+            AsyncMock(),
+            [],
+            {},
+            {},
+        )
+        tokens = []
+        async for t in gen:
+            tokens.append(t)
+    await pipe.on_shutdown()
+    assert tokens == ["ok"]
+
