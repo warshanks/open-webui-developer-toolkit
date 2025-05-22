@@ -135,12 +135,15 @@ class Filter:
                 msg = "Search not used — answer based on model's internal knowledge."
     
             await self._emit_status(__event_emitter__, msg, done=True)
-    
+
             return body
+
+        return body
 
     @staticmethod
     def _extract_urls(text: str) -> list[str]:
-        matches = re.findall(r"https?://[^\s)]+\?utm_source=openai", text)
+        pattern = r"https?://[^\s)]+(?:\?|&)utm_source=openai[^\s)]*"
+        matches = re.findall(pattern, text)
         return matches
 
     @staticmethod
