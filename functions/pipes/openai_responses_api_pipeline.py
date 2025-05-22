@@ -354,7 +354,7 @@ class Pipe:
             self.log.debug(pretty_log_block(tools, "tools"))
             self.log.debug(pretty_log_block(instructions, "instructions"))
 
-        base_params = await assemble_responses_payload(
+        request_params = await assemble_responses_payload(
             valves,
             chat_id,
             body,
@@ -362,7 +362,6 @@ class Pipe:
             tools,
             __user__.get("email"),
         )
-        request_params = base_params
         usage_total: dict[str, Any] = {}
         last_response_id = None
         cleanup_ids: list[str] = []
@@ -533,8 +532,7 @@ class Pipe:
                                     "output": str(result),
                                 }
                             ]
-                        citation_event = {"type": "citation", "data": citation_data}
-                        await __event_emitter__(citation_event)
+                        await __event_emitter__({"type": "citation", "data": citation_data})
                 continue
 
             # Clean up the server-side state unless the user opted to keep it
@@ -665,20 +663,22 @@ class Pipe:
             )
             return valves
 
-        dump = (
-            user_valves.model_dump(exclude_none=True)
-            if hasattr(user_valves, "model_dump")
-            else user_valves.dict(exclude_none=True)
-        )
         overrides = {
-            k: v for k, v in dump.items() if not (isinstance(v, str) and v.lower() == "inherit")
+            k: v
+            for k, v in (
+                user_valves.model_dump(exclude_none=True)
+                if hasattr(user_valves, "model_dump")
+                else user_valves.dict(exclude_none=True)
+            ).items()
+            if not (isinstance(v, str) and v.lower() == "inherit")
         }
 
-        base = (
-            valves.model_dump() if hasattr(valves, "model_dump") else valves.dict()
+        valves = self.Valves(
+            **deep_update(
+                valves.model_dump() if hasattr(valves, "model_dump") else valves.dict(),
+                overrides,
+            )
         )
-        updated = deep_update(base, overrides)
-        valves = self.Valves(**updated)
 
         if self.log.isEnabledFor(logging.DEBUG):
             for setting, val in overrides.items():
@@ -740,9 +740,10 @@ class Pipe:
         mobile = str(headers.get("sec-ch-ua-mobile", "")).strip('"')
         device_type = "Mobile" if mobile in {"?1", "1"} else "Desktop"
         platform = headers.get("sec-ch-ua-platform", "").strip('"') or "Unknown"
-        ua = headers.get("user-agent", "") if request else ""
-        browser = simplify_user_agent(ua)
-        return f"browser_info: {device_type} | {platform} | Browser: {browser}"
+        return (
+            f"browser_info: {device_type} | {platform} | Browser: "
+            f"{simplify_user_agent(headers.get('user-agent', '') if request else '')}"
+        )
 
     def _get_ip_info_suffix(self, request: Request | None) -> str:
         """Return an ip_info line and trigger background lookup if needed."""
@@ -752,8 +753,7 @@ class Pipe:
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug("IP info not cached for %s, scheduling lookup", ip)
             self._schedule_ip_lookup(ip)
-        info_suffix = f" - {ip_info}" if ip_info else ""
-        return f"ip_info: {ip}{info_suffix}"
+        return f"ip_info: {ip}{f' - {ip_info}' if ip_info else ''}"
 
 
     async def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
