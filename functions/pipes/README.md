@@ -22,7 +22,7 @@ This repository's larger pipelines also include small helper functions for
 building the request payload, streaming Server-Sent Events (SSE), and executing
 tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `assemble_responses_payload`, `assemble_responses_input`, `stream_responses`,
-and `execute_responses_tool_calls`.
+`get_responses`, `extract_response_text`, and `execute_responses_tool_calls`.
 
 Additional valves for injecting the current date and user context are documented in
 `docs/instruction_injection_valves.md`.
