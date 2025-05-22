@@ -47,3 +47,10 @@ directory. Update these docs whenever you learn something new about how the
 extensions work or notice behaviour changes. Keep the notes brief so future
 agents can scan them quickly. For upstream insights, edit the matching
 `*_GUIDE.md` file under `external/`.
+
+## Coding Best Practices
+When adding new extensions or tools, favor simplicity:
+- Keep functions small and clear.
+- Inline variables used only once to avoid needless indirection.
+- Flatten nested logic when possible and avoid over-abstraction.
+- Apply KISS (Keep It Simple, Stupid) and DRY (Don't Repeat Yourself) principles.
