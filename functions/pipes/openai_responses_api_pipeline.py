@@ -81,7 +81,7 @@ EMOJI_LEVELS = {
 
 # Feature support by model
 WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
-REASONING_MODELS = {"o3", "o4-mini"}
+REASONING_MODELS = {"o3", "o4-mini", "o3-mini"}
 NATIVE_TOOL_UNSUPPORTED_MODELS = {"chatgpt-4o-latest", "codex-mini-latest"}
 
 # Precompiled regex for citation annotations
