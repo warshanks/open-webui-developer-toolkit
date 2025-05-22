@@ -64,48 +64,42 @@ class Filter:
     ) -> dict:
         """Modify the request body when the toggle is active."""
 
-        model = body.get("model")
-        if model in WEB_SEARCH_MODELS:
-            self._add_web_search_tool(body, __tools__)
+        if body.get("model") not in WEB_SEARCH_MODELS:
+            body.setdefault("features", {})["web_search"] = False
 
-            return body
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
+                            "done": False,
+                            "hidden": False,
+                        },
+                    }
+                )
 
-        features = body.setdefault("features", {})
-        # \U0001f9e0 Override native search and explicitly set GPT-4o route
-        features["web_search"] = False
-
-        if __event_emitter__:
-            await __event_emitter__(
+            body.update(
                 {
-                    "type": "status",
-                    "data": {
-                        "description": "\ud83d\udd0d Web search detected \u2014 rerouting to GPT-4o Search Preview...",
-                        "done": False,
-                        "hidden": False,
+                    "model": "gpt-4o-search-preview",
+                    "web_search_options": {
+                        "user_location": {
+                            "type": "approximate",
+                            "approximate": {
+                                "country": "CA",
+                                "timezone": (__metadata__ or {})
+                                .get("variables", {})
+                                .get("{{CURRENT_TIMEZONE}}", "America/Vancouver"),
+                            },
+                        },
+                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
                     },
+                    # GPT-4o Search Preview ignores normal tools
+                    "tools": None,
                 }
             )
 
-        metadata = __metadata__ or {}
-        timezone = metadata.get("variables", {}).get(
-            "{{CURRENT_TIMEZONE}}", "America/Vancouver"
-        )
-        body["model"] = "gpt-4o-search-preview"
-        body["web_search_options"] = {
-            "user_location": {
-                "type": "approximate",
-                "approximate": {"country": "CA", "timezone": timezone},
-            },
-            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
-        }
-
         self._add_web_search_tool(body, __tools__)
-
-        # GPT-4o Search Preview doesn't support normal tool calling. Ensure the
-        # request payload clears the ``tools`` field so any previously
-        # configured tools are ignored by the pipeline.
-        body["tools"] = None
-
         return body
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
@@ -126,7 +120,7 @@ class Filter:
         else:
             text = str(content_blocks or "")
 
-        urls = self._extract_urls(text)
+        urls = re.findall(r"https?://[^\s)]+(?:\?|&)utm_source=openai[^\s)]*", text)
         for url in urls:
             await self._emit_citation(__event_emitter__, url)
 
@@ -138,10 +132,6 @@ class Filter:
         await self._emit_status(__event_emitter__, msg, done=True)
 
         return body
-
-    @staticmethod
-    def _extract_urls(text: str) -> list[str]:
-        return re.findall(r"https?://[^\s)]+(?:\?|&)utm_source=openai[^\s)]*", text)
 
     @staticmethod
     async def _emit_citation(emitter: callable | None, url: str) -> None:
