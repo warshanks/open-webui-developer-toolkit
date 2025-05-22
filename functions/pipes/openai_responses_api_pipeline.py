@@ -4,7 +4,7 @@ id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.17
+version: 1.6.18
 license: MIT
 requirements: httpx
 
@@ -35,6 +35,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.18: Compatibility fixes for WebUI task models (optional chat_id and emitter).
 • 1.6.17: Valves to inject the current date and user/device context into the system prompt.
 • 1.6.16: Valve to control persisting tool results in chat history.
 • 1.6.15: Added valve to toggle native tool calling; skips unsupported models; `reasoning_effort` now read directly from request body.
@@ -294,17 +295,19 @@ class Pipe:
         if valves.ENABLE_NATIVE_TOOL_CALLING:
             await self._ensure_native_function_calling(__metadata__)
 
+        chat_id = __metadata__.get("chat_id") or body.get("chat_id")
+        message_id = __metadata__.get("message_id")
+
         self.log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
             self.log_name,
             body.get("model", valves.MODEL_ID),
             __user__.get("email", "anon"),
-            __metadata__["chat_id"],
-            __metadata__["message_id"],
+            chat_id,
+            message_id,
         )
 
         client = await self.get_http_client()
-        chat_id = __metadata__["chat_id"]
         # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
         instructions = self._extract_instructions(body)
 
@@ -465,7 +468,22 @@ class Pipe:
                         title = title_m.group(1) if title_m else "Unknown Title"
                         url = url_m.group(1) if url_m else ""
                         url = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
-                        await __event_emitter__({"type": "citation", "data": {"document": [title], "metadata": [{"date_accessed": datetime.now().isoformat(), "source": title}], "source": {"name": url, "url": url}}})
+                        if __event_emitter__:
+                            await __event_emitter__(
+                                {
+                                    "type": "citation",
+                                    "data": {
+                                        "document": [title],
+                                        "metadata": [
+                                            {
+                                                "date_accessed": datetime.now().isoformat(),
+                                                "source": title,
+                                            }
+                                        ],
+                                        "source": {"name": url, "url": url},
+                                    },
+                                }
+                            )
                         continue
                     if et == "response.completed":
                         if event.response.usage:
@@ -475,14 +493,15 @@ class Pipe:
                         continue
             except Exception as ex:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
-                await __event_emitter__(
-                    {
-                        "type": "message",
-                        "data": {
-                            "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
-                        },
-                    }
-                )
+                if __event_emitter__:
+                    await __event_emitter__(
+                        {
+                            "type": "message",
+                            "data": {
+                                "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
+                            },
+                        }
+                    )
                 break
 
             if pending_calls:
@@ -600,12 +619,13 @@ class Pipe:
             usage_total.get("total_tokens", 0),
         )
 
-        if usage_total:
+        if usage_total and __event_emitter__:
             await __event_emitter__(
                 {"type": "chat:completion", "data": {"usage": usage_total}}
             )
 
-        await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
+        if __event_emitter__:
+            await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
 
         for rid in cleanup_ids:
             try:
@@ -629,7 +649,7 @@ class Pipe:
             except Exception as ex:  # pragma: no cover - logging only
                 self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
 
-        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs:
+        if self.log.isEnabledFor(logging.DEBUG) and self._debug_logs and __event_emitter__:
             await __event_emitter__(
                 {
                     "type": "citation",
@@ -654,12 +674,14 @@ class Pipe:
 
     async def _emit_status(
         self,
-        emitter: Callable[[dict[str, Any]], Awaitable[None]],
+        emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
         description: str,
         *,
         done: bool = False,
     ) -> None:
         """Emit a status update if it differs from the last one."""
+        if emitter is None:
+            return
         current = (description, done)
         if self._last_status == current:
             return
@@ -990,6 +1012,39 @@ async def assemble_responses_input(chat_id: str) -> list[dict]:
     return input_items
 
 
+def messages_to_responses_input(messages: list[dict]) -> list[dict]:
+    """Convert OpenAI style messages to Responses API input."""
+    input_items: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            continue
+        blocks = m.get("content", []) or []
+        if not isinstance(blocks, list):
+            blocks = [blocks]
+        out: list[dict] = []
+        for b in blocks:
+            if b is None:
+                continue
+            if isinstance(b, dict) and b.get("type") in ("image", "image_url"):
+                url = b.get("url") or b.get("image_url", {}).get("url")
+                if url:
+                    out.append({
+                        "type": "input_image" if role == "user" else "output_image",
+                        "image_url": url,
+                    })
+            else:
+                text = b.get("text") if isinstance(b, dict) else str(b)
+                if text.strip():
+                    out.append({
+                        "type": "input_text" if role == "user" else "output_text",
+                        "text": text,
+                    })
+        if out:
+            input_items.append({"role": role, "content": out})
+    return input_items
+
+
 def pretty_log_block(data: Any, label: str = "") -> str:
     """Return a pretty formatted string for debug logging."""
     try:
@@ -1021,7 +1076,7 @@ def simplify_user_agent(ua: str) -> str:
 
 async def assemble_responses_payload(
     valves: Pipe.Valves,
-    chat_id: str,
+    chat_id: str | None,
     body: dict[str, Any],
     instructions: str,
     tools: list[dict[str, Any]] | None,
@@ -1036,7 +1091,10 @@ async def assemble_responses_payload(
     if "." in str(model):
         model = str(model).split(".", 1)[1]
     if input_messages is None:
-        input_messages = await assemble_responses_input(chat_id)
+        if chat_id:
+            input_messages = await assemble_responses_input(chat_id)
+        else:
+            input_messages = messages_to_responses_input(body.get("messages", []))
 
     params = {
         "model": model,
