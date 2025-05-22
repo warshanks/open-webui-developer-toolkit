@@ -369,6 +369,33 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
 
+        if not body.get("stream", True):
+            response = await get_responses(
+                client, valves.BASE_URL, valves.API_KEY, request_params
+            )
+            text = extract_response_text(response)
+            if text:
+                yield text
+            if response.get("usage"):
+                self._update_usage(usage_total, response["usage"], 1)
+            await self._emit_status(__event_emitter__, "", done=True)
+            self.log.info(
+                "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
+                __metadata__["chat_id"],
+                (time.perf_counter_ns() - start_ns) / 1e6,
+                usage_total.get("loops", 1),
+                usage_total.get("input_tokens", 0),
+                usage_total.get("output_tokens", 0),
+                usage_total.get("total_tokens", 0),
+            )
+            if usage_total and __event_emitter__:
+                await __event_emitter__(
+                    {"type": "chat:completion", "data": {"usage": usage_total}}
+                )
+            if __event_emitter__:
+                await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
+            return
+
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug("Loop iteration #%d", loop_count)
@@ -936,6 +963,35 @@ async def delete_response(
     resp.raise_for_status()
 
 
+async def get_responses(
+    client: httpx.AsyncClient,
+    base_url: str,
+    api_key: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the full JSON response from the API."""
+
+    url = base_url.rstrip("/") + "/responses"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json",
+    }
+    resp = await client.post(url, headers=headers, json=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def extract_response_text(response: dict[str, Any]) -> str:
+    """Return concatenated assistant text from a non-streaming response."""
+    chunks: list[str] = []
+    for item in response.get("output", []):
+        if item.get("type") == "message" and item.get("role") == "assistant":
+            for part in item.get("content", []):
+                if isinstance(part, dict) and part.get("type") == "output_text":
+                    chunks.append(part.get("text", ""))
+    return "".join(chunks)
+
+
 def prepare_tools(registry: dict | None) -> list[dict]:
     """Convert WebUI tool registry entries to OpenAI format."""
     if not registry:
@@ -1106,7 +1162,7 @@ async def assemble_responses_payload(
         "user": user_email,
         "text": {"format": {"type": "text"}},
         "truncation": "auto",
-        "stream": True,
+        "stream": body.get("stream", True),
         "store": True,
         "input": input_messages,
     }

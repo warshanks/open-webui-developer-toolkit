@@ -898,3 +898,52 @@ async def test_pipe_without_emitter(dummy_chat):
     await pipe.on_shutdown()
     assert tokens == ["ok"]
 
+
+@pytest.mark.asyncio
+async def test_pipe_non_streaming_response(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    resp_json = {
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "ok"}],
+            }
+        ],
+        "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+    }
+
+    async def fake_get(client, base_url, api_key, params):
+        return resp_json
+
+    emitted = []
+
+    async def emitter(evt: dict):
+        emitted.append(evt)
+
+    with patch.object(pipeline, "get_responses", fake_get), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        gen = pipe.pipe(
+            {"stream": False},
+            {},
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        )
+        tokens = []
+        async for t in gen:
+            tokens.append(t)
+    await pipe.on_shutdown()
+
+    assert tokens == ["ok"]
+    assert [e["data"] for e in emitted if e["type"] == "chat:completion"] == [
+        {"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "loops": 1}},
+        {"done": True},
+    ]
+
