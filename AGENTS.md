@@ -8,7 +8,6 @@ This repository provides **extensions (pipes, filters, tools)** for the
 | **`functions/pipes/`**             | Single-file **pipes** (Python) | Add new pipe files or fix existing ones   |
 | **`functions/filters/`**           | Single-file **filters**        | Add new filter files or fix existing ones |
 | **`tools/`**                       | Standalone **tools**           | Add new tool files or fix existing ones   |
-| **`open-webui-reference/`**        | Upstream architecture notes    | Add or update new documentation           |
 | **`.scripts/publish_to_webui.py`** | CLI uploader (keep name)       | Edit only if the WebUI API changes        |
 | **`docs/`**                        | Additional internal notes      | Add new or update existing docs           |
 
