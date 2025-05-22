@@ -48,6 +48,7 @@ async def test_search_preview_for_other_models():
     out = await flt.inlet(body, __tools__=reg)
     assert out["model"] == "gpt-4o-search-preview"
     assert any(t.get("type") == "web_search" for t in reg.get("tools", []))
+    assert out["tools"] is None
 
 
 def test_outlet_handles_missing_emitter():
