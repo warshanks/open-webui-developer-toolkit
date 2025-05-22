@@ -400,6 +400,11 @@ class Pipe:
                 pending_calls: list[SimpleNamespace] = []
                 if self.log.isEnabledFor(logging.DEBUG):
                     self.log.debug("response_stream created for loop #%d", loop_count)
+
+                if request_params.get("reasoning") and not is_model_thinking:
+                    is_model_thinking = True
+                    yield "<think>"
+
                 async for event in stream_responses(
                     client,
                     valves.BASE_URL,
@@ -419,9 +424,8 @@ class Pipe:
                         self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
-                        if not is_model_thinking:
-                            is_model_thinking = True
-                            yield "<think>"
+                        # The <think> tag is emitted at stream start when
+                        # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         yield event.delta
