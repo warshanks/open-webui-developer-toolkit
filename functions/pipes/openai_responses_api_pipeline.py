@@ -337,8 +337,6 @@ class Pipe:
         if "." in str(model):
             model = str(model).split(".", 1)[1]
 
-        streaming = body.get("stream", False)
-
         tools: list[dict[str, Any]] | None
         if model in NATIVE_TOOL_UNSUPPORTED_MODELS:
             tools = None
@@ -363,7 +361,6 @@ class Pipe:
             instructions,
             tools,
             __user__.get("email"),
-            stream=streaming,
         )
         request_params = base_params
         usage_total: dict[str, Any] = {}
@@ -399,18 +396,17 @@ class Pipe:
 
             try:
                 pending_calls: list[SimpleNamespace] = []
-                if streaming:
+                if self.log.isEnabledFor(logging.DEBUG):
+                    self.log.debug("response_stream created for loop #%d", loop_count)
+                async for event in stream_responses(
+                    client,
+                    valves.BASE_URL,
+                    valves.API_KEY,
+                    request_params,
+                ):
+                    et = event.type
                     if self.log.isEnabledFor(logging.DEBUG):
-                        self.log.debug("response_stream created for loop #%d", loop_count)
-                    async for event in stream_responses(
-                        client,
-                        valves.BASE_URL,
-                        valves.API_KEY,
-                        request_params,
-                    ):
-                        et = event.type
-                        if self.log.isEnabledFor(logging.DEBUG):
-                            self.log.debug("Event received: %s", et)
+                        self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
                         if last_response_id:
@@ -495,22 +491,6 @@ class Pipe:
                                 usage_total, event.response.usage, loop_count
                             )
                         continue
-                else:
-                    resp_json = await fetch_response(
-                        client,
-                        valves.BASE_URL,
-                        valves.API_KEY,
-                        request_params,
-                    )
-                    if last_response_id:
-                        cleanup_ids.append(last_response_id)
-                    last_response_id = resp_json.get("id")
-                    text_block = extract_output_text(resp_json)
-                    if text_block:
-                        yield text_block
-                    if resp_json.get("usage"):
-                        self._update_usage(usage_total, resp_json.get("usage"), loop_count)
-                    break
             except Exception as ex:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
                 if __event_emitter__:
@@ -943,24 +923,6 @@ async def stream_responses(
                 event_type = line[len("event:"):].strip()
             elif line.startswith("data:"):
                 data_buf.append(line[len("data:"):].strip())
-
-
-async def fetch_response(
-    client: httpx.AsyncClient,
-    base_url: str,
-    api_key: str,
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    """Return the JSON response from the API when ``stream`` is False."""
-
-    url = base_url.rstrip("/") + "/responses"
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Content-Type": "application/json",
-    }
-    resp = await client.post(url, headers=headers, json=params)
-    resp.raise_for_status()
-    return resp.json()
 async def delete_response(
     client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
 ) -> None:
@@ -1120,8 +1082,6 @@ async def assemble_responses_payload(
     tools: list[dict[str, Any]] | None,
     user_email: str | None,
     input_messages: list[dict] | None = None,
-    *,
-    stream: bool = True,
 ) -> dict[str, Any]:
     """Combine chat history and parameters into a request payload.
 
@@ -1146,7 +1106,7 @@ async def assemble_responses_payload(
         "user": user_email,
         "text": {"format": {"type": "text"}},
         "truncation": "auto",
-        "stream": stream,
+        "stream": True,
         "store": True,
         "input": input_messages,
     }
@@ -1193,18 +1153,6 @@ def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
         response=response,
         annotation=annotation,
     )
-
-
-def extract_output_text(response: dict[str, Any]) -> str:
-    """Return concatenated output_text blocks from a response payload."""
-    texts: list[str] = []
-    for item in response.get("output", []):
-        if item.get("type") != "message":
-            continue
-        for part in item.get("content", []):
-            if isinstance(part, dict) and part.get("type") == "output_text":
-                texts.append(str(part.get("text", "")))
-    return "".join(texts)
 
 
 async def execute_responses_tool_calls(
