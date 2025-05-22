@@ -1,6 +1,7 @@
 from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 import sys
+import asyncio
 import pytest
 
 
@@ -47,5 +48,19 @@ async def test_search_preview_for_other_models():
     out = await flt.inlet(body, __tools__=reg)
     assert out["model"] == "gpt-4o-search-preview"
     assert any(t.get("type") == "web_search" for t in reg.get("tools", []))
+
+
+def test_outlet_handles_missing_emitter():
+    mod = _load_filter()
+    flt = mod.Filter()
+    body = {
+        "model": "other",
+        "messages": [
+            {"role": "assistant", "content": "see https://ex.com/?utm_source=openai"}
+        ],
+    }
+
+    out = asyncio.run(flt.outlet(body, __event_emitter__=None))
+    assert out is body
 
 

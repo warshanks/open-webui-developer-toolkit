@@ -144,7 +144,10 @@ class Filter:
         return matches
 
     @staticmethod
-    async def _emit_citation(emitter: callable, url: str) -> None:
+    async def _emit_citation(emitter: callable | None, url: str) -> None:
+        if emitter is None:
+            return
+
         cleaned = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
         await emitter(
             {
@@ -160,7 +163,10 @@ class Filter:
         )
 
     @staticmethod
-    async def _emit_status(emitter: callable, description: str, *, done: bool = False) -> None:
+    async def _emit_status(emitter: callable | None, description: str, *, done: bool = False) -> None:
+        if emitter is None:
+            return
+
         await emitter(
             {"type": "status", "data": {"description": description, "done": done, "hidden": False}}
         )
