@@ -206,19 +206,3 @@ Example:
   }
 }
 ```
-
-## 8. Complete Example
-
-The payload assembled by Open WebUI typically combines all of the above sections. Pipes can inspect whichever parts they need:
-
-```jsonc
-{
-  "body": {"stream": true, "model": "openai_responses.gpt-4.1", ...},
-  "__user__": {"id": "<user-uuid>", ...},
-  "__files__": [/* file metadata */],
-  "__metadata__": {"chat_id": "...", ...},
-  "__tools__": {/* tool definitions */}
-}
-```
-
-By understanding these keys a future AI agent can quickly locate conversation text, metadata, files, and tools supplied to any pipe.
