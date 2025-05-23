@@ -971,66 +971,98 @@ def transform_tools_for_responses_api(
     return tools_responses_api_json
 
 
-async def load_chat_input(chat_id: str) -> list[dict]:
-    """Return chat history formatted for the Responses API."""
-    logger.debug("Retrieving message history for chat_id=%s", chat_id)
-    chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
-    chat = chat_model.chat if chat_model else {"history": {"messages": {}, "currentId": None}}
-    msg_lookup = chat["history"]["messages"]
-    current_id = chat["history"]["currentId"]
-    thread = get_message_list(msg_lookup, current_id) or []
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(pretty_log_block(thread, "history_thread"))
-    return transform_messages_for_responses_api(thread, from_history=True)
-
-
-def transform_messages_for_responses_api(
-    messages: list[dict], *, from_history: bool = False
+async def build_chat_history_for_responses_api(
+    *, chat_id: str | None = None, messages: list[dict] | None = None
 ) -> list[dict]:
-    """Return ``messages`` formatted for the Responses API.
+    """Return chat history formatted for the Responses API."""
 
-    ``from_history`` indicates the input comes from the WebUI chat database,
-    which stores assistant tool calls and file attachments separately from the
-    visible message content.
-    """
-    input_items: list[dict] = []
+    from_history = bool(chat_id)
+    if chat_id:
+        logger.debug("Retrieving message history for chat_id=%s", chat_id)
+        chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
+        if not chat_model:
+            messages = []
+        else:
+            chat = chat_model.chat
+            msg_lookup = chat.get("history", {}).get("messages", {})
+            current_id = chat.get("history", {}).get("currentId")
+            messages = get_message_list(msg_lookup, current_id) or []
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(pretty_log_block(messages, "history_thread"))
+    else:
+        messages = messages or []
+
+    history: list[dict] = []
     for m in messages:
         role = m.get("role")
         if role == "system":
             continue
         from_assistant = role == "assistant"
+
         if from_history and from_assistant:
-            for src in m.get("sources", ()):
-                for fc in src.get("_fc", ()):
+            for src in m.get("sources", []):
+                for fc in src.get("_fc", []):
                     cid = fc.get("call_id") or fc.get("id")
                     if not cid:
                         continue
-                    input_items.append({"type": "function_call", "call_id": cid, "name": fc.get("name") or fc.get("n"), "arguments": fc.get("arguments") or fc.get("a")})
-                    input_items.append({"type": "function_call_output", "call_id": cid, "output": fc.get("output") or fc.get("o")})
+                    history.append(
+                        {
+                            "type": "function_call",
+                            "call_id": cid,
+                            "name": fc.get("name") or fc.get("n"),
+                            "arguments": fc.get("arguments") or fc.get("a"),
+                        }
+                    )
+                    history.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": cid,
+                            "output": fc.get("output") or fc.get("o"),
+                        }
+                    )
+
         blocks: list[dict] = []
         raw_blocks = m.get("content", []) or []
         if not isinstance(raw_blocks, list):
             raw_blocks = [raw_blocks]
         for b in raw_blocks:
-            if b is None:
+            if not b:
                 continue
             if isinstance(b, dict) and b.get("type") in ("image", "image_url"):
                 url = b.get("url") or b.get("image_url", {}).get("url")
                 if url:
-                    blocks.append({"type": "input_image" if role == "user" else "output_image", "image_url": url})
+                    blocks.append(
+                        {
+                            "type": "input_image" if role == "user" else "output_image",
+                            "image_url": url,
+                        }
+                    )
             else:
                 text = b.get("text") if isinstance(b, dict) else str(b)
                 if from_history and from_assistant and not text.strip():
                     continue
                 if text.strip():
-                    blocks.append({"type": "input_text" if role == "user" else "output_text", "text": text})
+                    blocks.append(
+                        {
+                            "type": "input_text" if role == "user" else "output_text",
+                            "text": text,
+                        }
+                    )
+
         if from_history:
-            for f in m.get("files", ()):
+            for f in m.get("files", []):
                 if f and f.get("type") in ("image", "image_url"):
-                    blocks.append({"type": "input_image" if role == "user" else "output_image", "image_url": f.get("url") or f.get("image_url", {}).get("url")})
+                    blocks.append(
+                        {
+                            "type": "input_image" if role == "user" else "output_image",
+                            "image_url": f.get("url") or f.get("image_url", {}).get("url"),
+                        }
+                    )
+
         if blocks:
-            input_items.append({"role": role, "content": blocks})
-    return input_items
+            history.append({"role": role, "content": blocks})
+
+    return history
 
 
 def pretty_log_block(data: Any, label: str = "") -> str:
@@ -1079,9 +1111,9 @@ async def prepare_payload(
         reasoning_effort = "high"
     if chat_history is None:
         if chat_id:
-            chat_history = await load_chat_input(chat_id)
+            chat_history = await build_chat_history_for_responses_api(chat_id=chat_id)
         else:
-            chat_history = transform_messages_for_responses_api(body.get("messages", []))
+            chat_history = await build_chat_history_for_responses_api(messages=body.get("messages", []))
 
     params = {
         "model": model,

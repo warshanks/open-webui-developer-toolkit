@@ -71,7 +71,7 @@ async def test_build_responses_payload(dummy_chat):
         },
     }
 
-    payload = await pipeline.load_chat_input("chat1")
+    payload = await pipeline.build_chat_history_for_responses_api(chat_id="chat1")
     assert payload == [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
         {"role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
@@ -318,7 +318,7 @@ async def test_build_responses_payload_complex(dummy_chat):
             },
         },
     }
-    payload = await pipeline.load_chat_input("chat1")
+    payload = await pipeline.build_chat_history_for_responses_api(chat_id="chat1")
     assert payload == [
         {
             "role": "user",
@@ -741,7 +741,7 @@ async def test_function_call_output_persisted(dummy_chat):
             pass
     await pipe.on_shutdown()
 
-    payload = await pipeline.load_chat_input("chat1")
+    payload = await pipeline.build_chat_history_for_responses_api(chat_id="chat1")
     assert {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"} in payload
     assert {"type": "function_call_output", "call_id": "c1", "output": "42"} in payload
 
@@ -803,7 +803,7 @@ async def test_persist_tool_results_valve_off(dummy_chat):
             pass
     await pipe.on_shutdown()
 
-    payload = await pipeline.load_chat_input("chat1")
+    payload = await pipeline.build_chat_history_for_responses_api(chat_id="chat1")
     assert {
         "type": "function_call",
         "call_id": "c1",
