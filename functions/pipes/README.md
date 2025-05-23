@@ -1,4 +1,3 @@
-
 Pipes are single Python files that implement a `Pipe` class with a `pipe()`
 method.  Optionally they can expose multiple models by defining a
 `pipes()` method that returns a list of model descriptors.  Each entry is a
@@ -25,5 +24,8 @@ tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `stream_responses`, `get_responses`, `extract_response_text`, and
 `execute_responses_tool_calls`.
 
-Additional valves for injecting the current date and user context are documented in
-`docs/instruction_injection_valves.md`.
+Additional valves for injecting the current date and user context are documented
+in `docs/instruction_injection_valves.md`.
+
+For a deep dive into the structure of arguments supplied to `pipe()`, see
+`docs/pipe_input.md`.
