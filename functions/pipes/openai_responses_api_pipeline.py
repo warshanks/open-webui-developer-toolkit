@@ -963,7 +963,7 @@ def transform_tools_for_responses_api(
                     "name": function_spec.get("name"),
                     "description": function_spec.get("description", ""),
                     "parameters": function_spec.get("parameters", {"type": "object"}),
-                    "strict": True,
+                    "strict": False,
                 },
             }
         )
