@@ -197,26 +197,21 @@ class Pipe:
         title = f"Result for {body['messages'][-1]['content'][:20]}"
 
         # Prevent the background task from generating a new title
-        original = __request__.app.state.config.ENABLE_TITLE_GENERATION
         __request__.app.state.config.ENABLE_TITLE_GENERATION = False
-        try:
-            Chats.update_chat_title_by_id(chat_id, title)
-            await __event_emitter__({"type": "chat:title", "data": title})
-            yield "..."
-        finally:
-            __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+        Chats.update_chat_title_by_id(chat_id, title)
+        await __event_emitter__({"type": "chat:title", "data": title})
+        yield "..."
 ```
 
 If you cannot modify the payload on the client, you can temporarily disable the
 feature in code:
 
 ```python
-original = __request__.app.state.config.ENABLE_TITLE_GENERATION
 __request__.app.state.config.ENABLE_TITLE_GENERATION = False
 try:
     ...
 finally:
-    __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+    pass
 ```
 
 ### Progress updates
@@ -227,6 +222,7 @@ with "Task Complete":
 
 ```python
 import asyncio
+import time
 from typing import Any, AsyncIterator, Callable, Awaitable, Dict
 from fastapi import Request
 from open_webui.models.chats import Chats
@@ -241,23 +237,21 @@ class Pipe:
         **_,
     ) -> AsyncIterator[str]:
         chat_id = __metadata__.get("chat_id")
-        original = __request__.app.state.config.ENABLE_TITLE_GENERATION
         __request__.app.state.config.ENABLE_TITLE_GENERATION = False
 
-        try:
-            for step in range(1, 4):
-                title = f"Processing {step}/3"
-                Chats.update_chat_title_by_id(chat_id, title)
-                await __event_emitter__({"type": "chat:title", "data": title})
-                await asyncio.sleep(0.1)
-                yield f"Step {step} done\n"
+        start = time.perf_counter()
+        for step in range(1, 4):
+            elapsed = int(time.perf_counter() - start)
+            title = f"⏳ Processing {step}/3 - {elapsed}s"
+            Chats.update_chat_title_by_id(chat_id, title)
+            await __event_emitter__({"type": "chat:title", "data": title})
+            await asyncio.sleep(1)
+            yield f"Step {step} done\n"
 
-            final_title = "Task Complete"
-            Chats.update_chat_title_by_id(chat_id, final_title)
-            await __event_emitter__({"type": "chat:title", "data": final_title})
-            yield "All done"
-        finally:
-            __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+        final_title = f"✅ Complete - {int(time.perf_counter() - start)}s"
+        Chats.update_chat_title_by_id(chat_id, final_title)
+        await __event_emitter__({"type": "chat:title", "data": final_title})
+        yield "All done"
 ```
 
 ## Manual updates via API
@@ -378,6 +372,13 @@ request disable it via the payload:
 "background_tasks": { "title_generation": false }
 ```
 or temporarily toggle `__request__.app.state.config.ENABLE_TITLE_GENERATION`.
+
+Other post-processing steps, like automatic tag extraction, can be disabled the
+same way:
+
+```json
+"background_tasks": { "title_generation": false, "tags_generation": false }
+```
 
 ---
 

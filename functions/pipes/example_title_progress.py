@@ -8,6 +8,7 @@ description: Update the chat title multiple times to show task progress.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, AsyncIterator, Callable, Awaitable, Dict
 from fastapi import Request
 
@@ -26,20 +27,18 @@ class Pipe:
         chat_id = __metadata__.get("chat_id")
 
         # Disable automatic title generation for this request
-        original = __request__.app.state.config.ENABLE_TITLE_GENERATION
         __request__.app.state.config.ENABLE_TITLE_GENERATION = False
 
-        try:
-            for step in range(1, 4):
-                title = f"Processing {step}/3"
-                Chats.update_chat_title_by_id(chat_id, title)
-                await __event_emitter__({"type": "chat:title", "data": title})
-                await asyncio.sleep(0.1)  # simulate work
-                yield f"Step {step} complete\n"
+        start = time.perf_counter()
+        for step in range(1, 4):
+            elapsed = int(time.perf_counter() - start)
+            title = f"⏳ Processing {step}/3 - {elapsed}s"
+            Chats.update_chat_title_by_id(chat_id, title)
+            await __event_emitter__({"type": "chat:title", "data": title})
+            await asyncio.sleep(1)
+            yield f"Step {step} complete\n"
 
-            final_title = "Task Complete"
-            Chats.update_chat_title_by_id(chat_id, final_title)
-            await __event_emitter__({"type": "chat:title", "data": final_title})
-            yield "All done!"
-        finally:
-            __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+        final_title = f"✅ Complete - {int(time.perf_counter() - start)}s"
+        Chats.update_chat_title_by_id(chat_id, final_title)
+        await __event_emitter__({"type": "chat:title", "data": final_title})
+        yield "All done!"
