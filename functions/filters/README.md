@@ -42,3 +42,8 @@ Filters may expose extra options via `Valves` and `UserValves` classes. These ar
 Set `file_handler = True` if the filter consumes uploaded files itself. Only parameters declared in a handler's signature are provided (e.g. `body`, `event`, `__user__`).
 
 See `external/FILTER_GUIDE.md` for deeper middleware notes and additional examples.
+
+## Example filters
+
+- `web_search_toggle_filter.py` – enable web search with a toggle.
+- `create_image_filter.py` – inject the `image_generation` tool with configurable `SIZE` and `QUALITY` valves.

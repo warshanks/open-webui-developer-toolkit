@@ -211,6 +211,12 @@ Example:
     "actions": [],
     "filters": [
       {
+        "id": "create_image_filter",
+        "name": "Create an Image",
+        "description": "Add the image_generation tool.",
+        "icon": "data:image/svg+xml;base64,PLACEHOLDER_SVG_ICON=="
+      },
+      {
         "id": "web_search_toggle_filter",
         "name": "Web Search",
         "description": "Enable web search when toggle is active.",
