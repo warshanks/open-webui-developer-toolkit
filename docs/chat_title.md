@@ -201,8 +201,45 @@ original = __request__.app.state.config.ENABLE_TITLE_GENERATION
 __request__.app.state.config.ENABLE_TITLE_GENERATION = False
 try:
     ...
-finally:
-    __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+  finally:
+      __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+```
+
+### Progress updates
+
+Long-running tasks can update the title multiple times to show progress. The
+pipe below emits "Processing 1/3", "Processing 2/3" and so on before finishing
+with "Task Complete":
+
+```python
+import asyncio
+from typing import Any, AsyncIterator, Callable, Awaitable, Dict
+from fastapi import Request
+from open_webui.models.chats import Chats
+
+class Pipe:
+    async def pipe(
+        self,
+        body: Dict[str, Any],
+        __request__: Request,
+        __event_emitter__: Callable[[Dict[str, Any]], Awaitable[None]],
+        __metadata__: Dict[str, Any],
+        **_,
+    ) -> AsyncIterator[str]:
+        chat_id = __metadata__.get("chat_id")
+        body.setdefault("background_tasks", {})["title_generation"] = False
+
+        for step in range(1, 4):
+            title = f"Processing {step}/3"
+            Chats.update_chat_title_by_id(chat_id, title)
+            await __event_emitter__({"type": "chat:title", "data": title})
+            await asyncio.sleep(0.1)
+            yield f"Step {step} done\n"
+
+        final_title = "Task Complete"
+        Chats.update_chat_title_by_id(chat_id, final_title)
+        await __event_emitter__({"type": "chat:title", "data": final_title})
+        yield "All done"
 ```
 
 ## Manual updates via API
