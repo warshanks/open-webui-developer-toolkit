@@ -358,7 +358,7 @@ class Pipe:
         if model in NATIVE_TOOL_UNSUPPORTED_MODELS:
             tools = None
         else:
-            tools = transform_tools_for_responses_api(__tools__)
+            tools = transform_tools_for_responses_api(body.get("tools", []))
             if valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
                 tools.append(
                     {
@@ -946,26 +946,29 @@ async def delete_response(
     resp.raise_for_status()
 
 
-def transform_tools_for_responses_api(registry: dict | None) -> list[dict]:
-    """Return tools JSON converted for the Responses API.
-    """
-    if not registry:
-        return []
-    raw = registry.get("tools", registry)
-    tools_out = []
-    for entry in raw.values():
-        spec = entry.get("spec", entry)
-        if "function" in spec:
-            spec = spec["function"]
-        tools_out.append(
+def transform_tools_for_responses_api(
+    tools_completion_api_json: list[dict] | None,
+) -> list[dict]:
+    """Return ``tools_completion_api_json`` converted for the Responses API."""
+
+    tools_responses_api_json: list[dict] = []
+    for tool in tools_completion_api_json or []:
+        if not isinstance(tool, dict):
+            continue
+        function_spec = tool.get("function", tool)
+        tools_responses_api_json.append(
             {
                 "type": "function",
-                "name": spec["name"],
-                "description": spec.get("description", ""),
-                "parameters": spec.get("parameters", {"type": "object"}),
+                "function": {
+                    "name": function_spec.get("name"),
+                    "description": function_spec.get("description", ""),
+                    "parameters": function_spec.get("parameters", {"type": "object"}),
+                    "strict": True,
+                },
             }
         )
-    return tools_out
+
+    return tools_responses_api_json
 
 
 async def load_chat_input(chat_id: str) -> list[dict]:

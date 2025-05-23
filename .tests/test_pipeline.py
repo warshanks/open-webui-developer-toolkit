@@ -18,23 +18,42 @@ def _reload_pipeline():
 
 def test_transform_tools_for_responses_api_variants(dummy_chat):
     pipeline = _reload_pipeline()
-    reg = {
-        "tools": {
-            "one": {
-                "spec": {
-                    "name": "foo",
-                    "description": "d",
-                    "parameters": {"type": "object"},
-                }
+    body_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "foo",
+                "description": "d",
+                "parameters": {"type": "object"},
             },
-            "two": {"spec": {"function": {"name": "bar"}}},
-        }
-    }
-    tools = pipeline.transform_tools_for_responses_api(reg)
-    assert tools[0]["name"] == "foo"
-    assert tools[1]["name"] == "bar"
-    assert tools[0]["type"] == "function"
-    assert tools[1]["type"] == "function"
+        },
+        {
+            "type": "function",
+            "name": "bar",
+            "parameters": {"type": "object"},
+        },
+    ]
+    tools = pipeline.transform_tools_for_responses_api(body_tools)
+    assert tools == [
+        {
+            "type": "function",
+            "function": {
+                "name": "foo",
+                "description": "d",
+                "parameters": {"type": "object"},
+                "strict": True,
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "bar",
+                "description": "",
+                "parameters": {"type": "object"},
+                "strict": True,
+            },
+        },
+    ]
 
 
 @pytest.mark.asyncio
