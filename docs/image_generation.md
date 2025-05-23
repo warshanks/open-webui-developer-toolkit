@@ -1,3 +1,25 @@
+Image generation
+================
+
+Learn how to generate or edit images.
+
+Overview
+--------
+
+The OpenAI API lets you generate and edit images from text prompts, using the GPT Image or DALL·E models. You can access image generation capabilities through two APIs:
+
+### Image API
+
+The [Image API](/docs/api-reference/images) provides three endpoints, each with distinct capabilities:
+
+*   **Generations**: [Generate images](#generate-images) from scratch based on a text prompt
+*   **Edits**: [Modify existing images](#edit-images) using a new prompt, either partially or entirely
+*   **Variations**: [Generate variations](#image-variations) of an existing image (available with DALL·E 2 only)
+
+This API supports `gpt-image-1` as well as `dall-e-2` and `dall-e-3`.
+
+### Responses API
+
 The [Responses API](/docs/api-reference/responses/create#responses-create-tools) allows you to generate images as part of conversations or multi-step flows. It supports image generation as a [built-in tool](/docs/guides/tools?api-mode=responses), and accepts image inputs and outputs within context.
 
 Compared to the Image API, it adds:
@@ -7,6 +29,31 @@ Compared to the Image API, it adds:
 *   **Flexible inputs**: Accept image [File](/docs/api-reference/files) IDs as input images, not just bytes
 
 The image generation tool in responses only supports `gpt-image-1`. For a list of mainline models that support calling this tool, refer to the [supported models](#supported-models) below.
+
+### Choosing the right API
+
+*   If you only need to generate or edit a single image from one prompt, the Image API is your best choice.
+*   If you want to build conversational, editable image experiences with GPT Image or display partial images during generation, go with the Responses API.
+
+Both APIs let you [customize output](#customize-image-output) — adjust quality, size, format, compression, and enable transparent backgrounds.
+
+### Model comparison
+
+Our latest and most advanced model for image generation is `gpt-image-1`, a natively multimodal language model.
+
+We recommend this model for its high-quality image generation and ability to use world knowledge in image creation. However, you can also use specialized image generation models—DALL·E 2 and DALL·E 3—with the Image API.
+
+|Model|Endpoints|Use case|
+|---|---|---|
+|DALL·E 2|Image API: Generations, Edits, Variations|Lower cost, concurrent requests, inpainting (image editing with a mask)|
+|DALL·E 3|Image API: Generations only|Higher image quality than DALL·E 2, support for larger resolutions|
+|GPT Image|Image API: Generations, Edits – Responses API support coming soon|Superior instruction following, text rendering, detailed editing, real-world knowledge|
+
+This guide focuses on GPT Image, but you can also switch to the docs for [DALL·E 2](/docs/guides/image-generation?image-generation-model=dall-e-2) and [DALL·E 3](/docs/guides/image-generation?image-generation-model=dall-e-3).
+
+To ensure this model is used responsibly, you may need to complete the [API Organization Verification](https://help.openai.com/en/articles/10910291-api-organization-verification) from your [developer console](https://platform.openai.com/settings/organization/general) before using `gpt-image-1`.
+
+![a vet with a baby otter](https://cdn.openai.com/API/docs/images/otter.png)
 
 Generate Images
 ---------------
@@ -1084,9 +1131,33 @@ When using image generation in the Responses API, the models that support callin
 *   `gpt-4.1-nano`
 *   `o3`
 
-Below is an example of how you can incorporate the streaming event documentation in the **Streaming** section. You can place it after the code examples, to explain how to interpret the events emitted by the Responses API during image generation.
+Cost and latency
+----------------
 
----
+This model generates images by first producing specialized image tokens. Both latency and eventual cost are proportional to the number of tokens required to render an image—larger image sizes and higher quality settings result in more tokens.
+
+The number of tokens generated depends on image dimensions and quality:
+
+|Quality|Square (1024×1024)|Portrait (1024×1536)|Landscape (1536×1024)|
+|---|---|---|---|
+|Low|272 tokens|408 tokens|400 tokens|
+|Medium|1056 tokens|1584 tokens|1568 tokens|
+|High|4160 tokens|6240 tokens|6208 tokens|
+
+Note that you will also need to account for [input tokens](/docs/guides/images-vision#gpt-image-1): text tokens for the prompt and image tokens for the input images if editing images.
+
+So the final cost is the sum of:
+
+*   input text tokens
+*   input image tokens if using the edits endpoint
+*   image output tokens
+
+Refer to our [pricing page](/pricing#image-generation) for more information about price per text and image tokens.
+
+### Partial images cost
+
+If you want to [stream image generation](#streaming) with the Responses API using the `partial_images` parameter, each partial image will incur an additional 100 image output tokens.
+
 
 ### Streaming
 
