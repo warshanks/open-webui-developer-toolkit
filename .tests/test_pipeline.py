@@ -16,7 +16,7 @@ def _reload_pipeline():
     return mod
 
 
-def test_prepare_tools_variants(dummy_chat):
+def test_transform_tools_for_responses_api_variants(dummy_chat):
     pipeline = _reload_pipeline()
     reg = {
         "tools": {
@@ -30,7 +30,7 @@ def test_prepare_tools_variants(dummy_chat):
             "two": {"spec": {"function": {"name": "bar"}}},
         }
     }
-    tools = pipeline.prepare_tools(reg)
+    tools = pipeline.transform_tools_for_responses_api(reg)
     assert tools[0]["name"] == "foo"
     assert tools[1]["name"] == "bar"
     assert tools[0]["type"] == "function"
