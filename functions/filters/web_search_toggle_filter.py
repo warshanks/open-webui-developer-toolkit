@@ -100,8 +100,9 @@ class Filter:
                     },
                 }
             )
-            # Inject the web_search tool for GPT-4o Search Preview
-            self._add_web_search_tool(body)
+            # Remove 'tools' (if present) as this route does not use them
+            if "tools" in body:
+                del body["tools"]
 
         else:
             # Model supports web_search: add the web_search tool if needed
