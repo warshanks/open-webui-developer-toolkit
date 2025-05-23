@@ -297,13 +297,15 @@ class Pipe:
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
                 pretty_log_block(
-                    {
-                        "body": body,
-                        "__user__": __user__,
-                        "__files__": __files__,
-                        "__metadata__": __metadata__,
-                        "__tools__": __tools__,
-                    },
+                    sanitize_for_log(
+                        {
+                            "body": body,
+                            "__user__": __user__,
+                            "__files__": __files__,
+                            "__metadata__": __metadata__,
+                            "__tools__": __tools__,
+                        }
+                    ),
                     "pipe_call",
                 )
             )
@@ -380,7 +382,10 @@ class Pipe:
         )
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
-                pretty_log_block(request_params, "prepared_request_params")
+                pretty_log_block(
+                    sanitize_for_log(request_params),
+                    "prepared_request_params",
+                )
             )
         usage_total: dict[str, Any] = {}
         last_response_id = None
@@ -402,13 +407,13 @@ class Pipe:
             if self.log.isEnabledFor(logging.DEBUG):
                 self.log.debug(
                     pretty_log_block(
-                        request_params.get("input", []),
+                        sanitize_for_log(request_params.get("input", [])),
                         f"turn_input_{loop_count}",
                     )
                 )
                 self.log.debug(
                     pretty_log_block(
-                        request_params,
+                        sanitize_for_log(request_params),
                         f"openai_request_params_{loop_count}",
                     )
                 )
@@ -1070,6 +1075,34 @@ def pretty_log_block(data: Any, label: str = "") -> str:
         content = str(data)
     label_line = f"{label} =" if label else ""
     return f"\n{'-' * 40}\n{label_line}\n{content}\n{'-' * 40}"
+
+
+def sanitize_for_log(obj: Any) -> Any:
+    """Return ``obj`` with bulky or sensitive fields replaced by placeholders."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k == "profile_image_url":
+                out[k] = "<profile_image_url>"
+            elif k in {"__files__", "files"} and isinstance(v, list):
+                out[k] = [
+                    {
+                        "id": f.get("id"),
+                        "name": f.get("name") or f.get("file", {}).get("filename"),
+                        "size": f.get("size")
+                        or f.get("file", {}).get("meta", {}).get("size"),
+                    }
+                    for f in v
+                    if isinstance(f, dict)
+                ]
+            elif k == "data" and isinstance(v, dict) and "content" in v:
+                out[k] = {"content": "<content>"}
+            else:
+                out[k] = sanitize_for_log(v)
+        return out
+    if isinstance(obj, list):
+        return [sanitize_for_log(i) for i in obj]
+    return obj
 
 
 def simplify_user_agent(ua: str) -> str:
