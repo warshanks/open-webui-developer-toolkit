@@ -294,6 +294,19 @@ class Pipe:
         mem_handler = _MemHandler(debug_logs)
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         self.log.addHandler(mem_handler)
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug(
+                pretty_log_block(
+                    {
+                        "body": body,
+                        "__user__": __user__,
+                        "__files__": __files__,
+                        "__metadata__": __metadata__,
+                        "__tools__": __tools__,
+                    },
+                    "pipe_call",
+                )
+            )
         valves = self._apply_user_overrides(__user__.get("valves"))
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
@@ -356,7 +369,6 @@ class Pipe:
 
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(pretty_log_block(tools, "tools"))
-            self.log.debug(pretty_log_block(instructions, "instructions"))
 
         request_params = await prepare_payload(
             valves,
@@ -366,6 +378,10 @@ class Pipe:
             __user__.get("email"),
             chat_id=chat_id,
         )
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug(
+                pretty_log_block(request_params, "prepared_request_params")
+            )
         usage_total: dict[str, Any] = {}
         last_response_id = None
         cleanup_ids: list[str] = []
@@ -400,7 +416,7 @@ class Pipe:
             try:
                 pending_calls: list[SimpleNamespace] = []
                 if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("response_stream created for loop #%d", loop_count)
+                    self.log.debug("Starting response stream (loop #%d)", loop_count)
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
@@ -413,7 +429,7 @@ class Pipe:
                     request_params,
                 ):
                     et = event.type
-                    if self.log.isEnabledFor(logging.DEBUG):
+                    if self.log.isEnabledFor(logging.DEBUG) and not et.endswith(".delta"):
                         self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
@@ -656,7 +672,17 @@ class Pipe:
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
         """Run tool calls asynchronously and return their results."""
-        return await execute_responses_tool_calls(calls, registry, self.log)
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug(
+                "Executing %d tool call(s): %s",
+                len(calls),
+                ", ".join(c.name for c in calls),
+            )
+        results = await execute_responses_tool_calls(calls, registry, self.log)
+        if self.log.isEnabledFor(logging.DEBUG):
+            for call, result in zip(calls, results):
+                self.log.debug("%s -> %s", call.name, result)
+        return results
 
     async def _emit_status(
         self,
@@ -876,8 +902,17 @@ async def stream_responses(
         "Content-Type": "application/json",
     }
 
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "POST %s/responses model=%s",
+            base_url.rstrip("/"),
+            params.get("model"),
+        )
+
     async with client.stream("POST", url, headers=headers, json=params) as resp:
         resp.raise_for_status()
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Streaming response with status %s", resp.status_code)
         event_type: str | None = None
         data_buf: list[str] = []
         async for raw in resp.aiter_lines():
@@ -896,6 +931,8 @@ async def stream_responses(
                 event_type = line[len("event:"):].strip()
             elif line.startswith("data:"):
                 data_buf.append(line[len("data:"):].strip())
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Response stream closed")
 async def delete_response(
     client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
 ) -> None:
