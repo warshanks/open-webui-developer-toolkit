@@ -30,6 +30,8 @@ Compared to the Image API, it adds:
 
 The image generation tool in responses only supports `gpt-image-1`. For a list of mainline models that support calling this tool, refer to the [supported models](#supported-models) below.
 
+In **Open WebUI** you can enable this tool by adding the **Create an Image** filter. The filter injects the `image_generation` tool and lets you configure the output `SIZE` and `QUALITY` (both default to `auto`).
+
 ### Choosing the right API
 
 *   If you only need to generate or edit a single image from one prompt, the Image API is your best choice.

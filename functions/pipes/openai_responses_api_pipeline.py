@@ -480,8 +480,8 @@ class Pipe:
                         )
                         continue
                     if et == "response.image_generation_call.partial_image":
-                        if __event_emitter__ and event.partial_image_b64:
-                            yield "![generated image](data:image/png;base64,{event.partial_image_b64})"
+                        if event.partial_image_b64:
+                            yield f"![generated image](data:image/png;base64,{event.partial_image_b64})"
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
@@ -530,14 +530,14 @@ class Pipe:
                                 done=True,
                             )
                         elif getattr(item, "type", None) == "image_generation_call":
-                           await self._emit_status(
-                              __event_emitter__,
-                              "🖼️ Image generation completed",
-                              last_status,
-                              done=True,
-                           )
-                           yield "![generated image](data:image/png;base64,{item.result})"
-                           continue
+                            if getattr(item, "result", None):
+                                yield f"![generated image](data:image/png;base64,{item.result})"
+                            await self._emit_status(
+                                __event_emitter__,
+                                "🖼️ Image generation completed",
+                                last_status,
+                                done=True,
+                            )
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(getattr(event, "annotation", ""))
