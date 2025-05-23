@@ -960,15 +960,19 @@ def transform_tools_for_responses_api(
     for tool in tools_completion_api_json or []:
         if not isinstance(tool, dict):
             continue
-        function_spec = tool.get("function", tool)
-        tools_responses_api_json.append(
-            {
-                "type": "function",
-                "name": function_spec.get("name"),
-                "description": function_spec.get("description", ""),
-                "parameters": function_spec.get("parameters", {"type": "object"}),
-            }
-        )
+        tool_type = tool.get("type")
+        if tool_type == "function" or "function" in tool:
+            function_spec = tool.get("function", tool)
+            tools_responses_api_json.append(
+                {
+                    "type": "function",
+                    "name": function_spec.get("name"),
+                    "description": function_spec.get("description", ""),
+                    "parameters": function_spec.get("parameters", {"type": "object"}),
+                }
+            )
+        else:
+            tools_responses_api_json.append(tool)
 
     return tools_responses_api_json
 
