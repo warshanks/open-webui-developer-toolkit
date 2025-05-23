@@ -312,7 +312,7 @@ class Pipe:
         if valves.ENABLE_NATIVE_TOOL_CALLING:
             await self._ensure_native_function_calling(__metadata__)
 
-        chat_id = __metadata__.get("chat_id") or body.get("chat_id")
+        chat_id = __metadata__.get("chat_id")
         message_id = __metadata__.get("message_id")
 
         self.log.info(
@@ -358,7 +358,7 @@ class Pipe:
         if model in NATIVE_TOOL_UNSUPPORTED_MODELS:
             tools = None
         else:
-            tools = prepare_tools(__tools__)
+            tools = transform_tools_for_responses_api(__tools__)
             if valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
                 tools.append(
                     {
@@ -611,7 +611,7 @@ class Pipe:
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
-            __metadata__["chat_id"],
+            chat_id,
             (time.perf_counter_ns() - start_ns) / 1e6,
             usage_total.get("loops", 1),
             usage_total.get("input_tokens", 0),
@@ -946,8 +946,14 @@ async def delete_response(
     resp.raise_for_status()
 
 
-def prepare_tools(registry: dict | None) -> list[dict]:
-    """Convert WebUI tool registry entries to OpenAI format."""
+def transform_tools_for_responses_api(registry: dict | None) -> list[dict]:
+    """Return ``__tools__`` converted for the Responses API.
+
+    ``registry`` is the WebUI tool registry mapping tool names to
+    ``{spec, callable, ...}`` dictionaries. The Responses API expects a list of
+    ``{"type": "function", "name": ...}`` entries, mirroring the ``tools`` key in
+    a chat body.
+    """
     if not registry:
         return []
     raw = registry.get("tools", registry)
