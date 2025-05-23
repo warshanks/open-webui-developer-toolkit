@@ -1,25 +1,3 @@
-Image generation
-================
-
-Learn how to generate or edit images.
-
-Overview
---------
-
-The OpenAI API lets you generate and edit images from text prompts, using the GPT Image or DALL·E models. You can access image generation capabilities through two APIs:
-
-### Image API
-
-The [Image API](/docs/api-reference/images) provides three endpoints, each with distinct capabilities:
-
-*   **Generations**: [Generate images](#generate-images) from scratch based on a text prompt
-*   **Edits**: [Modify existing images](#edit-images) using a new prompt, either partially or entirely
-*   **Variations**: [Generate variations](#image-variations) of an existing image (available with DALL·E 2 only)
-
-This API supports `gpt-image-1` as well as `dall-e-2` and `dall-e-3`.
-
-### Responses API
-
 The [Responses API](/docs/api-reference/responses/create#responses-create-tools) allows you to generate images as part of conversations or multi-step flows. It supports image generation as a [built-in tool](/docs/guides/tools?api-mode=responses), and accepts image inputs and outputs within context.
 
 Compared to the Image API, it adds:
@@ -29,31 +7,6 @@ Compared to the Image API, it adds:
 *   **Flexible inputs**: Accept image [File](/docs/api-reference/files) IDs as input images, not just bytes
 
 The image generation tool in responses only supports `gpt-image-1`. For a list of mainline models that support calling this tool, refer to the [supported models](#supported-models) below.
-
-### Choosing the right API
-
-*   If you only need to generate or edit a single image from one prompt, the Image API is your best choice.
-*   If you want to build conversational, editable image experiences with GPT Image or display partial images during generation, go with the Responses API.
-
-Both APIs let you [customize output](#customize-image-output) — adjust quality, size, format, compression, and enable transparent backgrounds.
-
-### Model comparison
-
-Our latest and most advanced model for image generation is `gpt-image-1`, a natively multimodal language model.
-
-We recommend this model for its high-quality image generation and ability to use world knowledge in image creation. However, you can also use specialized image generation models—DALL·E 2 and DALL·E 3—with the Image API.
-
-|Model|Endpoints|Use case|
-|---|---|---|
-|DALL·E 2|Image API: Generations, Edits, Variations|Lower cost, concurrent requests, inpainting (image editing with a mask)|
-|DALL·E 3|Image API: Generations only|Higher image quality than DALL·E 2, support for larger resolutions|
-|GPT Image|Image API: Generations, Edits – Responses API support coming soon|Superior instruction following, text rendering, detailed editing, real-world knowledge|
-
-This guide focuses on GPT Image, but you can also switch to the docs for [DALL·E 2](/docs/guides/image-generation?image-generation-model=dall-e-2) and [DALL·E 3](/docs/guides/image-generation?image-generation-model=dall-e-3).
-
-To ensure this model is used responsibly, you may need to complete the [API Organization Verification](https://help.openai.com/en/articles/10910291-api-organization-verification) from your [developer console](https://platform.openai.com/settings/organization/general) before using `gpt-image-1`.
-
-![a vet with a baby otter](https://cdn.openai.com/API/docs/images/otter.png)
 
 Generate Images
 ---------------
@@ -1131,29 +1084,220 @@ When using image generation in the Responses API, the models that support callin
 *   `gpt-4.1-nano`
 *   `o3`
 
-Cost and latency
-----------------
+Below is an example of how you can incorporate the streaming event documentation in the **Streaming** section. You can place it after the code examples, to explain how to interpret the events emitted by the Responses API during image generation.
 
-This model generates images by first producing specialized image tokens. Both latency and eventual cost are proportional to the number of tokens required to render an image—larger image sizes and higher quality settings result in more tokens.
+---
 
-The number of tokens generated depends on image dimensions and quality:
+### Streaming
 
-|Quality|Square (1024×1024)|Portrait (1024×1536)|Landscape (1536×1024)|
-|---|---|---|---|
-|Low|272 tokens|408 tokens|400 tokens|
-|Medium|1056 tokens|1584 tokens|1568 tokens|
-|High|4160 tokens|6240 tokens|6208 tokens|
+The Responses API supports streaming for image generation. This allows partial images or status updates to be provided in real-time rather than waiting for a final response.
 
-Note that you will also need to account for [input tokens](/docs/guides/images-vision#gpt-image-1): text tokens for the prompt and image tokens for the input images if editing images.
+You can adjust the `partial_images` parameter to receive 1–3 partial images. For each partial image or status update, the API emits events. Below is an example of how to stream image generation and handle emitted events:
 
-So the final cost is the sum of:
+```javascript
+import OpenAI from "openai";
+import fs from "fs";
+const openai = new OpenAI();
 
-*   input text tokens
-*   input image tokens if using the edits endpoint
-*   image output tokens
+const stream = await openai.responses.create({
+  model: "gpt-4.1",
+  input:
+    "Draw a gorgeous image of a river made of white owl feathers, snaking its way through a serene winter landscape",
+  stream: true,
+  tools: [{ type: "image_generation", partial_images: 2 }],
+});
 
-Refer to our [pricing page](/pricing#image-generation) for more information about price per text and image tokens.
+for await (const event of stream) {
+  // Inspect event.type to determine which streaming event you have received
+  switch (event.type) {
+    case "response.image_generation_call.in_progress":
+      console.log("Image generation call is in progress:", event);
+      break;
+    case "response.image_generation_call.generating":
+      console.log("Image generation is actively running:", event);
+      break;
+    case "response.image_generation_call.partial_image":
+      // This event provides partial image data in Base64
+      const idx = event.partial_image_index;
+      const imageBase64 = event.partial_image_b64;
+      const imageBuffer = Buffer.from(imageBase64, "base64");
+      fs.writeFileSync(`river-partial-${idx}.png`, imageBuffer);
+      break;
+    case "response.image_generation_call.completed":
+      console.log("Image generation call is complete:", event);
+      break;
+    default:
+      console.log("Other event:", event);
+  }
+}
+```
 
-### Partial images cost
+```python
+from openai import OpenAI
+import base64
 
-If you want to [stream image generation](#streaming) with the Responses API using the `partial_images` parameter, each partial image will incur an additional 100 image output tokens.
+client = OpenAI()
+
+stream = client.responses.create(
+    model="gpt-4.1",
+    input="Draw a gorgeous image of a river made of white owl feathers, snaking its way through a serene winter landscape",
+    stream=True,
+    tools=[{"type": "image_generation", "partial_images": 2}],
+)
+
+for event in stream:
+    event_type = event.type
+    if event_type == "response.image_generation_call.in_progress":
+        print("Image generation call in progress:", event)
+    elif event_type == "response.image_generation_call.generating":
+        print("Image generation is actively running:", event)
+    elif event_type == "response.image_generation_call.partial_image":
+        idx = event.partial_image_index
+        image_base64 = event.partial_image_b64
+        image_bytes = base64.b64decode(image_base64)
+        with open(f"river-partial-{idx}.png", "wb") as f:
+            f.write(image_bytes)
+    elif event_type == "response.image_generation_call.completed":
+        print("Image generation call is complete:", event)
+    else:
+        print("Other event:", event)
+```
+
+#### Streaming events reference
+
+When streaming is enabled, the Responses API sends a series of events that inform you of the progress of image generation. Below are the event types and their schemas.
+
+---
+
+##### **`response.image_generation_call.in_progress`**
+
+Emitted when an image generation tool call is in progress. This event typically fires early, letting you know the process started successfully.
+
+<details>
+<summary>Event object</summary>
+
+```json
+{
+  "type": "response.image_generation_call.in_progress",
+  "output_index": 0,
+  "item_id": "item-123",
+  "sequence_number": 0
+}
+```
+
+**Fields**
+
+| Field             | Type    | Description                                                                      |
+| ----------------- | ------- | -------------------------------------------------------------------------------- |
+| `type`            | string  | The event type. Always `"response.image_generation_call.in_progress"`.           |
+| `output_index`    | integer | The index of the output item in the response's output array.                     |
+| `item_id`         | string  | The unique identifier of the image generation item being processed.              |
+| `sequence_number` | integer | The sequence number for the event. For ordering among multiple streaming events. |
+
+</details>
+
+---
+
+##### **`response.image_generation_call.generating`**
+
+Emitted when the image generation tool call is actively generating an image (intermediate state). This is usually sent while the model is synthesizing and refining the image.
+
+<details>
+<summary>Event object</summary>
+
+```json
+{
+  "type": "response.image_generation_call.generating",
+  "output_index": 0,
+  "item_id": "item-123",
+  "sequence_number": 1
+}
+```
+
+**Fields**
+
+| Field             | Type    | Description                                                                      |
+| ----------------- | ------- | -------------------------------------------------------------------------------- |
+| `type`            | string  | The event type. Always `"response.image_generation_call.generating"`.            |
+| `output_index`    | integer | The index of the output item in the response's output array.                     |
+| `item_id`         | string  | The unique identifier of the image generation item being processed.              |
+| `sequence_number` | integer | The sequence number for the event. For ordering among multiple streaming events. |
+
+</details>
+
+---
+
+##### **`response.image_generation_call.partial_image`**
+
+Emitted when a partial image is available during streaming. The `partial_image_b64` field contains a Base64-encoded PNG (or WebP/JPEG if requested). You can decode it, save it to a file, or render it in a browser to give users a preview.
+
+<details>
+<summary>Event object</summary>
+
+```json
+{
+  "type": "response.image_generation_call.partial_image",
+  "output_index": 0,
+  "item_id": "item-123",
+  "sequence_number": 2,
+  "partial_image_index": 0,
+  "partial_image_b64": "..."
+}
+```
+
+**Fields**
+
+| Field                 | Type    | Description                                                                                          |
+| --------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `type`                | string  | The event type. Always `"response.image_generation_call.partial_image"`.                             |
+| `output_index`        | integer | The index of the output item in the response's output array.                                         |
+| `item_id`             | string  | The unique identifier of the image generation item being processed.                                  |
+| `sequence_number`     | integer | The sequence number for the event. For ordering among multiple streaming events.                     |
+| `partial_image_index` | integer | A 0-based index for the partial image (the first partial image you receive will have index `0`).     |
+| `partial_image_b64`   | string  | Base64-encoded partial image data, suitable for rendering or writing to a file (e.g., `river0.png`). |
+
+</details>
+
+---
+
+##### **`response.image_generation_call.completed`**
+
+Emitted when the image generation tool call has completed and the final image is available. The final rendered image is then provided in a subsequent piece of the response (e.g., an `image_generation_call` item with the entire `result` in Base64).
+
+<details>
+<summary>Event object</summary>
+
+```json
+{
+  "type": "response.image_generation_call.completed",
+  "output_index": 0,
+  "item_id": "item-123",
+  "sequence_number": 3
+}
+```
+
+**Fields**
+
+| Field             | Type    | Description                                                                      |
+| ----------------- | ------- | -------------------------------------------------------------------------------- |
+| `type`            | string  | The event type. Always `"response.image_generation_call.completed"`.             |
+| `output_index`    | integer | The index of the output item in the response's output array.                     |
+| `item_id`         | string  | The unique identifier of the image generation item being processed.              |
+| `sequence_number` | integer | The sequence number for the event. For ordering among multiple streaming events. |
+
+</details>
+
+---
+
+#### Result
+
+| Partial 1                | Partial 2                 | Final image      |
+| ------------------------ | ------------------------- | ---------------- |
+| *(first partial output)* | *(second partial output)* | *(final output)* |
+
+Prompt: “Draw a gorgeous image of a river made of white owl feathers, snaking its way through a serene winter landscape.”
+
+---
+
+With these events, you can provide a more interactive user experience—showing a partial preview while the final image is still being generated, or updating the UI with progress states as they arrive.
+
