@@ -37,21 +37,15 @@ def test_transform_tools_for_responses_api_variants(dummy_chat):
     assert tools == [
         {
             "type": "function",
-            "function": {
-                "name": "foo",
-                "description": "d",
-                "parameters": {"type": "object"},
-                "strict": True,
-            },
+            "name": "foo",
+            "description": "d",
+            "parameters": {"type": "object"},
         },
         {
             "type": "function",
-            "function": {
-                "name": "bar",
-                "description": "",
-                "parameters": {"type": "object"},
-                "strict": True,
-            },
+            "name": "bar",
+            "description": "",
+            "parameters": {"type": "object"},
         },
     ]
 
