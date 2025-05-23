@@ -25,7 +25,8 @@ tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `execute_responses_tool_calls`.
 
 For a minimalist demo that updates the chat title as a task progresses see
-`example_title_progress.py`.
+`example_title_progress.py`. The pipe disables automatic title generation for the
+entire request so the built-in background task does not overwrite its updates.
 
 Additional valves for injecting the current date and user context are documented
 in `docs/instruction_injection_valves.md`.
