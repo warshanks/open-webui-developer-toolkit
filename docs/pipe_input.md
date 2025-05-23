@@ -141,37 +141,90 @@ Example:
 
 ```jsonc
 {
-  "user_id": "91216674-177d-4d5b-8a0b-a2d83783eb54",
-  "chat_id": "98ae8607-32df-411a-bd49-0dd56f55c1a5",
-  "message_id": "7f4d7ae8-1140-4383-8777-340cfdf0774e",
-  "session_id": "SLVt0Uz8iSQ8EzkeAABD",
+  "user_id": "00000000-0000-0000-0000-000000000000",
+  "chat_id": "11111111-1111-1111-1111-111111111111",
+  "message_id": "22222222-2222-2222-2222-222222222222",
+  "session_id": "ABC123456SESSIONID",
   "filter_ids": [],
-  "tool_ids": ["calculator"],
+  "tool_ids": null,
   "tool_servers": [],
-  "files": null,
   "features": {
     "image_generation": false,
     "code_interpreter": false,
     "web_search": false
   },
   "variables": {
-    "{{USER_NAME}}": "Alice",
-    "{{CURRENT_DATETIME}}": "2025-05-22 17:18:33"
+    "{{USER_NAME}}": "Jane Doe [Example Corp]",
+    "{{USER_LOCATION}}": "Unknown",
+    "{{CURRENT_DATETIME}}": "2025-05-22 12:00:00",
+    "{{CURRENT_DATE}}": "2025-05-22",
+    "{{CURRENT_TIME}}": "12:00:00",
+    "{{CURRENT_WEEKDAY}}": "Thursday",
+    "{{CURRENT_TIMEZONE}}": "America/New_York",
+    "{{USER_LANGUAGE}}": "en-US"
   },
   "model": {
     "id": "openai_responses.gpt-4.1",
-    "name": "OpenAI: GPT-4.1 (Preview)"
+    "name": "OpenAI: GPT-4.1 (Preview) ★★☆☆",
+    "object": "model",
+    "created": 1747769575,
+    "owned_by": "openai",
+    "pipe": {
+      "type": "pipe"
+    },
+    "info": {
+      "id": "openai_responses.gpt-4.1",
+      "user_id": "00000000-0000-0000-0000-000000000000",
+      "base_model_id": null,
+      "name": "OpenAI: GPT-4.1 (Preview) ★★☆☆",
+      "params": {
+        "function_calling": "native",
+        "system": "You are a helpful assistant. Current date: {{CURRENT_DATE}}"
+      },
+      "meta": {
+        "profile_image_url": "data:image/png;base64,PLACEHOLDER_IMAGE_BASE64==",
+        "description": "⚠️ Experimental Preview ⚠️ This is a next-gen instruction-following model.",
+        "capabilities": {
+          "vision": true,
+          "file_upload": true,
+          "web_search": false,
+          "image_generation": false,
+          "code_interpreter": false,
+          "citations": true,
+          "usage": true
+        },
+        "suggestion_prompts": null,
+        "tags": [
+          {
+            "name": "⚡Base Model"
+          }
+        ],
+        "filterIds": [
+          "web_search_toggle"
+        ]
+      },
+      "access_control": null,
+      "is_active": true,
+      "updated_at": 1747778445,
+      "created_at": 1747778445
+    },
+    "actions": [],
+    "filters": [
+      {
+        "id": "web_search_toggle_filter",
+        "name": "Web Search",
+        "description": "Enable web search when toggle is active.",
+        "icon": "data:image/svg+xml;base64,PLACEHOLDER_SVG_ICON=="
+      }
+    ],
+    "tags": [
+      {
+        "name": "⚡Base Model"
+      }
+    ]
   },
-  "actions": [],
-  "filters": [
-    {
-      "id": "web_search_toggle_filter",
-      "name": "Web Search",
-      "description": "Enable GPT-4o Search Preview...",
-      "icon": "<icon data>"
-    }
-  ],
-  "tags": [{"name": "Base Model"}]
+  "direct": false,
+  "function_calling": "native"
 }
 ```
 
