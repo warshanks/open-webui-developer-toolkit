@@ -24,6 +24,9 @@ tool calls.  See `openai_responses_api_pipeline.py` for async helpers such as
 `stream_responses`, `get_responses`, `extract_response_text`, and
 `execute_responses_tool_calls`.
 
+For a minimalist demo that updates the chat title as a task progresses see
+`example_title_progress.py`.
+
 Additional valves for injecting the current date and user context are documented
 in `docs/instruction_injection_valves.md`.
 
