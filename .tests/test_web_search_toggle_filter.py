@@ -19,10 +19,8 @@ async def test_add_tool_for_supported_models():
     mod = _load_filter()
     flt = mod.Filter()
     body = {"model": "openai_responses.gpt-4o"}
-    reg = {}
-    out = await flt.inlet(body, __tools__=reg)
+    out = await flt.inlet(body)
     assert any(t.get("type") == "web_search" for t in out.get("tools", []))
-    assert any(t.get("type") == "web_search" for t in reg.get("tools", []))
 
 
 @pytest.mark.asyncio
@@ -33,10 +31,8 @@ async def test_no_duplicate_tools():
         "model": "openai_responses.gpt-4.1-mini",
         "tools": [{"type": "web_search", "search_context_size": "medium"}],
     }
-    reg = {"tools": [{"type": "web_search", "search_context_size": "medium"}]}
-    out = await flt.inlet(body, __tools__=reg)
+    out = await flt.inlet(body)
     assert len([t for t in out["tools"] if t.get("type") == "web_search"]) == 1
-    assert len([t for t in reg["tools"] if t.get("type") == "web_search"]) == 1
 
 
 @pytest.mark.asyncio
@@ -44,11 +40,9 @@ async def test_search_preview_for_other_models():
     mod = _load_filter()
     flt = mod.Filter()
     body = {"model": "other"}
-    reg = {}
-    out = await flt.inlet(body, __tools__=reg)
+    out = await flt.inlet(body)
     assert out["model"] == "gpt-4o-search-preview"
-    assert any(t.get("type") == "web_search" for t in reg.get("tools", []))
-    assert out["tools"] is None
+    assert any(t.get("type") == "web_search" for t in out.get("tools", []))
 
 
 def test_outlet_handles_missing_emitter():
