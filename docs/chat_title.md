@@ -165,6 +165,157 @@ Chats.update_chat_title_by_id(chat_id, "Processing...")
 ```
 【F:external/open-webui/backend/open_webui/models/chats.py†L175-L214】
 
+## Updating the title from a pipe
+
+A custom pipe can persist a title and notify the UI at run time. Use
+`Chats.update_chat_title_by_id` together with `__event_emitter__`. Disable
+automatic generation in the request to keep your value:
+
+```python
+from typing import Any, AsyncIterator, Callable, Awaitable, Dict
+from fastapi import Request
+from open_webui.models.chats import Chats
+
+class Pipe:
+    async def pipe(
+        self,
+        body: Dict[str, Any],
+        __request__: Request,
+        __event_emitter__: Callable[[Dict[str, Any]], Awaitable[None]],
+        __metadata__: Dict[str, Any],
+        **_,
+    ) -> AsyncIterator[str]:
+        chat_id = __metadata__.get("chat_id")
+        title = f"Result for {body['messages'][-1]['content'][:20]}"
+        Chats.update_chat_title_by_id(chat_id, title)
+        await __event_emitter__({"type": "chat:title", "data": title})
+        body.setdefault("background_tasks", {})["title_generation"] = False
+        yield "..."
+```
+
+To temporarily disable generation for the same request without editing the
+payload, wrap your call with:
+
+```python
+original = __request__.app.state.config.ENABLE_TITLE_GENERATION
+__request__.app.state.config.ENABLE_TITLE_GENERATION = False
+try:
+    ...
+finally:
+    __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+```
+
+## Manual updates via API
+
+The sidebar’s "Edit" button calls `updateChatById` to persist a custom title. The
+Svelte component posts to `/chats/{id}` with a new `title` field:
+
+```svelte
+const editChatTitle = async (id, title) => {
+        if (title === '') {
+                toast.error($i18n.t('Title cannot be an empty string.'));
+        } else {
+                await updateChatById(localStorage.token, id, {
+                        title: title
+                });
+                if (id === $chatId) {
+                        _chatTitle.set(title);
+                }
+                currentChatPage.set(1);
+                await chats.set(await getChatList(localStorage.token, $currentChatPage));
+                await pinnedChats.set(await getPinnedChatList(localStorage.token));
+                dispatch('change');
+        }
+};
+```
+【F:external/open-webui/src/lib/components/layout/Sidebar/ChatItem.svelte†L71-L92】
+
+The helper function itself issues a POST request to `/chats/<id>`:
+
+```ts
+export const updateChatById = async (token: string, id: string, chat: object) => {
+        let error = null;
+        const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}`, {
+                method: 'POST',
+                headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        ...(token && { authorization: `Bearer ${token}` })
+                },
+                body: JSON.stringify({
+                        chat: chat
+                })
+        })
+                .then(async (res) => {
+                        if (!res.ok) throw await res.json();
+                        return res.json();
+                })
+                .catch((err) => {
+                        error = err;
+                        console.error(err);
+                        return null;
+                });
+        if (error) {
+                throw error;
+        }
+        return res;
+};
+```
+【F:external/open-webui/src/lib/apis/chats/index.ts†L788-L829】
+
+## Sending a `chat:title` event
+
+After generating a title, the backend updates the database and broadcasts a
+websocket event so connected clients refresh the sidebar:
+
+```python
+Chats.update_chat_title_by_id(metadata["chat_id"], title)
+await event_emitter({
+    "type": "chat:title",
+    "data": title,
+})
+```
+【F:external/open-webui/backend/open_webui/utils/middleware.py†L1016-L1033】
+
+Note that `event_emitter` only updates stored messages for certain event types
+("status", "message", "replace"). It does **not** persist `chat:title` on its own:
+
+```python
+        if update_db:
+            if "type" in event_data and event_data["type"] == "status":
+                Chats.add_message_status_to_chat_by_id_and_message_id(...)
+
+            if "type" in event_data and event_data["type"] == "message":
+                ...
+
+            if "type" in event_data and event_data["type"] == "replace":
+                ...
+```
+【F:external/open-webui/backend/open_webui/socket/main.py†L324-L385】
+
+To emit a title change without background tasks, call `send_chat_message_event_by_id`
+with `{"type": "chat:title", "data": "New Title"}` and separately update the
+database via `updateChatById` or `Chats.update_chat_title_by_id`.
+
+## Configuration
+
+Title generation runs only when `ENABLE_TITLE_GENERATION` is true. The flag is
+loaded into the application state during startup:
+
+```python
+app.state.config.ENABLE_TITLE_GENERATION = ENABLE_TITLE_GENERATION
+```
+【F:external/open-webui/backend/open_webui/main.py†L910-L913】
+
+Administrators can toggle this via the interface settings where
+`taskConfig.ENABLE_TITLE_GENERATION` binds to a UI switch:
+
+```svelte
+<Switch bind:state={taskConfig.ENABLE_TITLE_GENERATION} />
+```
+【F:external/open-webui/src/lib/components/admin/Settings/Interface.svelte†L212-L215】
+
+
 To prevent the background task from overwriting your custom title in the same
 request disable it via the payload:
 
