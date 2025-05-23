@@ -481,10 +481,7 @@ class Pipe:
                         continue
                     if et == "response.image_generation_call.partial_image":
                         if __event_emitter__ and event.partial_image_b64:
-                            md = (
-                                f"![generated image](data:image/png;base64,{event.partial_image_b64})"
-                            )
-                            await __event_emitter__({"type": "message", "data": {"content": md}})
+                            yield "![generated image](data:image/png;base64,{event.partial_image_b64})"
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
@@ -533,17 +530,14 @@ class Pipe:
                                 done=True,
                             )
                         elif getattr(item, "type", None) == "image_generation_call":
-                            if __event_emitter__ and getattr(item, "result", None):
-                                md = (
-                                    f"![generated image](data:image/png;base64,{item.result})"
-                                )
-                                await __event_emitter__({"type": "message", "data": {"content": md}})
-                            await self._emit_status(
-                                __event_emitter__,
-                                "🖼️ Image generation completed",
-                                last_status,
-                                done=True,
-                            )
+                           await self._emit_status(
+                              __event_emitter__,
+                              "🖼️ Image generation completed",
+                              last_status,
+                              done=True,
+                           )
+                           yield "![generated image](data:image/png;base64,{item.result})"
+                           continue
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(getattr(event, "annotation", ""))
