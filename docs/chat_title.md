@@ -168,8 +168,16 @@ Chats.update_chat_title_by_id(chat_id, "Processing...")
 ## Updating the title from a pipe
 
 A custom pipe can persist a title and notify the UI at run time. Use
-`Chats.update_chat_title_by_id` together with `__event_emitter__`. Disable
-automatic generation in the request to keep your value:
+`Chats.update_chat_title_by_id` together with `__event_emitter__`. The
+server's background task will also try to generate a title at the end of the
+request. To prevent that from overwriting your custom value you must disable
+title generation **before** the request is processed (e.g. set
+`background_tasks.title_generation` in the payload or temporarily toggle the
+`ENABLE_TITLE_GENERATION` flag):
+
+The `background_tasks` options are removed from the payload before your pipe
+runs, so changing them inside the pipe will not stop the builtin title
+generator.
 
 ```python
 from typing import Any, AsyncIterator, Callable, Awaitable, Dict
@@ -187,22 +195,28 @@ class Pipe:
     ) -> AsyncIterator[str]:
         chat_id = __metadata__.get("chat_id")
         title = f"Result for {body['messages'][-1]['content'][:20]}"
-        Chats.update_chat_title_by_id(chat_id, title)
-        await __event_emitter__({"type": "chat:title", "data": title})
-        body.setdefault("background_tasks", {})["title_generation"] = False
-        yield "..."
+
+        # Prevent the background task from generating a new title
+        original = __request__.app.state.config.ENABLE_TITLE_GENERATION
+        __request__.app.state.config.ENABLE_TITLE_GENERATION = False
+        try:
+            Chats.update_chat_title_by_id(chat_id, title)
+            await __event_emitter__({"type": "chat:title", "data": title})
+            yield "..."
+        finally:
+            __request__.app.state.config.ENABLE_TITLE_GENERATION = original
 ```
 
-To temporarily disable generation for the same request without editing the
-payload, wrap your call with:
+If you cannot modify the payload on the client, you can temporarily disable the
+feature in code:
 
 ```python
 original = __request__.app.state.config.ENABLE_TITLE_GENERATION
 __request__.app.state.config.ENABLE_TITLE_GENERATION = False
 try:
     ...
-  finally:
-      __request__.app.state.config.ENABLE_TITLE_GENERATION = original
+finally:
+    __request__.app.state.config.ENABLE_TITLE_GENERATION = original
 ```
 
 ### Progress updates
@@ -227,19 +241,23 @@ class Pipe:
         **_,
     ) -> AsyncIterator[str]:
         chat_id = __metadata__.get("chat_id")
-        body.setdefault("background_tasks", {})["title_generation"] = False
+        original = __request__.app.state.config.ENABLE_TITLE_GENERATION
+        __request__.app.state.config.ENABLE_TITLE_GENERATION = False
 
-        for step in range(1, 4):
-            title = f"Processing {step}/3"
-            Chats.update_chat_title_by_id(chat_id, title)
-            await __event_emitter__({"type": "chat:title", "data": title})
-            await asyncio.sleep(0.1)
-            yield f"Step {step} done\n"
+        try:
+            for step in range(1, 4):
+                title = f"Processing {step}/3"
+                Chats.update_chat_title_by_id(chat_id, title)
+                await __event_emitter__({"type": "chat:title", "data": title})
+                await asyncio.sleep(0.1)
+                yield f"Step {step} done\n"
 
-        final_title = "Task Complete"
-        Chats.update_chat_title_by_id(chat_id, final_title)
-        await __event_emitter__({"type": "chat:title", "data": final_title})
-        yield "All done"
+            final_title = "Task Complete"
+            Chats.update_chat_title_by_id(chat_id, final_title)
+            await __event_emitter__({"type": "chat:title", "data": final_title})
+            yield "All done"
+        finally:
+            __request__.app.state.config.ENABLE_TITLE_GENERATION = original
 ```
 
 ## Manual updates via API
