@@ -39,25 +39,17 @@ class Filter:
             "Ni42NSIvPjwvc3ZnPg=="
         )
 
-    def _add_web_search_tool(self, body: dict, registry: dict | None = None) -> None:
-        """
-        Add OpenAI's web_search tool to the request if not already present.
-        Optionally also add it to the registry for tool discovery.
-        """
+    def _add_web_search_tool(self, body: dict) -> None:
+        """Append the web_search tool to ``body['tools']`` if missing."""
+
         entry = {
             "type": "web_search",
             "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
         }
 
-        # Ensure 'tools' is a list, append entry if missing
         tools = body.setdefault("tools", [])
         if not any(t.get("type") == "web_search" for t in tools):
             tools.append(entry)
-
-        if registry is not None:
-            reg_tools = registry.setdefault("tools", [])
-            if not any(t.get("type") == "web_search" for t in reg_tools):
-                reg_tools.append(entry)
 
     async def inlet(
         self,
@@ -93,7 +85,7 @@ class Filter:
                     }
                 )
 
-            # Set up reroute: override model, inject search options, remove tools
+            # Set up reroute: override model and inject search options
             body.update(
                 {
                     "model": "gpt-4o-search-preview",
@@ -111,13 +103,12 @@ class Filter:
                     },
                 }
             )
-            # Remove 'tools' (if present) as this route does not use them
-            if "tools" in body:
-                del body["tools"]
+            # Inject the web_search tool for GPT-4o Search Preview
+            self._add_web_search_tool(body)
 
         else:
             # Model supports web_search: add the web_search tool if needed
-            self._add_web_search_tool(body, __tools__)
+            self._add_web_search_tool(body)
 
         return body
 
