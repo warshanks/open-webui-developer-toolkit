@@ -947,12 +947,7 @@ async def delete_response(
 
 
 def transform_tools_for_responses_api(registry: dict | None) -> list[dict]:
-    """Return ``__tools__`` converted for the Responses API.
-
-    ``registry`` is the WebUI tool registry mapping tool names to
-    ``{spec, callable, ...}`` dictionaries. The Responses API expects a list of
-    ``{"type": "function", "name": ...}`` entries, mirroring the ``tools`` key in
-    a chat body.
+    """Return tools JSON converted for the Responses API.
     """
     if not registry:
         return []
