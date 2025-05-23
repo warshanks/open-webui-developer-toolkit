@@ -29,3 +29,7 @@ in `docs/instruction_injection_valves.md`.
 
 For a deep dive into the structure of arguments supplied to `pipe()`, see
 `docs/pipe_input.md`.
+
+Example:
+
+- `dynamic_title_update_demo.py` – updates the chat title while work is in progress.
