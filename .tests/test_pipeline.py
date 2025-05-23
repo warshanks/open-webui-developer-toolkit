@@ -863,6 +863,48 @@ async def test_tools_removed_for_unsupported_model(dummy_chat):
     assert "tool_choice" not in captured_params[0]
 
 
+@pytest.mark.asyncio
+async def test_image_generation_events_emit_markdown(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.image_generation_call.partial_image", partial_image_b64="AA"),
+        types.SimpleNamespace(type="response.image_generation_call.completed"),
+        types.SimpleNamespace(type="response.output_item.done", item=types.SimpleNamespace(type="image_generation_call", result="BB")),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    async def fake_stream(*_a, **_kw):
+        for e in events:
+            yield e
+
+    emitted = []
+
+    async def emitter(evt: dict):
+        emitted.append(evt)
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        await pipe.pipe(
+            {},
+            {},
+            None,
+            emitter,
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        )
+    await pipe.on_shutdown()
+
+    msgs = [e for e in emitted if e["type"] == "message"]
+    assert msgs[0]["data"]["content"].startswith("![generated image](data:image/png;base64,AA")
+    assert msgs[1]["data"]["content"].startswith("![generated image](data:image/png;base64,BB")
+
+
 def test_simplify_user_agent_helper(dummy_chat):
     pipeline = _reload_pipeline()
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36"
