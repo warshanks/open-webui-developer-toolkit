@@ -1,5 +1,5 @@
 """
-title: Web Search
+title: Search the web
 id: web_search_toggle_filter
 description: Enable GPT-4o Search Preview when the Web Search toggle is active.
 """
