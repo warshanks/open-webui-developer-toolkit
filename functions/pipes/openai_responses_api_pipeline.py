@@ -505,6 +505,12 @@ class Pipe:
                                 "🔍 Searching the internet...",
                                 last_status,
                             )
+                        elif getattr(item, "type", None) == "image_generation_call":
+                            await self._emit_status(
+                                __event_emitter__,
+                                "🖼️ Generating image...",
+                                last_status,
+                            )
                         continue
                     if et == "response.output_item.done":
                         item = getattr(event, "item", None)
