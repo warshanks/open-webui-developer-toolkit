@@ -959,12 +959,9 @@ def transform_tools_for_responses_api(
         tools_responses_api_json.append(
             {
                 "type": "function",
-                "function": {
-                    "name": function_spec.get("name"),
-                    "description": function_spec.get("description", ""),
-                    "parameters": function_spec.get("parameters", {"type": "object"}),
-                    "strict": False,
-                },
+                "name": function_spec.get("name"),
+                "description": function_spec.get("description", ""),
+                "parameters": function_spec.get("parameters", {"type": "object"}),
             }
         )
 

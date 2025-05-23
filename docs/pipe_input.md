@@ -45,16 +45,14 @@ Example:
   "tools": [
     {
       "type": "function",
-      "function": {
-        "name": "calculator",
-        "description": "Accurate math expressions, etc.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "expression": {"type": "string", "description": "..."}
-          },
-          "required": ["expression"]
-        }
+      "name": "calculator",
+      "description": "Accurate math expressions, etc.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {"type": "string", "description": "..."}
+        },
+        "required": ["expression"]
       }
     }
   ]
