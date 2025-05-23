@@ -4,7 +4,7 @@ This note summarises how Open WebUI creates and updates chat titles.
 
 ## Backend endpoint
 
-`backend/open_webui/routers/tasks.py` exposes a POST endpoint `/title/completions` that builds a prompt from recent messages and forwards it to the task model:
+`backend/open_webui/routers/tasks.py` exposes a POST endpoint `/title/completions` (served under the `/api/v1/tasks` prefix) that builds a prompt from recent messages and forwards it to the task model:
 
 ```python
 @router.post("/title/completions")
@@ -29,7 +29,7 @@ The handler constructs a prompt using `title_generation_template` and sends it t
 
 ## Background task
 
-During a chat request, `process_chat_response` schedules a background task that calls `generate_title` once the main reply is done:
+During a chat request, `process_chat_response` starts a background task after the main reply is sent. This task calls `generate_title` and updates the title:
 
 ```python
 if tasks and messages:
@@ -139,11 +139,11 @@ const generateTitleHandler = async () => {
 ```
 【F:external/open-webui/src/lib/components/layout/Sidebar/ChatItem.svelte†L229-L264】
 
-`editChatTitle` ultimately calls `updateChatById` through the `/chats/{id}` API endpoint.
+`editChatTitle` ultimately calls `updateChatById` through the `/api/v1/chats/{id}` API endpoint.
 
 ## Retrieving a title
 
-To fetch a chat including its title, use `GET /chats/{id}` which maps to `get_chat_by_id` in `routers/chats.py`.
+To fetch a chat including its title, use `GET /api/v1/chats/{id}` which maps to `get_chat_by_id` in `routers/chats.py`.
 
 ### API example
 
@@ -208,7 +208,7 @@ finally:
 ## Manual updates via API
 
 The sidebar’s "Edit" button calls `updateChatById` to persist a custom title. The
-Svelte component posts to `/chats/{id}` with a new `title` field:
+Svelte component posts to `/api/v1/chats/{id}` with a new `title` field:
 
 ```svelte
 const editChatTitle = async (id, title) => {
@@ -230,7 +230,7 @@ const editChatTitle = async (id, title) => {
 ```
 【F:external/open-webui/src/lib/components/layout/Sidebar/ChatItem.svelte†L71-L92】
 
-The helper function itself issues a POST request to `/chats/<id>`:
+The helper function itself issues a POST request to `/api/v1/chats/<id>`:
 
 ```ts
 export const updateChatById = async (token: string, id: string, chat: object) => {
@@ -326,4 +326,4 @@ or temporarily toggle `__request__.app.state.config.ENABLE_TITLE_GENERATION`.
 
 ---
 
-**In short**: the backend generates a title asynchronously after each response, updates the database, and emits a `chat:title` event. The UI listens for this event to update its stores and the browser tab. Users can also trigger `/title/completions` manually via the sidebar button, which posts the chat messages and chosen model to the same endpoint.
+**In short**: the backend generates a title asynchronously after each response, updates the database, and emits a `chat:title` event. The UI listens for this event to update its stores and the browser tab. Users can also trigger `/api/v1/tasks/title/completions` manually via the sidebar button, which posts the chat messages and chosen model to the same endpoint.
