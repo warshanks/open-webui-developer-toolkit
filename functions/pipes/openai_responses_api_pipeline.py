@@ -297,13 +297,9 @@ class Pipe:
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
                 pretty_log_block(
-                    {
-                        "body": body,
-                        "__user__": __user__,
-                        "__files__": __files__,
-                        "__metadata__": __metadata__,
-                        "__tools__": __tools__,
-                    },
+                    sanitize_pipe_call_inputs(
+                        body, __user__, __files__, __metadata__, __tools__
+                    ),
                     "pipe_call",
                 )
             )
@@ -380,7 +376,10 @@ class Pipe:
         )
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
-                pretty_log_block(request_params, "prepared_request_params")
+                pretty_log_block(
+                    sanitize_request_params(request_params),
+                    "prepared_request_params",
+                )
             )
         usage_total: dict[str, Any] = {}
         last_response_id = None
@@ -408,7 +407,7 @@ class Pipe:
                 )
                 self.log.debug(
                     pretty_log_block(
-                        request_params,
+                        sanitize_request_params(request_params),
                         f"openai_request_params_{loop_count}",
                     )
                 )
@@ -1070,6 +1069,49 @@ def pretty_log_block(data: Any, label: str = "") -> str:
         content = str(data)
     label_line = f"{label} =" if label else ""
     return f"\n{'-' * 40}\n{label_line}\n{content}\n{'-' * 40}"
+
+
+def sanitize_pipe_call_inputs(
+    body: dict[str, Any],
+    user: dict[str, Any],
+    files: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    tools: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a pruned version of the pipe call inputs for logging."""
+    sanitized_user = {k: v for k, v in user.items() if k != "profile_image_url"}
+    sanitized_files: list[dict[str, Any]] = []
+    for f in files or []:
+        sanitized_files.append(
+            {
+                "id": f.get("id"),
+                "name": f.get("name"),
+                "size": f.get("size"),
+                "status": f.get("status"),
+            }
+        )
+    sanitized_metadata = {
+        k: v for k, v in metadata.items() if k not in {"files", "profile_image_url"}
+    }
+    return {
+        "body": body,
+        "__user__": sanitized_user,
+        "__files__": sanitized_files,
+        "__metadata__": sanitized_metadata,
+        "__tools__": list(tools.keys()),
+    }
+
+
+def sanitize_request_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``params`` with bulky fields removed for logging."""
+    out = dict(params)
+    if "input" in out:
+        out["input_len"] = len(out["input"])
+        out.pop("input")
+    if "tools" in out:
+        out["tools"] = [t.get("type", "?") for t in out["tools"]]
+    out.pop("previous_response_id", None)
+    return out
 
 
 def simplify_user_agent(ua: str) -> str:
