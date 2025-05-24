@@ -302,7 +302,7 @@ class Pipe:
         mem_handler = _MemHandler(debug_logs)
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         self.log.addHandler(mem_handler)
-        valves = self._apply_user_overrides(__user__.get("valves"))
+        valves = self._apply_user_valve_overrides(__user__.get("valves"))
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
                 pretty_log_block(
@@ -320,7 +320,7 @@ class Pipe:
             )
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
-            await self._ensure_native_function_calling(__metadata__)
+            await self._enable_native_function_support(__metadata__)
 
         chat_id = __metadata__.get("chat_id")
         message_id = __metadata__.get("message_id")
@@ -756,7 +756,7 @@ class Pipe:
         last_status[0] = current
         await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-    def _apply_user_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
+    def _apply_user_valve_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
         """Return a ``Valves`` instance with user overrides applied."""
         valves = self.valves
         if not user_valves:
@@ -858,8 +858,8 @@ class Pipe:
         return f"ip_info: {ip}{f' - {ip_info}' if ip_info else ''}"
 
 
-    async def _ensure_native_function_calling(self, metadata: dict[str, Any]) -> None:
-        """Enable native function calling for a model if not already active."""
+    async def _enable_native_function_support(self, metadata: dict[str, Any]) -> None:
+        """Ensure native function calling is enabled for the current model."""
         if metadata.get("function_calling") == "native":
             return
 
