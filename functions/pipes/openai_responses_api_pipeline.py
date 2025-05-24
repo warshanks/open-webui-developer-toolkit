@@ -84,7 +84,11 @@ EMOJI_LEVELS = {
 # Feature support by model
 WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
 REASONING_MODELS = {"o3", "o4-mini", "o3-mini"}
-NATIVE_TOOL_UNSUPPORTED_MODELS = {"chatgpt-4o-latest", "codex-mini-latest"}
+NATIVE_TOOL_UNSUPPORTED_MODELS = {
+    "chatgpt-4o-latest",
+    "codex-mini-latest",
+    "gpt-4o-search-preview",
+}
 IMAGE_GEN_TOOL_SUPPORTED_MODELS = {"gpt-4o", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano" "gpt-4o", "gpt-4o-mini", "o3"} # https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1&api=responses&multi-turn=imageid#supported-models
 
 # Precompiled regex for citation annotations
