@@ -992,31 +992,34 @@ async def delete_response(
     resp.raise_for_status()
 
 
-def transform_tools_for_responses_api(
-    tools_completion_api_json: list[dict] | None,
-) -> list[dict]:
-    """Return ``tools_completion_api_json`` converted for the Responses API."""
+def transform_tools_for_responses_api(tools: list[dict] | None) -> list[dict]:
+    """
+    Return a list of tools in which any nested dictionary matching tool["type"]
+    is flattened into top-level fields. Only merges new fields; doesn't overwrite
+    existing ones.
+    """
+    if not tools:
+        return []
 
-    tools_responses_api_json: list[dict] = []
-    for tool in tools_completion_api_json or []:
+    transformed_tools = []
+    for tool in tools:
+        # Only process if it's actually a dict
         if not isinstance(tool, dict):
             continue
+           
+        # Check if "type" is present and matches a nested dict key
         tool_type = tool.get("type")
-        if tool_type == "function" or "function" in tool:
-            function_spec = tool.get("function", tool)
-            tools_responses_api_json.append(
-                {
-                    "type": "function",
-                    "name": function_spec.get("name"),
-                    "description": function_spec.get("description", ""),
-                    "parameters": function_spec.get("parameters", {"type": "object"}),
-                }
-            )
-        else:
-            tools_responses_api_json.append(tool)
+        if tool_type and tool_type in tool and isinstance(tool[tool_type], dict):
+            nested_data = tool.pop(tool_type)  # remove the nested dictionary
 
-    return tools_responses_api_json
+            # Move the nested fields to the top level,
+            for k, v in nested_data.items():
+                if k not in tool:
+                    tool[k] = v
 
+        transformed_tools.append(tool)
+
+    return transformed_tools
 
 async def build_chat_history_for_responses_api(
     *, chat_id: str | None = None, messages: list[dict] | None = None
