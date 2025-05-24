@@ -44,7 +44,6 @@ def test_transform_tools_for_responses_api_variants(dummy_chat):
         {
             "type": "function",
             "name": "bar",
-            "description": "",
             "parameters": {"type": "object"},
         },
     ]
@@ -56,7 +55,9 @@ def test_transform_tools_for_responses_api_keeps_non_function(dummy_chat):
         {"type": "web_search", "web_search": {"search_context_size": "medium"}}
     ]
     tools = pipeline.transform_tools_for_responses_api(body_tools)
-    assert tools == body_tools
+    assert tools == [
+        {"type": "web_search", "search_context_size": "medium"}
+    ]
 
 
 def test_transform_tools_for_responses_api_mixed(dummy_chat):
@@ -71,7 +72,44 @@ def test_transform_tools_for_responses_api_mixed(dummy_chat):
         },
     ]
     tools = pipeline.transform_tools_for_responses_api(body_tools)
-    assert tools == body_tools
+    assert tools == [
+        {"type": "web_search", "search_context_size": "medium"},
+        {
+            "type": "function",
+            "name": "calculator",
+            "description": "math",
+            "parameters": {"type": "object"},
+        },
+    ]
+
+
+def test_transform_tools_for_responses_api_no_overwrite(dummy_chat):
+    pipeline = _reload_pipeline()
+    body_tools = [
+        {
+            "type": "function",
+            "name": "outer",
+            "function": {"name": "inner", "description": "desc"},
+        }
+    ]
+    tools = pipeline.transform_tools_for_responses_api(body_tools)
+    assert tools == [
+        {"type": "function", "name": "outer", "description": "desc"}
+    ]
+
+
+def test_transform_tools_for_responses_api_skips_invalid(dummy_chat):
+    pipeline = _reload_pipeline()
+    body_tools = [
+        ["not", "dict"],
+        {"function": {"name": "bad"}},
+        {"type": "function"},
+    ]
+    tools = pipeline.transform_tools_for_responses_api(body_tools)
+    assert tools == [
+        {"function": {"name": "bad"}},
+        {"type": "function"},
+    ]
 
 
 @pytest.mark.asyncio
