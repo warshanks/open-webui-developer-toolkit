@@ -263,7 +263,7 @@ async def test_build_params_includes_reasoning(dummy_chat):
         chat_id="chat1",
     )
     assert params["tool_choice"] == "auto"
-    assert params["max_output_tokens"] == 50
+    assert params["max_tokens"] == 50
     assert params["temperature"] == 0.4
     assert params["top_p"] == 0.9
     assert params["user"] == "me@example.com"

@@ -1187,31 +1187,36 @@ async def prepare_payload(
     chat_history: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Return the JSON payload for the Responses API."""
-    model = (body.get("model") or valves.MODEL_ID.split(",")[0]).split(".", 1)[-1]
-    reasoning_effort = body.get("reasoning_effort", "none")
+    params = dict(body)
+
+    params.pop("stream_options", None)
+
+    model = (params.get("model") or valves.MODEL_ID.split(",")[0]).split(".", 1)[-1]
+    reasoning_effort = params.pop("reasoning_effort", "none")
     if model in {"o3-mini-high", "o4-mini-high"}:
         model = model.replace("-high", "")
         reasoning_effort = "high"
+
     if chat_history is None:
         if chat_id:
             chat_history = await build_chat_history_for_responses_api(chat_id=chat_id)
         else:
-            chat_history = await build_chat_history_for_responses_api(messages=body.get("messages", []))
+            chat_history = await build_chat_history_for_responses_api(messages=params.get("messages", []))
 
-    params = {
-        "model": model,
-        "instructions": instructions,
-        "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
-        "max_output_tokens": body.get("max_tokens"),
-        "temperature": body.get("temperature") or 1.0,
-        "top_p": body.get("top_p") or 1.0,
-        "user": user_email,
-        "text": {"format": {"type": "text"}},
-        "truncation": "auto",
-        "stream": True,
-        "store": True,
-        "input": chat_history,
-    }
+    params.pop("messages", None)
+
+    params.update(
+        {
+            "model": model,
+            "instructions": instructions,
+            "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
+            "user": user_email,
+            "text": {"format": {"type": "text"}},
+            "truncation": "auto",
+            "store": True,
+            "input": chat_history,
+        }
+    )
 
     if tools is not None:
         params["tools"] = tools
@@ -1220,11 +1225,12 @@ async def prepare_payload(
     if model in REASONING_MODELS and (
         reasoning_effort != "none" or valves.REASON_SUMMARY
     ):
-        params["reasoning"] = {}
+        reasoning = {}
         if reasoning_effort != "none":
-            params["reasoning"]["effort"] = reasoning_effort
+            reasoning["effort"] = reasoning_effort
         if valves.REASON_SUMMARY:
-            params["reasoning"]["summary"] = valves.REASON_SUMMARY
+            reasoning["summary"] = valves.REASON_SUMMARY
+        params["reasoning"] = reasoning
 
     return params
 
