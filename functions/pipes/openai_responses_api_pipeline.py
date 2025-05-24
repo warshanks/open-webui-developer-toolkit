@@ -314,7 +314,7 @@ class Pipe:
         __files__: list[dict[str, Any]],
         __metadata__: dict[str, Any],
         __tools__: dict[str, Any],
-    ) -> AsyncIterator[str]:
+    ) -> None:
         """
         Stream responses from OpenAI and handle tool calls.
         """
@@ -426,6 +426,7 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
         last_image_url: str | None = None
+        final_text = ""
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             self.log.debug("Loop iteration #%d", loop_count)
@@ -457,7 +458,10 @@ class Pipe:
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
-                    yield "<think>"
+                    delta = "<think>"
+                    final_text += delta
+                    if __event_emitter__:
+                        await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
 
                 async for event in stream_responses(
                     client,
@@ -482,18 +486,30 @@ class Pipe:
                         # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        yield event.get("delta")
+                        delta = event.get("delta")
+                        final_text += delta
+                        if __event_emitter__:
+                            await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        yield "\n\n---\n\n"
+                        delta = "\n\n---\n\n"
+                        final_text += delta
+                        if __event_emitter__:
+                            await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            yield "</think>\n"
+                            delta = "</think>\n"
+                            final_text += delta
+                            if __event_emitter__:
+                                await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
                         continue
                     if et == "response.output_text.delta":
-                        yield event.get("delta")
+                        delta = event.get("delta")
+                        final_text += delta
+                        if __event_emitter__:
+                            await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
                         continue
                     if et == "response.output_text.done":
                         # This delta marks the end of the current output block.
@@ -516,7 +532,7 @@ class Pipe:
                                 last_image_url = url
                                 if __event_emitter__:
                                     await __event_emitter__(
-                                        {"type": "files", "data": {"files": [{"type": "image", "url": url}]}}
+                                        {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": url}]}}
                                     )
                         continue
                     if et == "response.image_generation_call.completed":
@@ -573,7 +589,7 @@ class Pipe:
                                     last_image_url = url
                                     if __event_emitter__:
                                         await __event_emitter__(
-                                            {"type": "files", "data": {"files": [{"type": "image", "url": url}]}}
+                                            {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": url}]}}
                                         )
                             await self._emit_status(
                                 __event_emitter__,
@@ -618,7 +634,7 @@ class Pipe:
                 if __event_emitter__:
                     await __event_emitter__(
                         {
-                            "type": "message",
+                            "type": "chat:message",
                             "data": {
                                 "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
                             },
@@ -697,6 +713,9 @@ class Pipe:
             break
 
         await self._emit_status(__event_emitter__, "", last_status, done=True)
+
+        if __event_emitter__:
+            await __event_emitter__({"type": "chat:message", "data": {"content": final_text}})
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
