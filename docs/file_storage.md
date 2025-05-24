@@ -61,9 +61,3 @@ python .scripts/publish_to_webui.py functions/pipes/my_pipe.py
 ```
 
 When your function needs to attach files it can emit a `chat:message:files` event with URLs returned by the Files API. The toolkit's `__event_emitter__` helper handles this for you.
-
-Image generation results from the OpenAI Responses API sometimes return a
-dictionary with a `url` or `b64_json` field.  The helper functions
-`open_webui.routers.images.load_url_image_data()` and
-`open_webui.routers.images.load_b64_image_data()` mirror WebUI's logic for
-converting these payloads to binary before uploading.

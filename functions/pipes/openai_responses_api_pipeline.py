@@ -115,43 +115,22 @@ ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 
 
 
-def save_base64_image(b64: str | dict, request: Request, user: dict[str, Any]) -> str:
-    """Decode ``b64``/``dict`` and store it using the Files API.
+def save_base64_image(b64: str, request: Request, user: dict[str, Any]) -> str:
+    """Decode ``b64`` and store it using the Files API.
 
     Returns the public URL of the uploaded file.
     """
-    from open_webui.routers.images import (
-        upload_image,
-        load_b64_image_data,
-        load_url_image_data,
-    )
+    from open_webui.routers.images import upload_image
 
-    image_data: bytes | None = None
-    content_type: str = "image/png"
-
-    if isinstance(b64, dict):
-        if "b64_json" in b64:
-            result = load_b64_image_data(b64["b64_json"])
-            if result:
-                image_data, content_type = result
-        elif "url" in b64:
-            result = load_url_image_data(b64["url"])
-            if result:
-                image_data, content_type = result
+    if "," in b64:
+        header, encoded = b64.split(",", 1)
+        content_type = header.split(";")[0]
     else:
-        if "," in b64:
-            header, encoded = b64.split(",", 1)
-            content_type = header.split(";")[0]
-        else:
-            encoded = b64
-            content_type = "image/png"
+        encoded = b64
+        content_type = "image/png"
 
-        image_data = base64.b64decode(encoded)
-
-    if not image_data:
-        raise ValueError("Invalid image data")
-
-    return upload_image(request, {}, image_data, content_type, SimpleNamespace(**user))
+    data = base64.b64decode(encoded)
+    return upload_image(request, {}, data, content_type, SimpleNamespace(**user))
 
 
 class _MemHandler(logging.Handler):
