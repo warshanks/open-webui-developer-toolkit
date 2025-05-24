@@ -67,7 +67,7 @@ import httpx
 from fastapi import Request
 from open_webui.models.chats import Chats
 from open_webui.models.models import Models, ModelForm, ModelParams
-from open_webui.utils.misc import deep_update, get_message_list
+from open_webui.utils.misc import get_message_list
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -231,14 +231,37 @@ class Pipe:
             ),
         )
 
+        # pydantic v1 compatibility
+        def model_copy(self, *, update: dict[str, Any] | None = None) -> 'Pipe.Valves':
+            return self.copy(update=update)
+
     class UserValves(BaseModel):
-        CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = "INHERIT"
-        ENABLE_NATIVE_TOOL_CALLING: Literal[True, False, "INHERIT"] = "INHERIT"
-        PERSIST_TOOL_RESULTS: Literal[True, False, "INHERIT"] = "INHERIT"
-        INJECT_CURRENT_DATE: Literal[True, False, "INHERIT"] = "INHERIT"
-        INJECT_USER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
-        INJECT_BROWSER_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
-        INJECT_IP_INFO: Literal[True, False, "INHERIT"] = "INHERIT"
+        """Per-user valve overrides."""
+
+        CUSTOM_LOG_LEVEL: Literal[
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+        ] | None = None
+        ENABLE_NATIVE_TOOL_CALLING: bool | None = None
+        PERSIST_TOOL_RESULTS: bool | None = None
+        INJECT_CURRENT_DATE: bool | None = None
+        INJECT_USER_INFO: bool | None = None
+        INJECT_BROWSER_INFO: bool | None = None
+        INJECT_IP_INFO: bool | None = None
+
+        def __init__(self, **data: Any) -> None:  # type: ignore[override]
+            data = {
+                k: (None if isinstance(v, str) and v.lower() == "inherit" else v)
+                for k, v in data.items()
+            }
+            super().__init__(**data)
+
+        # pydantic v1 compatibility
+        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return self.dict(*args, **kwargs)
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
@@ -741,39 +764,17 @@ class Pipe:
         await emitter({"type": "status", "data": {"description": description, "done": done}})
 
     def _apply_user_valve_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
-        """Return a ``Valves`` instance with user overrides applied."""
-        valves = self.valves
-        if not user_valves:
-            self.log.setLevel(
-                getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
-            )
-            return valves
-
-        overrides = {
-            k: v
-            for k, v in (
-                user_valves.model_dump(exclude_none=True)
-                if hasattr(user_valves, "model_dump")
-                else user_valves.dict(exclude_none=True)
-            ).items()
-            if not (isinstance(v, str) and v.lower() == "inherit")
-        }
-
-        valves = self.Valves(
-            **deep_update(
-                valves.model_dump() if hasattr(valves, "model_dump") else valves.dict(),
-                overrides,
-            )
+        """Apply user overrides and update log level."""
+        self.valves = self.Valves()
+        self.valves = (
+            self.valves.model_copy(update=user_valves.model_dump(exclude_none=True))
+            if user_valves
+            else self.valves
         )
-
-        for setting, val in overrides.items():
-            self.log.debug("User override → %s set to %r", setting, val)
-
         self.log.setLevel(
-            getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
+            getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
         )
-
-        return valves
+        return self.valves
 
     @staticmethod
     def _get_current_date_suffix() -> str:
