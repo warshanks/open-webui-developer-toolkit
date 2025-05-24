@@ -56,7 +56,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import inspect
 import json
 import logging
@@ -66,7 +65,6 @@ import sys
 import time
 import traceback
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 
@@ -115,21 +113,24 @@ MODEL_CAPABILITIES = {
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 
-_IMAGE_CACHE_DIR = Path("cache/images")
-_IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def save_base64_image(b64: str) -> str:
-    """Decode ``b64`` and write it under ``/cache/images``.
+def save_base64_image(b64: str, request: Request, user: dict[str, Any]) -> str:
+    """Decode ``b64`` and store it using the Files API.
 
-    Returns the public URL of the cached file.
+    Returns the public URL of the uploaded file.
     """
-    digest = hashlib.sha1(b64.encode()).hexdigest()
-    path = _IMAGE_CACHE_DIR / f"{digest}.png"
-    if not path.exists():
-        with open(path, "wb") as fh:
-            fh.write(base64.b64decode(b64))
-    return f"/cache/images/{path.name}"
+    from open_webui.routers.images import upload_image
+
+    if "," in b64:
+        header, encoded = b64.split(",", 1)
+        content_type = header.split(";")[0]
+    else:
+        encoded = b64
+        content_type = "image/png"
+
+    data = base64.b64decode(encoded)
+    return upload_image(request, {}, data, content_type, SimpleNamespace(**user))
 
 
 class _MemHandler(logging.Handler):
@@ -563,7 +564,7 @@ class Pipe:
                     if et == "response.image_generation_call.partial_image":
                         img_b64 = event.get("partial_image_b64")
                         if img_b64:
-                            url = save_base64_image(img_b64)
+                            url = save_base64_image(img_b64, __request__, __user__)
                             if __event_emitter__:
                                 await __event_emitter__(
                                     {
@@ -641,7 +642,7 @@ class Pipe:
                         ):
                             result_b64 = item.get("result")
                             if result_b64:
-                                url = save_base64_image(result_b64)
+                                url = save_base64_image(result_b64, __request__, __user__)
                                 if url != last_image_url:
                                     last_image_url = url
                                     if __event_emitter__:
