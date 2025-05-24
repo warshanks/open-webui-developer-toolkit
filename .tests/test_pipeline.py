@@ -226,7 +226,7 @@ def test_apply_user_valve_overrides_sets_log_level(dummy_chat):
         def __init__(self, **vals):
             self._vals = vals
 
-        def model_dump(self, exclude_none=True):  # mimic pydantic v2 API
+        def model_dump(self, exclude_none=True):  # mimic BaseModel.model_dump
             return self._vals
 
     overrides = Dummy(CUSTOM_LOG_LEVEL="DEBUG")
