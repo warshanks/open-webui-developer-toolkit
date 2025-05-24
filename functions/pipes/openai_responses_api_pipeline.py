@@ -241,12 +241,11 @@ class Pipe:
         """Per-user valve overrides."""
 
         CUSTOM_LOG_LEVEL: Literal[
-            "DEBUG",
-            "INFO",
-            "WARNING",
-            "ERROR",
-            "CRITICAL",
-        ] = None
+            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", None
+        ] = Field(
+            default=None,
+            description="Select logging level.",
+        )
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
