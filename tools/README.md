@@ -212,27 +212,17 @@ Switch modes per chat: **Chat ⚙ Controls → Advanced Params → Function Call
 
 ## EventEmitter Patterns <a id="eventemitter-patterns"></a>
 
-If your method accepts `__event_emitter__`, you can push custom events. The helper is asynchronous and expects a `{type, data}` payload:
+If your method accepts `__event_emitter__`, you can push custom events:
 
 ```python
 async def download(self, url: str, __event_emitter__):
-    await __event_emitter__({"type": "status", "data": {"percent": 0}})
+    __event_emitter__("status", {"percent": 0})
     ...
-    await __event_emitter__({"type": "status", "data": {"percent": 100}})
+    __event_emitter__("status", {"percent": 100})
     return "Download complete!"
 ```
 
-Need user interaction? Use `__event_call__`:
-
-```python
-result = await __event_call__({
-    "type": "confirmation",
-    "data": {"title": "Proceed?", "message": "Start download?"}
-})
-```
-
-Common event types include `status`, `chat:message:delta`, `chat:title`,
-`notification`, `confirmation`, `input`, and `execute`.
+Common event types: `status`, `message`, `notification`, `confirmation`.
 
 ---
 
