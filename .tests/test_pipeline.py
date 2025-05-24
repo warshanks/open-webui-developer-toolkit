@@ -222,7 +222,7 @@ async def test_ip_lookup_cached(dummy_chat):
     assert pipe._ip_cache.get("207.194.4.18")
 
 
-def test_apply_user_overrides_sets_log_level(dummy_chat):
+def test_apply_user_valve_overrides_sets_log_level(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
 
@@ -234,7 +234,7 @@ def test_apply_user_overrides_sets_log_level(dummy_chat):
             return self._vals
 
     overrides = Dummy(CUSTOM_LOG_LEVEL="DEBUG")
-    new_valves = pipe._apply_user_overrides(overrides)
+    new_valves = pipe._apply_user_valve_overrides(overrides)
     assert pipe.valves.CUSTOM_LOG_LEVEL != "DEBUG"
     assert new_valves.CUSTOM_LOG_LEVEL == "DEBUG"
     import logging
