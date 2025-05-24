@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.20
+version: 1.6.21
 license: MIT
 requirements: httpx
 
@@ -36,6 +36,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.21: User valves trimmed to CUSTOM_LOG_LEVEL; legacy 'inherit' handled.
 • 1.6.20: Updated for Pydantic v2.
 • 1.6.19: Added support for 'o3-mini-high' and 'o4-mini-high' model aliases.
 • 1.6.18: Compatibility fixes for WebUI task models (optional chat_id and emitter).
@@ -246,19 +247,6 @@ class Pipe:
             "ERROR",
             "CRITICAL",
         ] | None = None
-        ENABLE_NATIVE_TOOL_CALLING: bool | None = None
-        PERSIST_TOOL_RESULTS: bool | None = None
-        INJECT_CURRENT_DATE: bool | None = None
-        INJECT_USER_INFO: bool | None = None
-        INJECT_BROWSER_INFO: bool | None = None
-        INJECT_IP_INFO: bool | None = None
-
-        def __init__(self, **data: Any) -> None:  # type: ignore[override]
-            data = {
-                k: (None if isinstance(v, str) and v.lower() == "inherit" else v)
-                for k, v in data.items()
-            }
-            super().__init__(**data)
 
         # pydantic v1 compatibility
         def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -767,11 +755,13 @@ class Pipe:
     def _apply_user_valve_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
         """Apply user overrides and update log level."""
         self.valves = self.Valves()
-        self.valves = (
-            self.valves.model_copy(update=user_valves.model_dump(exclude_none=True))
-            if user_valves
-            else self.valves
-        )
+        if user_valves:
+            raw_user_valves = user_valves.model_dump()  # or .dict() depending on version
+            normalized_valves = {
+                k: (None if v == "inherit" else v) for k, v in raw_user_valves.items()
+            }
+            filtered = {k: v for k, v in normalized_valves.items() if v is not None}
+            self.valves = self.valves.model_copy(update=filtered)
         self.log.setLevel(
             getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
         )

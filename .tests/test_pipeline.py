@@ -238,6 +238,25 @@ def test_apply_user_valve_overrides_sets_log_level(dummy_chat):
     assert pipe.log.level == logging.DEBUG
 
 
+def test_apply_user_valve_overrides_inherit(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    class Dummy:
+        def __init__(self, **vals):
+            self._vals = vals
+
+        def model_dump(self, exclude_none=True):  # mimic BaseModel.model_dump
+            return self._vals
+
+    overrides = Dummy(CUSTOM_LOG_LEVEL="inherit")
+    new_valves = pipe._apply_user_valve_overrides(overrides)
+    assert new_valves.CUSTOM_LOG_LEVEL == pipe.Valves().CUSTOM_LOG_LEVEL
+    import logging
+
+    assert pipe.log.level == getattr(logging, pipe.Valves().CUSTOM_LOG_LEVEL)
+
+
 @pytest.mark.asyncio
 async def test_build_params_includes_reasoning(dummy_chat):
     pipeline = _reload_pipeline()
