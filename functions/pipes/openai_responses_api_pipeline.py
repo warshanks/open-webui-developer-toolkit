@@ -246,11 +246,7 @@ class Pipe:
             "WARNING",
             "ERROR",
             "CRITICAL",
-        ] | None = None
-
-        # pydantic v1 compatibility
-        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-            return self.dict(*args, **kwargs)
+        ] = None
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
