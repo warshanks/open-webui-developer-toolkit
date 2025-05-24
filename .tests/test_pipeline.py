@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 import types
+import asyncio
 from unittest.mock import AsyncMock, patch
 import pytest
 
@@ -174,7 +175,7 @@ def test_instruction_suffix_helpers(dummy_chat):
     browser_line = pipe._get_browser_info_suffix(req)
     assert browser_line.startswith("browser_info:")
 
-    ip_line = pipe._get_ip_info_suffix(req)
+    ip_line = asyncio.run(pipe._get_ip_info_suffix(req))
     assert ip_line.startswith("ip_info: 207.194.4.18")
 
 
@@ -213,13 +214,8 @@ async def test_ip_lookup_cached(dummy_chat):
         client=types.SimpleNamespace(host="207.194.4.18", port=0),
     )
 
-    first = pipe._get_ip_info_suffix(req)
-    assert "Waterloo" not in first
-    for task in list(pipe._ip_tasks.values()):
-        await task
-    second = pipe._get_ip_info_suffix(req)
-    assert "Waterloo" in second
-    assert pipe._ip_cache.get("207.194.4.18")
+    result = await pipe._get_ip_info_suffix(req)
+    assert "Waterloo" in result
 
 
 def test_apply_user_valve_overrides_sets_log_level(dummy_chat):

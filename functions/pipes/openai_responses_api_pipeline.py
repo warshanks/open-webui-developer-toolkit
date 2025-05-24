@@ -255,8 +255,6 @@ class Pipe:
         handler.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True)
         self.log.handlers = [handler]
         self.log.setLevel(logging.INFO)
-        self._ip_cache: dict[str, str] = {}
-        self._ip_tasks: dict[str, asyncio.Task] = {}
 
     def pipes(self):
         """Return models exposed by this pipe."""
@@ -340,7 +338,7 @@ class Pipe:
             injection_lines.append(self._get_browser_info_suffix(__request__))
             note_parts.append("`browser_info`")
         if valves.INJECT_IP_INFO:
-            injection_lines.append(self._get_ip_info_suffix(__request__))
+            injection_lines.append(await self._get_ip_info_suffix(__request__))
             note_parts.append("`ip_info`")
         if injection_lines:
             injection_lines.append(
@@ -359,10 +357,7 @@ class Pipe:
         if not valves.ENABLE_NATIVE_TOOL_CALLING or not model_capabilities.get("function_calling"):
             body.pop("tools", None)
             tools = None
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug(
-                    "Native tool calling disabled or unsupported for %s", model
-                )
+            self.log.debug("Native tool calling disabled or unsupported for %s", model)
         else:
             tools = transform_tools_for_responses_api(body.get("tools", []))
             if valves.ENABLE_WEB_SEARCH and model_capabilities.get("web_search"):
@@ -398,8 +393,7 @@ class Pipe:
         is_model_thinking = False
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("Loop iteration #%d", loop_count)
+            self.log.debug("Loop iteration #%d", loop_count)
             if loop_count > 1:
                 request_params.update(
                     {
@@ -424,8 +418,7 @@ class Pipe:
 
             try:
                 pending_calls: list[SimpleNamespace] = []
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("Starting response stream (loop #%d)", loop_count)
+                self.log.debug("Starting response stream (loop #%d)", loop_count)
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
@@ -719,12 +712,11 @@ class Pipe:
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
     ) -> list[Any]:
         """Run tool calls asynchronously and return their results."""
-        if self.log.isEnabledFor(logging.DEBUG):
-            self.log.debug(
-                "Executing %d tool call(s): %s",
-                len(calls),
-                ", ".join(c.name for c in calls),
-            )
+        self.log.debug(
+            "Executing %d tool call(s): %s",
+            len(calls),
+            ", ".join(c.name for c in calls),
+        )
         results = await execute_responses_tool_calls(calls, registry, self.log)
         if self.log.isEnabledFor(logging.DEBUG):
             for call, result in zip(calls, results):
@@ -774,9 +766,8 @@ class Pipe:
             )
         )
 
-        if self.log.isEnabledFor(logging.DEBUG):
-            for setting, val in overrides.items():
-                self.log.debug("User override → %s set to %r", setting, val)
+        for setting, val in overrides.items():
+            self.log.debug("User override → %s set to %r", setting, val)
 
         self.log.setLevel(
             getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
@@ -789,8 +780,8 @@ class Pipe:
         """Return today's date formatted for prompt injection."""
         return "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
 
-    async def _lookup_ip_info(self, ip: str) -> None:
-        """Resolve ``ip`` and store the result in the cache."""
+    async def _lookup_ip_info(self, ip: str) -> str:
+        """Return IP geolocation information for ``ip`` or ``""`` on failure."""
         try:
             client = await self.get_http_client()
             resp = await client.get(f"http://ip-api.com/json/{ip}")
@@ -803,24 +794,11 @@ class Pipe:
             info = f"{location} (approx based on IP) (ISP: {isp})" if isp else location
         except Exception as exc:  # pragma: no cover - network errors
             info = ""
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("IP lookup failed for %s: %s", ip, exc)
-        self._ip_cache[ip] = info
-        self._ip_tasks.pop(ip, None)
-        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug("IP lookup failed for %s: %s", ip, exc)
+        else:
             self.log.debug("IP lookup result %s -> %r", ip, info)
+        return info
 
-    def _schedule_ip_lookup(self, ip: str) -> None:
-        """Kick off a background task to fetch IP details if not cached."""
-        if ip in self._ip_cache or ip in self._ip_tasks or ip == "unknown":
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("IP lookup skipped for %s", ip)
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        self._ip_tasks[ip] = loop.create_task(self._lookup_ip_info(ip))
 
     def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
         """Return a user_info line."""
@@ -839,15 +817,11 @@ class Pipe:
             f"{simplify_user_agent(headers.get('user-agent', '') if request else '')}"
         )
 
-    def _get_ip_info_suffix(self, request: Request | None) -> str:
-        """Return an ip_info line and trigger background lookup if needed."""
+    async def _get_ip_info_suffix(self, request: Request | None) -> str:
+        """Return an ``ip_info`` line with geolocation details if available."""
         ip = getattr(getattr(request, "client", None), "host", "unknown") if request else "unknown"
-        ip_info = self._ip_cache.get(ip)
-        if ip_info is None and ip != "unknown":
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("IP info not cached for %s, scheduling lookup", ip)
-            self._schedule_ip_lookup(ip)
-        return f"ip_info: {ip}{f' - {ip_info}' if ip_info else ''}"
+        info = await self._lookup_ip_info(ip) if ip != "unknown" else ""
+        return f"ip_info: {ip}{f' - {info}' if info else ''}"
 
 
     async def _enable_native_function_support(self, metadata: dict[str, Any]) -> None:
@@ -886,16 +860,13 @@ class Pipe:
     async def get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
         if self._client and not self._client.is_closed:
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("Reusing existing httpx client.")
+            self.log.debug("Reusing existing httpx client.")
             return self._client
         async with self._client_lock:
             if self._client and not self._client.is_closed:
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug("Client initialized while waiting for lock. Reusing existing.")
+                self.log.debug("Client initialized while waiting for lock. Reusing existing.")
                 return self._client
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug("Creating new httpx.AsyncClient.")
+            self.log.debug("Creating new httpx.AsyncClient.")
             timeout = httpx.Timeout(900.0, connect=30.0)
             limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
             # HTTP/2 can stall if flow control windows aren't consumed quickly.
@@ -950,37 +921,30 @@ async def stream_responses(
         "Content-Type": "application/json",
     }
 
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "POST %s/responses model=%s",
-            base_url.rstrip("/"),
-            params.get("model"),
-        )
+    logger.debug(
+        "POST %s/responses model=%s",
+        base_url.rstrip("/"),
+        params.get("model"),
+    )
 
     async with client.stream("POST", url, headers=headers, json=params) as resp:
         resp.raise_for_status()
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Streaming response with status %s", resp.status_code)
+        logger.debug("Streaming response with status %s", resp.status_code)
         event_type: str | None = None
-        data_buf: list[str] = []
         async for raw in resp.aiter_lines():
             line = raw.rstrip("\r")
-            if line.startswith(":"):
-                continue
-            if line == "":
-                if data_buf:
-                    data = "\n".join(data_buf)
-                    if data.strip() == "[DONE]":
-                        return
-                    yield parse_responses_sse(event_type, data)
-                event_type, data_buf = None, []
+            if not line or line.startswith(":"):
                 continue
             if line.startswith("event:"):
                 event_type = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                data_buf.append(line[len("data:"):].strip())
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Response stream closed")
+                continue
+            if line.startswith("data:"):
+                data = line[len("data:"):].strip()
+                if data.strip() == "[DONE]":
+                    return
+                yield parse_responses_sse(event_type, data)
+                event_type = None
+    logger.debug("Response stream closed")
 async def delete_response(
     client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
 ) -> None:
