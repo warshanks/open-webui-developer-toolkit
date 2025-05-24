@@ -250,7 +250,11 @@ class Pipe:
 
         # pydantic v1 compatibility
         def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-            return self.dict(*args, **kwargs)
+            """Return a dict representation compatible with both Pydantic versions."""
+            base = getattr(super(), "model_dump", None)
+            if base:
+                return base(*args, **kwargs)
+            return super().dict(*args, **kwargs)
 
     def __init__(self) -> None:
         """Initialize the pipeline and logging."""
