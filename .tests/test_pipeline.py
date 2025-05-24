@@ -338,9 +338,9 @@ def test_parse_responses_sse_handles_extra_fields(dummy_chat):
     pipeline = _reload_pipeline()
     raw = json.dumps({"annotation": {"title": "t"}, "delta": "x"})
     event = pipeline.parse_responses_sse("response.output_text.annotation.added", raw)
-    assert event["type"] == "response.output_text.annotation.added"
-    assert event["delta"] == "x"
-    assert event["annotation"]["title"] == "t"
+    assert event.type == "response.output_text.annotation.added"
+    assert event.delta == "x"
+    assert getattr(event, "annotation").title == "t"
 
 
 @pytest.mark.asyncio
