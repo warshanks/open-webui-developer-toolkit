@@ -117,13 +117,17 @@ ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 def save_base64_image(b64: Any, request: Request, user: dict[str, Any]) -> str:
     """Decode image data and store it using the Files API.
 
-    ``b64`` may be a raw base64 string or a mapping containing the data under
-    ``b64_json`` or ``data``.  Returns the public URL of the uploaded file.
+    ``b64`` may be a raw base64 string or a mapping containing the
+    data under ``b64_json`` or ``data``. Returns the public URL of the uploaded
+    file.
     """
     from open_webui.routers.images import upload_image, load_b64_image_data
 
     if isinstance(b64, dict):
         b64 = b64.get("b64_json") or b64.get("data") or ""
+
+    if isinstance(b64, str) and b64.startswith("data:"):
+        b64 = b64.split(",", 1)[-1]
 
     result = load_b64_image_data(b64)
     if not result:
