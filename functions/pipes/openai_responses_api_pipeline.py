@@ -368,27 +368,6 @@ class Pipe:
                     }
                 )
 
-            for feat_dict in (body.get("features"), __metadata__.get("features")):
-                if not isinstance(feat_dict, dict):
-                    continue
-                if feat_dict.get("web_search"):
-                    feat_dict["web_search"] = False
-                    if model_capabilities.get("web_search") and not any(
-                        t.get("type") == "web_search" for t in tools
-                    ):
-                        tools.append(
-                            {
-                                "type": "web_search",
-                                "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                            }
-                        )
-                if feat_dict.get("image_generation"):
-                    feat_dict["image_generation"] = False
-                    if model_capabilities.get("image_gen_tool") and not any(
-                        t.get("type") == "image_generation" for t in tools
-                    ):
-                        tools.append({"type": "image_generation"})
-
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(pretty_log_block(tools, "tools"))
 
