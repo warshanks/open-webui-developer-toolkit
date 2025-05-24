@@ -1002,7 +1002,7 @@ def transform_tools_for_responses_api(
         if not isinstance(tool, dict):
             continue
         tool_type = tool.get("type")
-        if tool_type == "function" or "function" in tool:
+        if tool_type == "function":
             function_spec = tool.get("function", tool)
             tools_responses_api_json.append(
                 {
