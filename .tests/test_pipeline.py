@@ -919,6 +919,43 @@ async def test_tools_removed_for_unsupported_model(dummy_chat):
 
 
 @pytest.mark.asyncio
+async def test_tools_removed_for_search_preview(dummy_chat):
+    pipeline = _reload_pipeline()
+    pipe = pipeline.Pipe()
+
+    events = [
+        types.SimpleNamespace(type="response.created", response=types.SimpleNamespace(id="r1")),
+        types.SimpleNamespace(type="response.output_text.done", text="ok"),
+        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
+    ]
+
+    captured_params = []
+
+    async def fake_stream(client, base_url, api_key, params):
+        captured_params.append(params)
+        for e in events:
+            yield e
+
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
+        await pipe.pipe(
+            {"model": "openai_responses.gpt-4o-search-preview", "tools": [{"type": "function"}]},
+            {},
+            None,
+            AsyncMock(),
+            AsyncMock(),
+            [],
+            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
+            {},
+        )
+    await pipe.on_shutdown()
+
+    assert "tools" not in captured_params[0]
+    assert "tool_choice" not in captured_params[0]
+
+
+@pytest.mark.asyncio
 async def test_image_generation_events_emit_markdown(dummy_chat):
     pipeline = _reload_pipeline()
     pipe = pipeline.Pipe()
