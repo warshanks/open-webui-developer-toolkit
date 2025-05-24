@@ -55,7 +55,6 @@ requirements: httpx
 from __future__ import annotations
 
 import asyncio
-import base64
 import inspect
 import json
 import logging
@@ -115,21 +114,22 @@ ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 
 
 
-def save_base64_image(b64: str, request: Request, user: dict[str, Any]) -> str:
-    """Decode ``b64`` and store it using the Files API.
+def save_base64_image(b64: Any, request: Request, user: dict[str, Any]) -> str:
+    """Decode image data and store it using the Files API.
 
-    Returns the public URL of the uploaded file.
+    ``b64`` may be a raw base64 string or a mapping containing the data under
+    ``b64_json`` or ``data``.  Returns the public URL of the uploaded file.
     """
-    from open_webui.routers.images import upload_image
+    from open_webui.routers.images import upload_image, load_b64_image_data
 
-    if "," in b64:
-        header, encoded = b64.split(",", 1)
-        content_type = header.split(";")[0]
-    else:
-        encoded = b64
-        content_type = "image/png"
+    if isinstance(b64, dict):
+        b64 = b64.get("b64_json") or b64.get("data") or ""
 
-    data = base64.b64decode(encoded)
+    result = load_b64_image_data(b64)
+    if not result:
+        raise ValueError("Invalid base64 image")
+
+    data, content_type = result
     return upload_image(request, {}, data, content_type, SimpleNamespace(**user))
 
 
