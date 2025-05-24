@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.19
+version: 1.6.20
 license: MIT
 requirements: httpx
 
@@ -36,6 +36,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.20: Updated for Pydantic v2.
 • 1.6.19: Added support for 'o3-mini-high' and 'o4-mini-high' model aliases.
 • 1.6.18: Compatibility fixes for WebUI task models (optional chat_id and emitter).
 • 1.6.17: Valves to inject the current date and user/device context into the system prompt.
