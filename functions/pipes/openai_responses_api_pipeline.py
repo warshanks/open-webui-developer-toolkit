@@ -25,7 +25,7 @@ requirements: httpx
    - Tool outputs captured as citations for traceability & transparancy.
    - Persistent tool results (`function_call`/`function_call_output`) in conversation history (valve-controlled).
    - Automatically enables 'Native tool calling' in OpenWebUI model parm (if not set already).
-   
+
 ------------------------------------------------------------------------------
 🛠️ ROADMAP (PLANNED FEATURES)
 ------------------------------------------------------------------------------
@@ -80,20 +80,28 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 EMOJI_LEVELS = {
-    logging.DEBUG: "\U0001F50D",
+    logging.DEBUG: "\U0001f50d",
     logging.INFO: "\u2139",
-    logging.WARNING: "\u26A0",
-    logging.ERROR: "\u274C",
-    logging.CRITICAL: "\U0001F525",
+    logging.WARNING: "\u26a0",
+    logging.ERROR: "\u274c",
+    logging.CRITICAL: "\U0001f525",
 }
 
 # Feature support by model
 # Defaults are assumed to be False for capabilities not listed.
 MODEL_CAPABILITIES = {
     "gpt-4.1": {"web_search": True, "image_gen_tool": True, "function_calling": True},
-    "gpt-4.1-mini": {"web_search": True, "image_gen_tool": True, "function_calling": True},
+    "gpt-4.1-mini": {
+        "web_search": True,
+        "image_gen_tool": True,
+        "function_calling": True,
+    },
     "gpt-4o": {"web_search": True, "image_gen_tool": True, "function_calling": True},
-    "gpt-4o-mini": {"web_search": True, "image_gen_tool": True, "function_calling": True},
+    "gpt-4o-mini": {
+        "web_search": True,
+        "image_gen_tool": True,
+        "function_calling": True,
+    },
     "gpt-4.1-nano": {"image_gen_tool": True, "function_calling": True},
     "o3": {"reasoning": True, "image_gen_tool": True, "function_calling": True},
     "o4-mini": {"reasoning": True, "function_calling": True},
@@ -138,6 +146,7 @@ class _MemHandler(logging.Handler):
 
 class Pipe:
     """Pipeline to interact with the OpenAI Responses API."""
+
     class Valves(BaseModel):
         BASE_URL: str = Field(
             default="https://api.openai.com/v1",
@@ -148,9 +157,7 @@ class Pipe:
         )
 
         API_KEY: str = Field(
-            default=os.getenv(
-                "OPENAI_API_KEY", "sk-xxxxx"
-            ).strip(),
+            default=os.getenv("OPENAI_API_KEY", "sk-xxxxx").strip(),
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
 
@@ -217,9 +224,11 @@ class Pipe:
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-store
 
-        CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-            default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
-            description="Select logging level.",
+        CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = (
+            Field(
+                default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
+                description="Select logging level.",
+            )
         )
 
         INJECT_CURRENT_DATE: bool = Field(
@@ -255,7 +264,7 @@ class Pipe:
         )
 
         # pydantic v1 compatibility
-        def model_copy(self, *, update: dict[str, Any] | None = None) -> 'Pipe.Valves':
+        def model_copy(self, *, update: dict[str, Any] | None = None) -> "Pipe.Valves":
             return self.copy(update=update)
 
     class UserValves(BaseModel):
@@ -285,14 +294,20 @@ class Pipe:
         self.log = logging.getLogger(self.log_name)
         self.log.propagate = False
         handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter("%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"))
-        handler.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True)
+        handler.setFormatter(
+            logging.Formatter(
+                "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
+            )
+        )
+        handler.addFilter(
+            lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True
+        )
         self.log.handlers = [handler]
         self.log.setLevel(logging.INFO)
 
     def pipes(self):
         """Return models exposed by this pipe."""
-        models = [m.strip() for m in self.valves.MODEL_ID.split(',') if m.strip()]
+        models = [m.strip() for m in self.valves.MODEL_ID.split(",") if m.strip()]
         return [{"id": mid, "name": f"OpenAI: {mid}"} for mid in models]
 
     async def on_shutdown(self) -> None:
@@ -388,7 +403,9 @@ class Pipe:
 
         model_capabilities = MODEL_CAPABILITIES.get(model, {})
         tools: list[dict[str, Any]] | None
-        if not valves.ENABLE_NATIVE_TOOL_CALLING or not model_capabilities.get("function_calling"):
+        if not valves.ENABLE_NATIVE_TOOL_CALLING or not model_capabilities.get(
+            "function_calling"
+        ):
             body.pop("tools", None)
             tools = None
             self.log.debug("Native tool calling disabled or unsupported for %s", model)
@@ -426,7 +443,6 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
         last_image_url: str | None = None
-        final_text = ""
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             self.log.debug("Loop iteration #%d", loop_count)
@@ -458,10 +474,13 @@ class Pipe:
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
-                    delta = "<think>"
-                    final_text += delta
                     if __event_emitter__:
-                        await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
+                        await __event_emitter__(
+                            {
+                                "type": "chat:message:delta",
+                                "data": {"content": "<think>"},
+                            }
+                        )
 
                 async for event in stream_responses(
                     client,
@@ -470,7 +489,9 @@ class Pipe:
                     request_params,
                 ):
                     et = event.get("type")
-                    if self.log.isEnabledFor(logging.DEBUG) and not et.endswith(".delta"):
+                    if self.log.isEnabledFor(logging.DEBUG) and not et.endswith(
+                        ".delta"
+                    ):
                         self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
@@ -478,7 +499,12 @@ class Pipe:
                             cleanup_ids.append(last_response_id)
                         last_response_id = event.get("response", {}).get("id")
                         continue
-                    if et in {"response.done", "response.failed", "response.incomplete", "error"}:
+                    if et in {
+                        "response.done",
+                        "response.failed",
+                        "response.incomplete",
+                        "error",
+                    }:
                         self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
@@ -486,38 +512,47 @@ class Pipe:
                         # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        delta = event.get("delta")
-                        final_text += delta
                         if __event_emitter__:
-                            await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:message:delta",
+                                    "data": {"content": event.get("delta")},
+                                }
+                            )
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        delta = "\n\n---\n\n"
-                        final_text += delta
                         if __event_emitter__:
-                            await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:message:delta",
+                                    "data": {"content": "\n\n---\n\n"},
+                                }
+                            )
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            delta = "</think>\n"
-                            final_text += delta
                             if __event_emitter__:
-                                await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
+                                await __event_emitter__(
+                                    {
+                                        "type": "chat:message:delta",
+                                        "data": {"content": "</think>\n"},
+                                    }
+                                )
                         continue
                     if et == "response.output_text.delta":
-                        delta = event.get("delta")
-                        final_text += delta
                         if __event_emitter__:
-                            await __event_emitter__({"type": "chat:message:delta", "data": {"content": delta}})
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:message:delta",
+                                    "data": {"content": event.get("delta")},
+                                }
+                            )
                         continue
                     if et == "response.output_text.done":
                         # This delta marks the end of the current output block.
                         continue
-                    if et in {
-                        "response.image_generation_call.in_progress",
-                        "response.image_generation_call.generating",
-                    }:
+                    if et in {"response.image_generation_call.in_progress"}:
                         await self._emit_status(
                             __event_emitter__,
                             "🖼️ Generating image...",
@@ -528,12 +563,15 @@ class Pipe:
                         img_b64 = event.get("partial_image_b64")
                         if img_b64:
                             url = save_base64_image(img_b64)
-                            if url != last_image_url:
-                                last_image_url = url
-                                if __event_emitter__:
-                                    await __event_emitter__(
-                                        {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": url}]}}
-                                    )
+                            if __event_emitter__:
+                                await __event_emitter__(
+                                    {
+                                        "type": "chat:message:files",
+                                        "data": {
+                                            "files": [{"type": "image", "url": url}]
+                                        },
+                                    }
+                                )
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
@@ -545,19 +583,28 @@ class Pipe:
                         continue
                     if et == "response.output_item.added":
                         item = event.get("item")
-                        if isinstance(item, dict) and item.get("type") == "function_call":
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == "function_call"
+                        ):
                             await self._emit_status(
                                 __event_emitter__,
                                 f"🔧 Running {item.get('name')}...",
                                 last_status,
                             )
-                        elif isinstance(item, dict) and item.get("type") == "web_search_call":
+                        elif (
+                            isinstance(item, dict)
+                            and item.get("type") == "web_search_call"
+                        ):
                             await self._emit_status(
                                 __event_emitter__,
                                 "🔍 Searching the internet...",
                                 last_status,
                             )
-                        elif isinstance(item, dict) and item.get("type") == "image_generation_call":
+                        elif (
+                            isinstance(item, dict)
+                            and item.get("type") == "image_generation_call"
+                        ):
                             await self._emit_status(
                                 __event_emitter__,
                                 "🖼️ Generating image...",
@@ -565,8 +612,19 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_item.done":
+                        if __event_emitter__:
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:completion",
+                                    "data": {"done": True, "content": ""},
+                                }
+                            )
+
                         item = event.get("item")
-                        if isinstance(item, dict) and item.get("type") == "function_call":
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == "function_call"
+                        ):
                             pending_calls.append(SimpleNamespace(**item))
                             await self._emit_status(
                                 __event_emitter__,
@@ -574,14 +632,20 @@ class Pipe:
                                 last_status,
                                 done=True,
                             )
-                        elif isinstance(item, dict) and item.get("type") == "web_search_call":
+                        elif (
+                            isinstance(item, dict)
+                            and item.get("type") == "web_search_call"
+                        ):
                             await self._emit_status(
                                 __event_emitter__,
                                 "🔍 Searching the internet...",
                                 last_status,
                                 done=True,
                             )
-                        elif isinstance(item, dict) and item.get("type") == "image_generation_call":
+                        elif (
+                            isinstance(item, dict)
+                            and item.get("type") == "image_generation_call"
+                        ):
                             result_b64 = item.get("result")
                             if result_b64:
                                 url = save_base64_image(result_b64)
@@ -589,7 +653,14 @@ class Pipe:
                                     last_image_url = url
                                     if __event_emitter__:
                                         await __event_emitter__(
-                                            {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": url}]}}
+                                            {
+                                                "type": "chat:message:files",
+                                                "data": {
+                                                    "files": [
+                                                        {"type": "image", "url": url}
+                                                    ]
+                                                },
+                                            }
                                         )
                             await self._emit_status(
                                 __event_emitter__,
@@ -604,7 +675,9 @@ class Pipe:
                         url_m = ANNOT_URL_RE.search(raw)
                         title = title_m.group(1) if title_m else "Unknown Title"
                         url = url_m.group(1) if url_m else ""
-                        url = url.replace("?utm_source=openai", "").replace("&utm_source=openai", "")
+                        url = url.replace("?utm_source=openai", "").replace(
+                            "&utm_source=openai", ""
+                        )
                         if __event_emitter__:
                             await __event_emitter__(
                                 {
@@ -625,9 +698,7 @@ class Pipe:
                     if et == "response.completed":
                         usage = event.get("response", {}).get("usage")
                         if usage:
-                            self._update_usage(
-                                usage_total, usage, loop_count
-                            )
+                            self._update_usage(usage_total, usage, loop_count)
                         continue
             except Exception as ex:
                 self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
@@ -660,7 +731,9 @@ class Pipe:
                                     "source": call.name.replace("_", " ").title(),
                                 }
                             ],
-                            "source": {"name": f"{call.name.replace('_', ' ').title()} Tool"},
+                            "source": {
+                                "name": f"{call.name.replace('_', ' ').title()} Tool"
+                            },
                         }
                         if valves.PERSIST_TOOL_RESULTS:
                             citation_data["_fc"] = [
@@ -671,7 +744,9 @@ class Pipe:
                                     "output": str(result),
                                 }
                             ]
-                        await __event_emitter__({"type": "citation", "data": citation_data})
+                        await __event_emitter__(
+                            {"type": "citation", "data": citation_data}
+                        )
                 continue
 
             # Clean up the server-side state unless the user opted to keep it
@@ -715,7 +790,7 @@ class Pipe:
         await self._emit_status(__event_emitter__, "", last_status, done=True)
 
         if __event_emitter__:
-            await __event_emitter__({"type": "chat:message", "data": {"content": final_text}})
+            await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
 
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
@@ -755,7 +830,9 @@ class Pipe:
                     last_response_id,
                 )
             except Exception as ex:  # pragma: no cover - logging only
-                self.log.warning("Failed to delete response %s: %s", last_response_id, ex)
+                self.log.warning(
+                    "Failed to delete response %s: %s", last_response_id, ex
+                )
 
         if self.log.isEnabledFor(logging.DEBUG) and debug_logs and __event_emitter__:
             await __event_emitter__(
@@ -806,9 +883,13 @@ class Pipe:
         if last_status[0] == current:
             return
         last_status[0] = current
-        await emitter({"type": "status", "data": {"description": description, "done": done}})
+        await emitter(
+            {"type": "status", "data": {"description": description, "done": done}}
+        )
 
-    def _apply_user_valve_overrides(self, user_valves: BaseModel | None) -> 'Pipe.Valves':
+    def _apply_user_valve_overrides(
+        self, user_valves: BaseModel | None
+    ) -> "Pipe.Valves":
         """Apply user overrides and update log level.
 
         The ``CUSTOM_LOG_LEVEL`` field defaults to ``INHERIT``. Any field set to
@@ -816,11 +897,11 @@ class Pipe:
         """
         self.valves = self.Valves()
         if user_valves:
-            raw_user_valves = user_valves.model_dump()  # or .dict() depending on version
+            raw_user_valves = (
+                user_valves.model_dump()
+            )  # or .dict() depending on version
             filtered = {
-                k: v
-                for k, v in raw_user_valves.items()
-                if str(v).lower() != "inherit"
+                k: v for k, v in raw_user_valves.items() if str(v).lower() != "inherit"
             }
             self.valves = self.valves.model_copy(update=filtered)
         self.log.setLevel(
@@ -841,7 +922,10 @@ class Pipe:
             resp.raise_for_status()
             data = resp.json()
             location = ", ".join(
-                filter(None, (data.get("city"), data.get("regionName"), data.get("country")))
+                filter(
+                    None,
+                    (data.get("city"), data.get("regionName"), data.get("country")),
+                )
             )
             isp = data.get("isp") or ""
             info = f"{location} (approx based on IP) (ISP: {isp})" if isp else location
@@ -851,7 +935,6 @@ class Pipe:
         else:
             self.log.debug("IP lookup result %s -> %r", ip, info)
         return info
-
 
     def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
         """Return a user_info line."""
@@ -872,10 +955,13 @@ class Pipe:
 
     async def _get_ip_info_suffix(self, request: Request | None) -> str:
         """Return an ``ip_info`` line with geolocation details if available."""
-        ip = getattr(getattr(request, "client", None), "host", "unknown") if request else "unknown"
+        ip = (
+            getattr(getattr(request, "client", None), "host", "unknown")
+            if request
+            else "unknown"
+        )
         info = await self._lookup_ip_info(ip) if ip != "unknown" else ""
         return f"ip_info: {ip}{f' - {info}' if info else ''}"
-
 
     async def _enable_native_function_support(self, metadata: dict[str, Any]) -> None:
         """Ensure native function calling is enabled for the current model."""
@@ -890,7 +976,11 @@ class Pipe:
             return
         self.log.debug("Enabling native function calling for %s", model_id)
 
-        model_info = await asyncio.to_thread(Models.get_model_by_id, model_id) if model_id else None
+        model_info = (
+            await asyncio.to_thread(Models.get_model_by_id, model_id)
+            if model_id
+            else None
+        )
         if model_info:
             model_data = model_info.model_dump()
             model_data["params"]["function_calling"] = "native"
@@ -909,7 +999,6 @@ class Pipe:
 
         metadata["function_calling"] = "native"
 
-
     async def get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
         if self._client and not self._client.is_closed:
@@ -917,7 +1006,9 @@ class Pipe:
             return self._client
         async with self._client_lock:
             if self._client and not self._client.is_closed:
-                self.log.debug("Client initialized while waiting for lock. Reusing existing.")
+                self.log.debug(
+                    "Client initialized while waiting for lock. Reusing existing."
+                )
                 return self._client
             self.log.debug("Creating new httpx.AsyncClient.")
             timeout = httpx.Timeout(900.0, connect=30.0)
@@ -941,7 +1032,9 @@ class Pipe:
         )
 
     @staticmethod
-    def _update_usage(total: dict[str, Any], current: dict[str, Any], loops: int) -> None:
+    def _update_usage(
+        total: dict[str, Any], current: dict[str, Any], loops: int
+    ) -> None:
         """Aggregate token usage stats without unnecessary conversions."""
         if isinstance(current, SimpleNamespace):
             current = vars(current)
@@ -989,15 +1082,17 @@ async def stream_responses(
             if not line or line.startswith(":"):
                 continue
             if line.startswith("event:"):
-                event_type = line[len("event:"):].strip()
+                event_type = line[len("event:") :].strip()
                 continue
             if line.startswith("data:"):
-                data = line[len("data:"):].strip()
+                data = line[len("data:") :].strip()
                 if data.strip() == "[DONE]":
                     return
                 yield parse_responses_sse(event_type, data)
                 event_type = None
     logger.debug("Response stream closed")
+
+
 async def delete_response(
     client: httpx.AsyncClient, base_url: str, api_key: str, response_id: str
 ) -> None:
@@ -1040,6 +1135,7 @@ def transform_tools_for_responses_api(tools: list[dict] | None) -> list[dict]:
         transformed_tools.append(new_tool)
 
     return transformed_tools
+
 
 async def build_chat_history_for_responses_api(
     *, chat_id: str | None = None, messages: list[dict] | None = None
@@ -1125,7 +1221,8 @@ async def build_chat_history_for_responses_api(
                     blocks.append(
                         {
                             "type": "input_image" if role == "user" else "output_image",
-                            "image_url": f.get("url") or f.get("image_url", {}).get("url"),
+                            "image_url": f.get("url")
+                            or f.get("image_url", {}).get("url"),
                         }
                     )
 
@@ -1216,7 +1313,9 @@ async def prepare_payload(
         if chat_id:
             chat_history = await build_chat_history_for_responses_api(chat_id=chat_id)
         else:
-            chat_history = await build_chat_history_for_responses_api(messages=params.get("messages", []))
+            chat_history = await build_chat_history_for_responses_api(
+                messages=params.get("messages", [])
+            )
 
     params.pop("messages", None)
 
@@ -1286,4 +1385,3 @@ async def execute_responses_tool_calls(
         if log:
             log.error("Tool execution failed: %s", ex)
         return [f"Error: {ex}"] * len(tasks)
-
