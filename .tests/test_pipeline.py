@@ -249,7 +249,7 @@ def test_apply_user_valve_overrides_inherit(dummy_chat):
         def model_dump(self, exclude_none=True):  # mimic BaseModel.model_dump
             return self._vals
 
-    overrides = Dummy(CUSTOM_LOG_LEVEL="inherit")
+    overrides = Dummy(CUSTOM_LOG_LEVEL="INHERIT")
     new_valves = pipe._apply_user_valve_overrides(overrides)
     assert new_valves.CUSTOM_LOG_LEVEL == pipe.Valves().CUSTOM_LOG_LEVEL
     import logging

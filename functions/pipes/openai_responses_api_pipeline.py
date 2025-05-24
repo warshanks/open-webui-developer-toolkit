@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.21
+version: 1.6.22
 license: MIT
 requirements: httpx
 
@@ -36,6 +36,7 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.22: Added 'INHERIT' sentinel for CUSTOM_LOG_LEVEL.
 • 1.6.21: User valves trimmed to CUSTOM_LOG_LEVEL; legacy 'inherit' handled.
 • 1.6.20: Updated for Pydantic v2.
 • 1.6.19: Added support for 'o3-mini-high' and 'o4-mini-high' model aliases.
@@ -241,10 +242,16 @@ class Pipe:
         """Per-user valve overrides."""
 
         CUSTOM_LOG_LEVEL: Literal[
-            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", None
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+            "INHERIT",
+            None,
         ] = Field(
-            default=None,
-            description="Select logging level.",
+            default="INHERIT",
+            description="Select logging level. 'INHERIT' uses the pipe default.",
         )
 
     def __init__(self) -> None:
@@ -753,7 +760,8 @@ class Pipe:
         if user_valves:
             raw_user_valves = user_valves.model_dump()  # or .dict() depending on version
             normalized_valves = {
-                k: (None if v == "inherit" else v) for k, v in raw_user_valves.items()
+                k: (None if str(v).lower() == "inherit" else v)
+                for k, v in raw_user_valves.items()
             }
             filtered = {k: v for k, v in normalized_valves.items() if v is not None}
             self.valves = self.valves.model_copy(update=filtered)
