@@ -969,21 +969,22 @@ def transform_tools_for_responses_api(tools: list[dict] | None) -> list[dict]:
 
     transformed_tools = []
     for tool in tools:
-        # Only process if it's actually a dict
         if not isinstance(tool, dict):
             continue
-           
-        # Check if "type" is present and matches a nested dict key
-        tool_type = tool.get("type")
-        if tool_type and tool_type in tool and isinstance(tool[tool_type], dict):
-            nested_data = tool.pop(tool_type)  # remove the nested dictionary
 
-            # Move the nested fields to the top level,
+        new_tool = dict(tool)
+
+        tool_type = new_tool.get("type")
+        if (
+            tool_type
+            and tool_type in new_tool
+            and isinstance(new_tool[tool_type], dict)
+        ):
+            nested_data = new_tool.pop(tool_type)
             for k, v in nested_data.items():
-                if k not in tool:
-                    tool[k] = v
+                new_tool.setdefault(k, v)
 
-        transformed_tools.append(tool)
+        transformed_tools.append(new_tool)
 
     return transformed_tools
 
