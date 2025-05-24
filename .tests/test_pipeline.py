@@ -57,6 +57,21 @@ def test_transform_tools_for_responses_api_keeps_non_function(dummy_chat):
     assert tools == body_tools
 
 
+def test_transform_tools_for_responses_api_mixed(dummy_chat):
+    pipeline = _reload_pipeline()
+    body_tools = [
+        {"type": "web_search", "search_context_size": "medium"},
+        {
+            "type": "function",
+            "name": "calculator",
+            "description": "math",
+            "parameters": {"type": "object"},
+        },
+    ]
+    tools = pipeline.transform_tools_for_responses_api(body_tools)
+    assert tools == body_tools
+
+
 @pytest.mark.asyncio
 async def test_build_responses_payload(dummy_chat):
     pipeline = _reload_pipeline()
