@@ -298,6 +298,7 @@ class Pipe:
         mem_handler = _MemHandler(debug_logs)
         mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         self.log.addHandler(mem_handler)
+        valves = self._apply_user_overrides(__user__.get("valves"))
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
                 pretty_log_block(
@@ -313,7 +314,6 @@ class Pipe:
                     "pipe_call",
                 )
             )
-        valves = self._apply_user_overrides(__user__.get("valves"))
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
             await self._ensure_native_function_calling(__metadata__)
@@ -338,22 +338,22 @@ class Pipe:
             instructions += "\n\n" + self._get_current_date_suffix()
 
         injection_lines: list[str] = []
+        note_parts: list[str] = []
         if valves.INJECT_USER_INFO:
             injection_lines.append(self._get_user_info_suffix(__user__))
+            note_parts.append("`user_info`")
         if valves.INJECT_BROWSER_INFO:
             injection_lines.append(self._get_browser_info_suffix(__request__))
+            note_parts.append("`browser_info`")
         if valves.INJECT_IP_INFO:
             injection_lines.append(self._get_ip_info_suffix(__request__))
+            note_parts.append("`ip_info`")
         if injection_lines:
-            note_parts = []
-            if valves.INJECT_USER_INFO:
-                note_parts.append("`user_info`")
-            if valves.INJECT_BROWSER_INFO:
-                note_parts.append("`browser_info`")
-            if valves.INJECT_IP_INFO:
-                note_parts.append("`ip_info`")
-            note = "Note: " + ", ".join(note_parts) + " provided solely for AI contextual enrichment."
-            injection_lines.append(note)
+            injection_lines.append(
+                "Note: "
+                + ", ".join(note_parts)
+                + " provided solely for AI contextual enrichment."
+            )
             instructions += "\n\n" + "\n".join(injection_lines)
 
         model = body.get("model", valves.MODEL_ID.split(",")[0])
@@ -361,8 +361,13 @@ class Pipe:
             model = str(model).split(".", 1)[1]
 
         tools: list[dict[str, Any]] | None
-        if model in NATIVE_TOOL_UNSUPPORTED_MODELS:
+        if not valves.ENABLE_NATIVE_TOOL_CALLING or model in NATIVE_TOOL_UNSUPPORTED_MODELS:
+            body.pop("tools", None)
             tools = None
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug(
+                    "Native tool calling disabled or unsupported for %s", model
+                )
         else:
             tools = transform_tools_for_responses_api(body.get("tools", []))
             if valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
