@@ -20,7 +20,9 @@ async def test_add_tool_for_supported_models():
     flt = mod.Filter()
     body = {"model": "openai_responses.gpt-4o"}
     out = await flt.inlet(body)
-    assert any(t.get("type") == "web_search" for t in out.get("tools", []))
+    tool = next((t for t in out.get("tools", []) if t.get("type") == "web_search"), None)
+    assert tool is not None
+    assert tool.get("web_search", {}).get("search_context_size") == "medium"
 
 
 @pytest.mark.asyncio
@@ -29,7 +31,12 @@ async def test_no_duplicate_tools():
     flt = mod.Filter()
     body = {
         "model": "openai_responses.gpt-4.1-mini",
-        "tools": [{"type": "web_search", "search_context_size": "medium"}],
+        "tools": [
+            {
+                "type": "web_search",
+                "web_search": {"search_context_size": "medium"},
+            }
+        ],
     }
     out = await flt.inlet(body)
     assert len([t for t in out["tools"] if t.get("type") == "web_search"]) == 1

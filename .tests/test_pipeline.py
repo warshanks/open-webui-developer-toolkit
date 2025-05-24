@@ -52,7 +52,24 @@ def test_transform_tools_for_responses_api_variants(dummy_chat):
 
 def test_transform_tools_for_responses_api_keeps_non_function(dummy_chat):
     pipeline = _reload_pipeline()
-    body_tools = [{"type": "web_search", "search_context_size": "medium"}]
+    body_tools = [
+        {"type": "web_search", "web_search": {"search_context_size": "medium"}}
+    ]
+    tools = pipeline.transform_tools_for_responses_api(body_tools)
+    assert tools == body_tools
+
+
+def test_transform_tools_for_responses_api_mixed(dummy_chat):
+    pipeline = _reload_pipeline()
+    body_tools = [
+        {"type": "web_search", "web_search": {"search_context_size": "medium"}},
+        {
+            "type": "function",
+            "name": "calculator",
+            "description": "math",
+            "parameters": {"type": "object"},
+        },
+    ]
     tools = pipeline.transform_tools_for_responses_api(body_tools)
     assert tools == body_tools
 

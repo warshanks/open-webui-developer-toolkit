@@ -41,7 +41,9 @@ class Filter:
 
         entry = {
             "type": "web_search",
-            "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+            "web_search": {
+                "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+            },
         }
 
         tools = body.setdefault("tools", [])
