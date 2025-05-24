@@ -3,6 +3,7 @@ title: OpenAI Responses API Pipeline
 id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
+funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 version: 1.6.19
 license: MIT
