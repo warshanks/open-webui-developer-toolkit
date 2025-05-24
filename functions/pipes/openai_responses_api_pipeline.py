@@ -190,7 +190,7 @@ class Pipe:
         STORE_RESPONSE: bool = Field(
             default=False,
             description=(
-                "Whether to store the generated model response (on OpenAI's side) for later debuging. Defaults to False."
+                "Whether to store the generated model response (on OpenAI's side) for later debugging. Defaults to False."
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-store
 
