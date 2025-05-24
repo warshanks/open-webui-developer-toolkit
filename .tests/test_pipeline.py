@@ -449,14 +449,12 @@ async def test_pipe_stream_loop(dummy_chat):
             {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
             {},
         )
-        tokens = [chunk async for chunk in gen]
+        tokens = []
+        async for chunk in gen:
+            tokens.append(chunk)
     await pipe.on_shutdown()
 
-    assert tokens == []
-    delta = [e["data"]["content"] for e in emitted if e["type"] == "chat:message:delta"]
-    assert delta == ["<think>", "t", "\n\n---\n\n", "</think>\n", "hi"]
-    final = [e["data"] for e in emitted if e["type"] == "chat:message"]
-    assert final == [{"content": "<think>t\n\n---\n\n</think>\nhi"}]
+    assert tokens == ["<think>", "t", "\n\n---\n\n", "</think>\n", "hi"]
     assert [e["data"] for e in emitted if e["type"] == "chat:completion"] == [
         {"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "loops": 1}},
         {"done": True},
@@ -1010,10 +1008,10 @@ async def test_image_generation_events_emit_files(dummy_chat):
         )
     await pipe.on_shutdown()
 
-    files = [e for e in emitted if e["type"] == "chat:message:files"]
+    files = [e for e in emitted if e["type"] == "files"]
     assert files == [
-        {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": "/cache/images/AA.png"}]}},
-        {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": "/cache/images/BB.png"}]}},
+        {"type": "files", "data": {"files": [{"type": "image", "url": "/cache/images/AA.png"}]}},
+        {"type": "files", "data": {"files": [{"type": "image", "url": "/cache/images/BB.png"}]}},
     ]
 
 
@@ -1132,8 +1130,8 @@ async def test_image_generation_events_deduplicate(dummy_chat):
     await pipe.on_shutdown()
 
     assert chunks == []
-    files = [e for e in emitted if e["type"] == "chat:message:files"]
+    files = [e for e in emitted if e["type"] == "files"]
     assert files == [
-        {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": "/cache/images/AAA.png"}]}},
-        {"type": "chat:message:files", "data": {"files": [{"type": "image", "url": "/cache/images/BBB.png"}]}},
+        {"type": "files", "data": {"files": [{"type": "image", "url": "/cache/images/AAA.png"}]}},
+        {"type": "files", "data": {"files": [{"type": "image", "url": "/cache/images/BBB.png"}]}},
     ]
