@@ -81,6 +81,9 @@ Example:
 }
 ```
 
+If omitted, `CUSTOM_LOG_LEVEL` defaults to the sentinel value `INHERIT`.  Any
+field set to `INHERIT` is ignored, so the pipe's configured log level is used.
+
 ## 3. `__request__`
 
 The FastAPI `Request` object for the incoming HTTP call. A pipe can read headers or query parameters from here if needed.
