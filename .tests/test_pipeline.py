@@ -436,13 +436,9 @@ async def test_pipe_stream_loop(dummy_chat):
     async def emitter(evt: dict):
         emitted.append(evt)
 
-    with patch.object(pipeline, "stream_responses", fake_stream), \
-        patch.object(pipe, "get_http_client", AsyncMock(return_value=object())), \
-        patch.object(
-            pipeline,
-            "save_base64_image",
-            side_effect=["/cache/images/a.png", "/cache/images/b.png"],
-        ):
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
         gen = pipe.pipe(
             {},
             {},
@@ -1012,8 +1008,8 @@ async def test_image_generation_events_emit_markdown(dummy_chat):
     await pipe.on_shutdown()
 
     msgs = [e for e in emitted if e["type"] == "message"]
-    assert msgs[0]["data"]["content"].startswith("![generated image](/cache/images/a.png)")
-    assert msgs[1]["data"]["content"].startswith("![generated image](/cache/images/b.png)")
+    assert msgs[0]["data"]["content"].startswith("![generated image](data:image/png;base64,AA")
+    assert msgs[1]["data"]["content"].startswith("![generated image](data:image/png;base64,BB")
 
 
 def test_simplify_user_agent_helper(dummy_chat):
@@ -1058,13 +1054,9 @@ async def test_image_generation_events_yield_markdown(dummy_chat):
         for e in events:
             yield e
 
-    with patch.object(pipeline, "stream_responses", fake_stream), \
-        patch.object(pipe, "get_http_client", AsyncMock(return_value=object())), \
-        patch.object(
-            pipeline,
-            "save_base64_image",
-            side_effect=["/cache/images/a.png", "/cache/images/b.png"],
-        ):
+    with patch.object(pipeline, "stream_responses", fake_stream), patch.object(
+        pipe, "get_http_client", AsyncMock(return_value=object())
+    ):
         gen = pipe.pipe(
             {},
             {},
@@ -1079,62 +1071,6 @@ async def test_image_generation_events_yield_markdown(dummy_chat):
     await pipe.on_shutdown()
 
     assert chunks == [
-        "![generated image](/cache/images/a.png)",
-        "![generated image](/cache/images/b.png)",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_image_generation_events_deduplicate(dummy_chat):
-    pipeline = _reload_pipeline()
-    pipe = pipeline.Pipe()
-
-    events = [
-        types.SimpleNamespace(type="response.image_generation_call.generating"),
-        types.SimpleNamespace(
-            type="response.image_generation_call.partial_image",
-            partial_image_b64="AAA",
-        ),
-        types.SimpleNamespace(
-            type="response.image_generation_call.partial_image",
-            partial_image_b64="AAA",
-        ),
-        types.SimpleNamespace(
-            type="response.image_generation_call.partial_image",
-            partial_image_b64="BBB",
-        ),
-        types.SimpleNamespace(
-            type="response.output_item.done",
-            item=types.SimpleNamespace(type="image_generation_call", result="BBB"),
-        ),
-        types.SimpleNamespace(type="response.completed", response=types.SimpleNamespace(usage={})),
-    ]
-
-    async def fake_stream(*_a, **_kw):
-        for e in events:
-            yield e
-
-    with patch.object(pipeline, "stream_responses", fake_stream), \
-        patch.object(pipe, "get_http_client", AsyncMock(return_value=object())), \
-        patch.object(
-            pipeline,
-            "save_base64_image",
-            side_effect=["/cache/images/a.png", "/cache/images/b.png"],
-        ):
-        gen = pipe.pipe(
-            {},
-            {},
-            None,
-            AsyncMock(),
-            AsyncMock(),
-            [],
-            {"chat_id": "chat1", "message_id": "m1", "function_calling": "native"},
-            {},
-        )
-        chunks = [chunk async for chunk in gen]
-    await pipe.on_shutdown()
-
-    assert chunks == [
-        "![generated image](/cache/images/a.png)",
-        "![generated image](/cache/images/b.png)",
+        "![generated image](data:image/png;base64,AAA)",
+        "![generated image](data:image/png;base64,BBB)",
     ]
