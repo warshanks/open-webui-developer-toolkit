@@ -539,6 +539,7 @@ class Pipe:
                                         "data": {"content": "</think>\n"},
                                     }
                                 )
+
                         continue
                     if et == "response.output_text.delta":
                         if __event_emitter__:
@@ -612,14 +613,6 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_item.done":
-                        if __event_emitter__:
-                            await __event_emitter__(
-                                {
-                                    "type": "chat:completion",
-                                    "data": {"done": True, "content": ""},
-                                }
-                            )
-
                         item = event.get("item")
                         if (
                             isinstance(item, dict)
@@ -705,9 +698,9 @@ class Pipe:
                 if __event_emitter__:
                     await __event_emitter__(
                         {
-                            "type": "chat:message",
+                            "type": "chat:message:delta",
                             "data": {
-                                "content": f"❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
+                                "content": f"\n\n❌ {type(ex).__name__}: {ex}\n{''.join(traceback.format_exc(limit=5))}",
                             },
                         }
                     )
@@ -789,9 +782,6 @@ class Pipe:
 
         await self._emit_status(__event_emitter__, "", last_status, done=True)
 
-        if __event_emitter__:
-            await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
-
         self.log.info(
             "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
             chat_id,
@@ -802,13 +792,16 @@ class Pipe:
             usage_total.get("total_tokens", 0),
         )
 
-        if usage_total and __event_emitter__:
-            await __event_emitter__(
-                {"type": "chat:completion", "data": {"usage": usage_total}}
-            )
-
         if __event_emitter__:
-            await __event_emitter__({"type": "chat:completion", "data": {"done": True}})
+            await __event_emitter__(
+                {
+                    "type": "chat:completion",
+                    "data": {
+                        "done": True,
+                        **({"usage": usage_total} if usage_total else {}),
+                    },
+                }
+            )
 
         for rid in cleanup_ids:
             try:
