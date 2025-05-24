@@ -59,7 +59,6 @@ import sys
 import time
 import traceback
 from datetime import datetime
-from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 import inspect
@@ -82,33 +81,24 @@ EMOJI_LEVELS = {
 }
 
 # Feature support by model
-WEB_SEARCH_MODELS = {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}
-REASONING_MODELS = {"o3", "o4-mini", "o3-mini"}
-NATIVE_TOOL_UNSUPPORTED_MODELS = {
-    "chatgpt-4o-latest",
-    "codex-mini-latest",
-    "gpt-4o-search-preview",
+# Defaults are assumed to be False for capabilities not listed.
+MODEL_CAPABILITIES = {
+    "gpt-4.1": {"web_search": True, "image_gen_tool": True, "function_calling": True},
+    "gpt-4.1-mini": {"web_search": True, "image_gen_tool": True, "function_calling": True},
+    "gpt-4o": {"web_search": True, "image_gen_tool": True, "function_calling": True},
+    "gpt-4o-mini": {"web_search": True, "image_gen_tool": True, "function_calling": True},
+    "gpt-4.1-nano": {"image_gen_tool": True, "function_calling": True},
+    "o3": {"reasoning": True, "image_gen_tool": True, "function_calling": True},
+    "o4-mini": {"reasoning": True, "function_calling": True},
+    "o3-mini": {"reasoning": True, "function_calling": True},
+    "chatgpt-4o-latest": {},
+    "codex-mini-latest": {},
+    "gpt-4o-search-preview": {},
 }
-IMAGE_GEN_TOOL_SUPPORTED_MODELS = {"gpt-4o", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano" "gpt-4o", "gpt-4o-mini", "o3"} # https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1&api=responses&multi-turn=imageid#supported-models
 
 # Precompiled regex for citation annotations
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
-
-
-@dataclass(slots=True)
-class ResponsesEvent:
-    """Parsed SSE event."""
-
-    type: str
-    delta: str | None = None
-    text: str | None = None
-    item_id: str | None = None
-    item: Any | None = None
-    response: Any | None = None
-    annotation: Any | None = None
-    partial_image_index: int | None = None
-    partial_image_b64: str | None = None
 
 
 class _MemHandler(logging.Handler):
@@ -364,8 +354,9 @@ class Pipe:
         if "." in str(model):
             model = str(model).split(".", 1)[1]
 
+        model_capabilities = MODEL_CAPABILITIES.get(model, {})
         tools: list[dict[str, Any]] | None
-        if not valves.ENABLE_NATIVE_TOOL_CALLING or model in NATIVE_TOOL_UNSUPPORTED_MODELS:
+        if not valves.ENABLE_NATIVE_TOOL_CALLING or not model_capabilities.get("function_calling"):
             body.pop("tools", None)
             tools = None
             if self.log.isEnabledFor(logging.DEBUG):
@@ -374,7 +365,7 @@ class Pipe:
                 )
         else:
             tools = transform_tools_for_responses_api(body.get("tools", []))
-            if valves.ENABLE_WEB_SEARCH and model in WEB_SEARCH_MODELS:
+            if valves.ENABLE_WEB_SEARCH and model_capabilities.get("web_search"):
                 tools.append(
                     {
                         "type": "web_search",
@@ -446,14 +437,14 @@ class Pipe:
                     valves.API_KEY,
                     request_params,
                 ):
-                    et = event.type
+                    et = event.get("type")
                     if self.log.isEnabledFor(logging.DEBUG) and not et.endswith(".delta"):
                         self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
                         if last_response_id:
                             cleanup_ids.append(last_response_id)
-                        last_response_id = event.response.id
+                        last_response_id = event.get("response", {}).get("id")
                         continue
                     if et in {"response.done", "response.failed", "response.incomplete", "error"}:
                         self.log.error("Stream ended with event: %s", et)
@@ -463,7 +454,7 @@ class Pipe:
                         # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        yield event.delta
+                        yield event.get("delta")
                         continue
                     if et == "response.reasoning_summary_text.done":
                         yield "\n\n---\n\n"
@@ -474,7 +465,7 @@ class Pipe:
                             yield "</think>\n"
                         continue
                     if et == "response.output_text.delta":
-                        yield event.delta
+                        yield event.get("delta")
                         continue
                     if et == "response.output_text.done":
                         # This delta marks the end of the current output block.
@@ -490,8 +481,8 @@ class Pipe:
                         )
                         continue
                     if et == "response.image_generation_call.partial_image":
-                        if event.partial_image_b64:
-                            yield f"![generated image](data:image/png;base64,{event.partial_image_b64})"
+                        if event.get("partial_image_b64"):
+                            yield f"![generated image](data:image/png;base64,{event['partial_image_b64']})"
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
@@ -502,20 +493,20 @@ class Pipe:
                         )
                         continue
                     if et == "response.output_item.added":
-                        item = getattr(event, "item", None)
-                        if getattr(item, "type", None) == "function_call":
+                        item = event.get("item")
+                        if isinstance(item, dict) and item.get("type") == "function_call":
                             await self._emit_status(
                                 __event_emitter__,
-                                f"🔧 Running {item.name}...",
+                                f"🔧 Running {item.get('name')}...",
                                 last_status,
                             )
-                        elif getattr(item, "type", None) == "web_search_call":
+                        elif isinstance(item, dict) and item.get("type") == "web_search_call":
                             await self._emit_status(
                                 __event_emitter__,
                                 "🔍 Searching the internet...",
                                 last_status,
                             )
-                        elif getattr(item, "type", None) == "image_generation_call":
+                        elif isinstance(item, dict) and item.get("type") == "image_generation_call":
                             await self._emit_status(
                                 __event_emitter__,
                                 "🖼️ Generating image...",
@@ -523,25 +514,25 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_item.done":
-                        item = getattr(event, "item", None)
-                        if getattr(item, "type", None) == "function_call":
-                            pending_calls.append(item)
+                        item = event.get("item")
+                        if isinstance(item, dict) and item.get("type") == "function_call":
+                            pending_calls.append(SimpleNamespace(**item))
                             await self._emit_status(
                                 __event_emitter__,
-                                f"🔧 Running {item.name}...",
+                                f"🔧 Running {item.get('name')}...",
                                 last_status,
                                 done=True,
                             )
-                        elif getattr(item, "type", None) == "web_search_call":
+                        elif isinstance(item, dict) and item.get("type") == "web_search_call":
                             await self._emit_status(
                                 __event_emitter__,
                                 "🔍 Searching the internet...",
                                 last_status,
                                 done=True,
                             )
-                        elif getattr(item, "type", None) == "image_generation_call":
-                            if getattr(item, "result", None):
-                                yield f"![generated image](data:image/png;base64,{item.result})"
+                        elif isinstance(item, dict) and item.get("type") == "image_generation_call":
+                            if item.get("result"):
+                                yield f"![generated image](data:image/png;base64,{item['result']})"
                             await self._emit_status(
                                 __event_emitter__,
                                 "🖼️ Image generation completed",
@@ -550,7 +541,7 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_text.annotation.added":
-                        raw = str(getattr(event, "annotation", ""))
+                        raw = str(event.get("annotation", ""))
                         title_m = ANNOT_TITLE_RE.search(raw)
                         url_m = ANNOT_URL_RE.search(raw)
                         title = title_m.group(1) if title_m else "Unknown Title"
@@ -574,9 +565,10 @@ class Pipe:
                             )
                         continue
                     if et == "response.completed":
-                        if event.response.usage:
+                        usage = event.get("response", {}).get("usage")
+                        if usage:
                             self._update_usage(
-                                usage_total, event.response.usage, loop_count
+                                usage_total, usage, loop_count
                             )
                         continue
             except Exception as ex:
@@ -865,7 +857,8 @@ class Pipe:
 
         model_dict = metadata.get("model") or {}
         model_id = model_dict.get("id") if isinstance(model_dict, dict) else model_dict
-        if model_id in NATIVE_TOOL_UNSUPPORTED_MODELS:
+        model_capabilities = MODEL_CAPABILITIES.get(model_id, {})
+        if not model_capabilities.get("function_calling"):
             self.log.debug("Model %s does not support native tool calling", model_id)
             return
         self.log.debug("Enabling native function calling for %s", model_id)
@@ -947,8 +940,8 @@ async def stream_responses(
     base_url: str,
     api_key: str,
     params: dict[str, Any],
-) -> AsyncIterator[ResponsesEvent]:
-    """Yield parsed ``ResponsesEvent`` objects from the API."""
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield parsed SSE events from the API as dictionaries."""
 
     url = base_url.rstrip("/") + "/responses"
     headers = {
@@ -1226,7 +1219,9 @@ async def prepare_payload(
         params["tools"] = tools
         params["tool_choice"] = "auto" if tools else "none"
 
-    if model in REASONING_MODELS and (
+    model_capabilities = MODEL_CAPABILITIES.get(model, {})
+
+    if model_capabilities.get("reasoning") and (
         reasoning_effort != "none" or valves.REASON_SUMMARY
     ):
         reasoning = {}
@@ -1239,33 +1234,14 @@ async def prepare_payload(
     return params
 
 
-def parse_responses_sse(event_type: str | None, data: str) -> ResponsesEvent:
-    """Parse an SSE data payload into a ``ResponsesEvent`` with minimal overhead."""
+def parse_responses_sse(event_type: str | None, data: str) -> dict[str, Any]:
+    """Parse an SSE data payload into a plain dictionary."""
     payload = json.loads(data)
 
     event_type = payload.get("type", event_type or "message")
 
-    item = payload.get("item")
-    if isinstance(item, dict):
-        item = SimpleNamespace(**item)
-    response = payload.get("response")
-    if isinstance(response, dict):
-        response = SimpleNamespace(**response)
-    annotation = payload.get("annotation")
-    if isinstance(annotation, dict):
-        annotation = SimpleNamespace(**annotation)
-
-    return ResponsesEvent(
-        type=event_type,
-        delta=payload.get("delta"),
-        text=payload.get("text"),
-        item_id=payload.get("item_id"),
-        item=item,
-        response=response,
-        annotation=annotation,
-        partial_image_index=payload.get("partial_image_index"),
-        partial_image_b64=payload.get("partial_image_b64"),
-    )
+    payload["type"] = event_type
+    return payload
 
 
 async def execute_responses_tool_calls(
