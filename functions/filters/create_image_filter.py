@@ -25,8 +25,10 @@ class Filter:
     def _add_image_generation_tool(self, body: dict) -> None:
         entry = {
             "type": "image_generation",
-            "size": self.valves.SIZE,
-            "quality": self.valves.QUALITY,
+            "image_generation": {
+                "size": self.valves.SIZE,
+                "quality": self.valves.QUALITY,
+            }
         }
         tools = body.setdefault("tools", [])
         if not any(t.get("type") == "image_generation" for t in tools):
