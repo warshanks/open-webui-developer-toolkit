@@ -55,6 +55,7 @@ requirements: httpx
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -63,7 +64,9 @@ import sys
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 import inspect
 
@@ -103,6 +106,21 @@ MODEL_CAPABILITIES = {
 # Precompiled regex for citation annotations
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
+
+
+def _cache_dir() -> Path:
+    """Return the cache directory for storing generated images."""
+    return Path(os.environ.get("CACHE_DIR", "cache"))
+
+
+def save_base64_image(data_b64: str) -> str:
+    """Decode base64 image data to a file and return the public path."""
+    img_dir = _cache_dir() / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    file_path = img_dir / f"{uuid4()}.png"
+    with open(file_path, "wb") as f:
+        f.write(base64.b64decode(data_b64))
+    return f"/cache/images/{file_path.name}"
 
 
 class _MemHandler(logging.Handler):
@@ -406,6 +424,7 @@ class Pipe:
         cleanup_ids: list[str] = []
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
+        last_image_b64: str | None = None
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             self.log.debug("Loop iteration #%d", loop_count)
@@ -489,8 +508,11 @@ class Pipe:
                         )
                         continue
                     if et == "response.image_generation_call.partial_image":
-                        if event.get("partial_image_b64"):
-                            yield f"![generated image](data:image/png;base64,{event['partial_image_b64']})"
+                        img_b64 = event.get("partial_image_b64")
+                        if img_b64 and img_b64 != last_image_b64:
+                            last_image_b64 = img_b64
+                            image_url = save_base64_image(img_b64)
+                            yield f"![generated image]({image_url})"
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
@@ -539,8 +561,11 @@ class Pipe:
                                 done=True,
                             )
                         elif isinstance(item, dict) and item.get("type") == "image_generation_call":
-                            if item.get("result"):
-                                yield f"![generated image](data:image/png;base64,{item['result']})"
+                            result_b64 = item.get("result")
+                            if result_b64 and result_b64 != last_image_b64:
+                                last_image_b64 = result_b64
+                                image_url = save_base64_image(result_b64)
+                                yield f"![generated image]({image_url})"
                             await self._emit_status(
                                 __event_emitter__,
                                 "🖼️ Image generation completed",
