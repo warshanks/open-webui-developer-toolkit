@@ -46,5 +46,7 @@ This repository provides **extensions (pipes, filters, tools)** for the
 2. **Flatten nested logic** and reduce complexity whenever possible.
 3. **Follow KISS** (Keep It Simple, Stupid) and **DRY** (Don’t Repeat Yourself).
 4. **Inline variables** if they’re used only once.
+5. **Reuse helpers** from the main Open WebUI project whenever possible instead
+   of rolling our own versions.
 
 That’s it! Keep everything simple, documented, and well-tested so future agents can dive in quickly.
