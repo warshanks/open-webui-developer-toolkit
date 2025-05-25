@@ -25,6 +25,29 @@ session_ids = list(
 The returned helper is an asynchronous function that uses Python Socket.IO to
 broadcast the given payload to each collected session.
 
+`get_event_call()` returns another helper bound to the current request's session.
+It uses [`sio.call`](https://python-socketio.readthedocs.io/en/latest/api.html#socketio.AsyncServer.call)
+to send the payload only to that session and waits for the browser to respond:
+
+```python
+async def __event_caller__(event_data):
+    response = await sio.call(
+        "chat-events",
+        {
+            "chat_id": request_info.get("chat_id", None),
+            "message_id": request_info.get("message_id", None),
+            "data": event_data,
+        },
+        to=request_info["session_id"],
+    )
+    return response
+```
+【F:external/open-webui/backend/open_webui/socket/main.py†L374-L386】
+
+The returned value is whatever the frontend callback supplies—typically a
+boolean for `confirmation` events or a string for `input` prompts. Unlike the
+emitter, this helper does not alter the database automatically.
+
 ## Database persistence
 
 The helper produced by `get_event_emitter` in `socket/main.py` first collects the
