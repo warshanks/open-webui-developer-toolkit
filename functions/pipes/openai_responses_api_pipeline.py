@@ -5,14 +5,14 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.24
+version: 1.6.23
 license: MIT
 requirements: httpx
 
 ------------------------------------------------------------------------------
 🚀 CURRENT FEATURES
 ------------------------------------------------------------------------------
-✅ o3/o4-mini o-series support (including visible reasoning summaries via <details> tags)
+✅ o3/o4-mini o-series support (including visible <think> reasoning summaries)
 ✅ Image Input: Directly upload images into conversations.
 ✅ Built-in Web Search: Enabled via Pipe valve (powered by OpenAI web_search tool)
 ✅ Usage Stats: passthrough (to OpenWebUI GUI)
@@ -36,7 +36,6 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
-• 1.6.24: Reasoning placeholder now uses a closed <details> tag to render immediately.
 • 1.6.23: Fixed user valve merging when CUSTOM_LOG_LEVEL is set to 'INHERIT'.
 • 1.6.22: Added 'INHERIT' sentinel for CUSTOM_LOG_LEVEL.
 • 1.6.21: User valves trimmed to CUSTOM_LOG_LEVEL; legacy 'inherit' handled.
@@ -449,8 +448,6 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
         last_image_url: str | None = None
-        reasoning_parts: list[str] = []
-        reasoning_start: float | None = None
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             self.log.debug("Loop iteration #%d", loop_count)
@@ -482,20 +479,11 @@ class Pipe:
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
-                    reasoning_start = time.monotonic()
-                    reasoning_parts = []
                     if __event_emitter__:
                         await __event_emitter__(
                             {
                                 "type": "chat:message:delta",
-                                "data": {
-                                    "content": (
-                                        "<details type=\"reasoning\" "
-                                        "done=\"false\">"
-                                        "<summary>Thinking…</summary>"
-                                        "</details>\n"
-                                    )
-                                },
+                                "data": {"content": "<think>"},
                             }
                         )
 
@@ -525,43 +513,37 @@ class Pipe:
                         self.log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
-                        # The thinking placeholder was already emitted at start.
+                        # The <think> tag is emitted at stream start when
+                        # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        reasoning_parts.append(event.get("delta", ""))
+                        if __event_emitter__:
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:message:delta",
+                                    "data": {"content": event.get("delta")},
+                                }
+                            )
                         continue
                     if et == "response.reasoning_summary_text.done":
+                        if __event_emitter__:
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:message:delta",
+                                    "data": {"content": "\n\n---\n\n"},
+                                }
+                            )
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            reasoning_duration = (
-                                int(time.monotonic() - reasoning_start)
-                                if reasoning_start is not None
-                                else 0
-                            )
-                            reasoning_text = "".join(reasoning_parts)
-                            reasoning_display = "\n".join(
-                                (
-                                    f"> {line}" if not line.startswith(">") else line
-                                )
-                                for line in reasoning_text.splitlines()
-                            )
                             if __event_emitter__:
                                 await __event_emitter__(
                                     {
                                         "type": "chat:message:delta",
-                                        "data": {
-                                            "content": (
-                                                f"<details type=\"reasoning\" done=\"true\" duration=\"{reasoning_duration}\">\n"
-                                                f"<summary>Thought for {reasoning_duration} seconds</summary>\n"
-                                                f"{reasoning_display}\n"
-                                                "</details>\n\n---\n\n"
-                                            )
-                                        },
+                                        "data": {"content": "</think>\n"},
                                     }
                                 )
-                            reasoning_parts = []
 
                         continue
                     if et == "response.output_text.delta":
