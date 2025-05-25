@@ -90,7 +90,7 @@ Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content
 ```
 ## Database persistence
 
-The emitter optionally writes certain event data back to the chat record. When `update_db=True` (the default) the backend updates the message for three shorthand event types:
+The emitter optionally writes certain event data back to the chat record. When `update_db=True` (the default) the event is first broadcast to all active sessions (using `asyncio.gather` under the hood) and then the backend updates the message for three shorthand event types:
 
 ```python
 if update_db:
@@ -103,7 +103,7 @@ if update_db:
 ```
 【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
 
-`status` entries append to the message's `statusHistory` list. `message` events concatenate text, while `replace` overwrites the content entirely. Other event types such as `chat:completion` are purely transient unless you persist them yourself.
+`status` entries append to the message's `statusHistory` list. `message` events read the current `content` field and append new text via `Chats.upsert_message_to_chat_by_id_and_message_id`, while `replace` overwrites the field entirely. Other event types such as `chat:completion` are purely transient unless you persist them yourself.
 
 To emit without touching the database pass `False` when retrieving the emitter:
 
