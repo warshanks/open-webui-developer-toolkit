@@ -93,7 +93,7 @@ Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content
 ```
 ## Database persistence
 
-The emitter optionally writes certain event data back to the chat record. When `update_db=True` (the default) the event is first broadcast to all active sessions (using `asyncio.gather` under the hood) and then the backend updates the message for three shorthand event types:
+The emitter returned by `get_event_emitter` in `socket/main.py` can also update the chat record. It looks up the user's active session IDs in `USER_POOL` and, with `update_db=True` (the default), broadcasts the event to each session via `asyncio.gather` before mutating the message for three shorthand event types:
 
 ```python
 if update_db:
