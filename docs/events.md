@@ -1,13 +1,16 @@
 # Events: `__event_emitter__` and `__event_call__`
 
-Open WebUI extensions can push real-time updates to the UI.  Each Tool or Pipe receives two async helpers:
+Open WebUI extensions can push real-time updates to the UI. Each Tool or Pipe
+receives two async helpers:
 
 * `__event_emitter__` – fire-and-forget events
-* `__event_call__` – events that wait for user input
+* `__event_call__` – events that wait for user input and return the user's
+  response
 
-Both helpers expect a dictionary `{"type": str, "data": dict}`.  `__event_call__` returns the user's response when applicable.
+Both helpers expect a dictionary `{"type": str, "data": dict}`.
 
-`get_event_emitter()` gathers every active session for the calling user (plus the current request's session when available) and emits the payload to each one:
+`get_event_emitter()` gathers every active session for the calling user (plus the
+current request's session when available) and emits the payload to each one:
 
 ```python
 session_ids = list(
@@ -21,6 +24,49 @@ session_ids = list(
 
 The returned helper is an asynchronous function that uses Python Socket.IO to
 broadcast the given payload to each collected session.
+
+## Database persistence
+
+The helper produced by `get_event_emitter` in `socket/main.py` first collects the
+user's active session IDs from `USER_POOL`. With `update_db=True` (the default)
+it broadcasts the event to each session using `asyncio.gather`. After
+broadcasting, it updates the stored message for three shorthand event types:
+
+```python
+if update_db:
+    if "type" in event_data and event_data["type"] == "status":
+        Chats.add_message_status_to_chat_by_id_and_message_id(...)
+    if "type" in event_data and event_data["type"] == "message":
+        ...  # fetch existing text and append
+    if "type" in event_data and event_data["type"] == "replace":
+        ...  # overwrite existing content
+```
+【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
+
+`status` entries append a status dict to the message's `statusHistory` list.
+`message` events read the existing text, append the new chunk, and then call
+`Chats.upsert_message_to_chat_by_id_and_message_id`. `replace` overwrites the
+current text with the provided content. Event types like `chat:completion` are
+transient unless you persist them explicitly. When using the standard pipeline
+this save happens automatically after the final chunk. If you emit
+`chat:completion` events yourself, call `Chats.upsert_message_to_chat_by_id_and_message_id`
+when you're done.
+
+To emit without touching the database pass `False` when retrieving the emitter:
+
+```python
+emitter = get_event_emitter(metadata, False)
+```
+
+### Manual saves
+
+Call `Chats.upsert_message_to_chat_by_id_and_message_id` whenever you need to
+persist changes manually:
+
+```python
+Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content": text})
+```
+【F:external/open-webui/backend/open_webui/models/chats.py†L228-L249】
 
 ## Common event types
 
@@ -91,45 +137,6 @@ await __event_emitter__(
 )
 Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content": full_text})
 ```
-## Database persistence
-
-The helper produced by `get_event_emitter` in `socket/main.py` first collects the user's active session IDs from `USER_POOL`. With `update_db=True` (the default) it broadcasts the event to each session using `asyncio.gather`. After broadcasting, it updates the stored message for three shorthand event types:
-
-```python
-if update_db:
-    if "type" in event_data and event_data["type"] == "status":
-        Chats.add_message_status_to_chat_by_id_and_message_id(...)
-    if "type" in event_data and event_data["type"] == "message":
-        ...  # fetch existing text and append
-    if "type" in event_data and event_data["type"] == "replace":
-        ...  # overwrite existing content
-```
-【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
-
-`status` entries append a status dict to the message's `statusHistory` list.
-`message` events read the existing text, append the new chunk, and then call
-`Chats.upsert_message_to_chat_by_id_and_message_id`.
-`replace` overwrites the current text with the provided content.
-Event types like `chat:completion` are transient unless you persist them
-explicitly. When using the standard pipeline this save happens
-automatically after the final chunk. If you emit `chat:completion` events
-yourself, call `Chats.upsert_message_to_chat_by_id_and_message_id` when
-you're done.
-
-To emit without touching the database pass `False` when retrieving the emitter:
-
-```python
-emitter = get_event_emitter(metadata, False)
-```
-
-### Manual saves
-
-Call `Chats.upsert_message_to_chat_by_id_and_message_id` whenever you need to persist changes manually:
-
-```python
-Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content": text})
-```
-【F:external/open-webui/backend/open_webui/models/chats.py†L228-L249】
 
 ## Yielding text vs emitting events
 
