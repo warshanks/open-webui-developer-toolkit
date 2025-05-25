@@ -111,7 +111,10 @@ if update_db:
 `Chats.upsert_message_to_chat_by_id_and_message_id`.
 `replace` overwrites the current text with the provided content.
 Event types like `chat:completion` are transient unless you persist them
-explicitly.
+explicitly. When using the standard pipeline this save happens
+automatically after the final chunk. If you emit `chat:completion` events
+yourself, call `Chats.upsert_message_to_chat_by_id_and_message_id` when
+you're done.
 
 To emit without touching the database pass `False` when retrieving the emitter:
 
