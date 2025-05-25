@@ -7,6 +7,18 @@ Open WebUI extensions can push real-time updates to the UI.  Each Tool or Pipe r
 
 Both helpers expect a dictionary `{"type": str, "data": dict}`.  `__event_call__` returns the user's response when applicable.
 
+`get_event_emitter()` gathers every active session for the calling user (plus the current request's session when available) and emits the payload to each one:
+
+```python
+session_ids = list(
+    set(
+        USER_POOL.get(user_id, [])
+        + ([request_info.get("session_id")] if request_info.get("session_id") else [])
+    )
+)
+```
+【F:external/open-webui/backend/open_webui/socket/main.py†L305-L317】
+
 ## Common event types
 
 | type                | Purpose                                              |
