@@ -44,8 +44,9 @@ if update_db:
 【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
 
 `status` entries append a status dict to the message's `statusHistory` list.
-`message` events read the existing text, append the new chunk, and then call
-`Chats.upsert_message_to_chat_by_id_and_message_id`. `replace` overwrites the
+`message` events fetch the stored message (if any), append the new chunk, and
+then call `Chats.upsert_message_to_chat_by_id_and_message_id` to save the
+result. If no message exists the update is skipped. `replace` overwrites the
 current text with the provided content. Event types like `chat:completion` are
 transient unless you persist them explicitly. When using the standard pipeline
 this save happens automatically after the final chunk. If you emit
