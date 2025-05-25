@@ -19,6 +19,9 @@ session_ids = list(
 ```
 【F:external/open-webui/backend/open_webui/socket/main.py†L305-L317】
 
+The returned helper is an asynchronous function that uses Python Socket.IO to
+broadcast the given payload to each collected session.
+
 ## Common event types
 
 | type                | Purpose                                              |
@@ -97,13 +100,18 @@ if update_db:
     if "type" in event_data and event_data["type"] == "status":
         Chats.add_message_status_to_chat_by_id_and_message_id(...)
     if "type" in event_data and event_data["type"] == "message":
-        ...
+        ...  # fetch existing text and append
     if "type" in event_data and event_data["type"] == "replace":
-        ...
+        ...  # overwrite existing content
 ```
 【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
 
-`status` entries append to the message's `statusHistory` list. `message` events read the current `content` field and append new text via `Chats.upsert_message_to_chat_by_id_and_message_id`, while `replace` overwrites the field entirely. Other event types such as `chat:completion` are purely transient unless you persist them yourself.
+`status` entries append a status dict to the message's `statusHistory` list.
+`message` events fetch the stored text and append the new chunk before calling
+`Chats.upsert_message_to_chat_by_id_and_message_id`.
+`replace` writes the provided text as-is, overwriting any existing content.
+Other event types such as `chat:completion` are purely transient unless you
+persist them yourself.
 
 To emit without touching the database pass `False` when retrieving the emitter:
 
