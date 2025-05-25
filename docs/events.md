@@ -41,11 +41,11 @@ broadcast the given payload to each collected session.
 
 Custom event types may be used if the frontend knows how to handle them.
 
-`message` and `replace` are backend shortcuts that the UI treats as
-`chat:message:delta` and `chat:message` respectively. These, together with
-`status`, are the only event types that automatically update the stored
-message. `chat:completion` events rely on the pipeline to call
-`Chats.upsert_message_to_chat_by_id_and_message_id`.
+`message` and `replace` are backend shortcuts the UI treats as
+`chat:message:delta` and `chat:message`. A similar alias `files` maps to
+`chat:message:files`. Only `status`, `message` and `replace` trigger automatic
+updates to the stored message. `chat:completion` events rely on the pipeline to
+call `Chats.upsert_message_to_chat_by_id_and_message_id`.
 
 ## Examples
 
@@ -93,7 +93,7 @@ Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content
 ```
 ## Database persistence
 
-The emitter returned by `get_event_emitter` in `socket/main.py` can also update the chat record. It looks up the user's active session IDs in `USER_POOL` and, with `update_db=True` (the default), broadcasts the event to each session via `asyncio.gather` before mutating the message for three shorthand event types:
+The helper produced by `get_event_emitter` in `socket/main.py` first collects the user's active session IDs from `USER_POOL`. With `update_db=True` (the default) it broadcasts the event to each session using `asyncio.gather`. After broadcasting, it updates the stored message for three shorthand event types:
 
 ```python
 if update_db:
@@ -107,11 +107,11 @@ if update_db:
 【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
 
 `status` entries append a status dict to the message's `statusHistory` list.
-`message` events fetch the stored text and append the new chunk before calling
+`message` events read the existing text, append the new chunk, and then call
 `Chats.upsert_message_to_chat_by_id_and_message_id`.
-`replace` writes the provided text as-is, overwriting any existing content.
-Other event types such as `chat:completion` are purely transient unless you
-persist them yourself.
+`replace` overwrites the current text with the provided content.
+Event types like `chat:completion` are transient unless you persist them
+explicitly.
 
 To emit without touching the database pass `False` when retrieving the emitter:
 
