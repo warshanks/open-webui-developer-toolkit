@@ -14,6 +14,7 @@ Both helpers expect a dictionary `{"type": str, "data": dict}`.  `__event_call__
 | `status`            | Progress or activity updates                          |
 | `chat:message:delta`| Append streamed text to the current message           |
 | `chat:message`      | Replace the current message content                   |
+| `chat:completion`   | Send streamed completion chunks or final content      |
 | `chat:message:files`| Attach or update message files                        |
 | `chat:title`        | Update the conversation title                         |
 | `chat:tags`         | Update conversation tags                              |
@@ -24,6 +25,12 @@ Both helpers expect a dictionary `{"type": str, "data": dict}`.  `__event_call__
 | `execute`           | Run code client-side (requires `__event_call__`)      |
 
 Custom event types may be used if the frontend knows how to handle them.
+
+`message` and `replace` are backend shortcuts that the UI treats as
+`chat:message:delta` and `chat:message` respectively. These, together with
+`status`, are the only event types that automatically update the stored
+message. `chat:completion` events rely on the pipeline to call
+`Chats.upsert_message_to_chat_by_id_and_message_id`.
 
 ## Examples
 
@@ -46,3 +53,64 @@ result = await __event_call__({
 ```
 
 `result` will contain the user's answer or input value.
+
+Stream chat completion text in chunks:
+
+```python
+await __event_emitter__(
+    {
+        "type": "chat:completion",
+        "data": {"content": "partial text"},
+    }
+)
+```
+
+Send a final update when done and persist the full message:
+
+```python
+await __event_emitter__(
+    {
+        "type": "chat:completion",
+        "data": {"done": True, "content": full_text},
+    }
+)
+Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content": full_text})
+```
+## Database persistence
+
+The emitter optionally writes certain event data back to the chat record. When `update_db=True` (the default) the backend updates the message for three shorthand event types:
+
+```python
+if update_db:
+    if "type" in event_data and event_data["type"] == "status":
+        Chats.add_message_status_to_chat_by_id_and_message_id(...)
+    if "type" in event_data and event_data["type"] == "message":
+        ...
+    if "type" in event_data and event_data["type"] == "replace":
+        ...
+```
+【F:external/open-webui/backend/open_webui/socket/main.py†L334-L366】
+
+`status` entries append to the message's `statusHistory` list. `message` events concatenate text, while `replace` overwrites the content entirely. Other event types such as `chat:completion` are purely transient unless you persist them yourself.
+
+To emit without touching the database pass `False` when retrieving the emitter:
+
+```python
+emitter = get_event_emitter(metadata, False)
+```
+
+### Manual saves
+
+Call `Chats.upsert_message_to_chat_by_id_and_message_id` whenever you need to persist changes manually:
+
+```python
+Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content": text})
+```
+【F:external/open-webui/backend/open_webui/models/chats.py†L228-L249】
+
+## Yielding text vs emitting events
+
+A pipe may simply `yield` strings. The middleware wraps them as SSE `data:` lines and the UI appends the text. No intermediate updates occur until the stream ends.
+
+Using `__event_emitter__` lets you push partial content (`chat:message:delta`), status updates or attachments while streaming. These events reach all active sessions immediately and can update the database in real time if enabled.
+Generator outputs are wrapped as `chat:completion` events automatically, but emitting them yourself gives full control over when each chunk is sent and persisted.
