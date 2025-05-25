@@ -140,7 +140,7 @@ Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content
 
 ## Yielding text vs emitting events
 
-A pipe may simply `yield` strings. The middleware wraps them as SSE `data:` lines and the UI appends the text. No intermediate updates occur until the stream ends.
+A pipe may simply `yield` strings. Each value is converted to an SSE `data:` line by `functions.process_line` before being sent to the client. The UI appends the streamed text and no intermediate updates occur until the stream ends.
 
 Using `__event_emitter__` lets you push partial content (`chat:message:delta`), status updates or attachments while streaming. These events reach all active sessions immediately and can update the database in real time if enabled.
-Generator outputs are wrapped as `chat:completion` events automatically, but emitting them yourself gives full control over when each chunk is sent and persisted.
+Lines that begin with `data:` are also forwarded as `chat:completion` events over the WebSocket. Emitting events yourself gives full control over when each chunk is sent and persisted.
