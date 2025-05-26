@@ -4,11 +4,11 @@
  version: 0.1.0
  description: Demonstrates storing custom metadata in chat history and reading it back on the next turn.
 """
-# test
-
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, Dict
+
+from open_webui.utils.misc import get_message_list
 
 from open_webui.models.chats import Chats
 
@@ -25,11 +25,17 @@ class Pipe:
 
         messages = body.get("messages", [])
         prev_meta = None
-        if len(messages) >= 2:
-            prev_msg_id = messages[-2].get("id")
-            if prev_msg_id:
-                prev = Chats.get_message_by_id_and_message_id(chat_id, prev_msg_id)
-                prev_meta = prev.get("custom_meta")
+        chat = Chats.get_chat_by_id(chat_id)
+        if chat:
+            history = chat.chat.get("history", {})
+            messages_lookup = history.get("messages", {})
+            chain = get_message_list(messages_lookup, history.get("currentId")) or []
+            if chain:
+                # Skip the incoming user message at the end
+                for msg in reversed(chain[:-1]):
+                    if msg.get("role") == "assistant":
+                        prev_meta = msg.get("custom_meta")
+                        break
 
         if prev_meta:
             yield f"Previous meta: {prev_meta}\n"

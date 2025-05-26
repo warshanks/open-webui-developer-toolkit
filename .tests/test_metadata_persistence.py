@@ -21,21 +21,23 @@ async def test_custom_metadata_persists_across_turns(dummy_chat):
     chat_id = "chat1"
 
     # First turn
-    body1 = {"messages": [{"id": "u1", "role": "user", "content": "hi"}]}
+    body1 = {"messages": [{"role": "user", "content": "hi"}]}
     metadata1 = {"chat_id": chat_id, "message_id": "m1"}
     out1 = [chunk async for chunk in pipe.pipe(body1, metadata1)]
     assert out1 == ["No previous meta\n", "Echo: hi"]
     msg1 = Chats.get_message_by_id_and_message_id(chat_id, "m1")
     assert msg1["custom_meta"] == "stored:hi"
     # Simulate final content save
-    Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, "m1", {"content": "Echo: hi"})
+    Chats.upsert_message_to_chat_by_id_and_message_id(
+        chat_id, "m1", {"content": "Echo: hi", "role": "assistant"}
+    )
 
     # Second turn
     body2 = {
         "messages": [
-            {"id": "u1", "role": "user", "content": "hi"},
-            {"id": "m1", "role": "assistant", "content": "Echo: hi"},
-            {"id": "u2", "role": "user", "content": "again"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "Echo: hi"},
+            {"role": "user", "content": "again"},
         ]
     }
     metadata2 = {"chat_id": chat_id, "message_id": "m2"}
