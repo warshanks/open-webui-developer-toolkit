@@ -106,34 +106,18 @@ MODEL_CAPABILITIES = {
     "chatgpt-4o-latest": {},
     "codex-mini-latest": {},
     "gpt-4o-search-preview": {},
+    # Default (all False)
+    "default": {
+        "web_search": False,
+        "image_gen_tool": False,
+        "function_calling": False,
+        "reasoning": False,
+    },
 }
 
 # Precompiled regex for citation annotations
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
-
-
-def save_base64_image(b64: Any, request: Request, user: dict[str, Any]) -> str:
-    """Decode image data and store it using the Files API.
-
-    ``b64`` may be a raw base64 string or a mapping containing the
-    data under ``b64_json`` or ``data``. Returns the public URL of the uploaded
-    file.
-    """
-    from open_webui.routers.images import upload_image, load_b64_image_data
-
-    if isinstance(b64, dict):
-        b64 = b64.get("b64_json") or b64.get("data") or ""
-
-    if isinstance(b64, str) and b64.startswith("data:"):
-        b64 = b64.split(",", 1)[-1]
-
-    result = load_b64_image_data(b64)
-    if not result:
-        raise ValueError("Invalid base64 image")
-
-    data, content_type = result
-    return upload_image(request, {}, data, content_type, SimpleNamespace(**user))
 
 
 class _MemHandler(logging.Handler):
@@ -299,21 +283,11 @@ class Pipe:
             ),
         )
 
-        # pydantic v1 compatibility
-        def model_copy(self, *, update: dict[str, Any] | None = None) -> "Pipe.Valves":
-            return self.copy(update=update)
-
     class UserValves(BaseModel):
         """Per-user valve overrides."""
 
         CUSTOM_LOG_LEVEL: Literal[
-            "DEBUG",
-            "INFO",
-            "WARNING",
-            "ERROR",
-            "CRITICAL",
-            "INHERIT",
-            None,
+            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT", None
         ] = Field(
             default="INHERIT",
             description="Select logging level. 'INHERIT' uses the pipe default.",
@@ -323,9 +297,9 @@ class Pipe:
         """Initialize the pipeline and logging."""
         self.valves = self.Valves()
         self.log_name = "OpenAI Responses"
-        self._client: httpx.AsyncClient | None = None
-        self._transport: httpx.AsyncHTTPTransport | None = None
-        self._client_lock = asyncio.Lock()
+        self.client: httpx.AsyncClient | None = None
+        self.transport: httpx.AsyncHTTPTransport | None = None
+        self.client_lock = asyncio.Lock()
 
         self.log = logging.getLogger(self.log_name)
         self.log.propagate = False
@@ -348,12 +322,12 @@ class Pipe:
 
     async def on_shutdown(self) -> None:
         """Clean up the HTTP client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
-        if self._transport:
-            await self._transport.aclose()
-            self._transport = None
+        if self.client and not self.client.is_closed:
+            await self.client.aclose()
+            self.client = None
+        if self.transport:
+            await self.transport.aclose()
+            self.transport = None
 
     async def pipe(
         self,
@@ -408,80 +382,9 @@ class Pipe:
         )
 
         client = await self.get_http_client()
-        # TODO Consider setting the user system prompt (if specified) as a developer message rather than replacing the model system prompt.  Right now it get's the last instance of system message (user system prompt takes precidence)
-        instructions = self._extract_instructions(body)
-
-        if valves.INJECT_CURRENT_DATE:
-            instructions += "\n\n" + self._get_current_date_suffix()
-
-        injection_lines: list[str] = []
-        note_parts: list[str] = []
-        if valves.INJECT_USER_INFO:
-            injection_lines.append(self._get_user_info_suffix(__user__))
-            note_parts.append("`user_info`")
-        if valves.INJECT_BROWSER_INFO:
-            injection_lines.append(self._get_browser_info_suffix(__request__))
-            note_parts.append("`browser_info`")
-        if valves.INJECT_IP_INFO:
-            injection_lines.append(await self._get_ip_info_suffix(__request__))
-            note_parts.append("`ip_info`")
-        if injection_lines:
-            injection_lines.append(
-                "Note: "
-                + ", ".join(note_parts)
-                + " provided solely for AI contextual enrichment."
-            )
-            instructions += "\n\n" + "\n".join(injection_lines)
-
-        model = body.get("model", valves.MODEL_ID.split(",")[0])
-        if "." in str(model):
-            model = str(model).split(".", 1)[1]
-
-        model_capabilities = MODEL_CAPABILITIES.get(model, {})
-        tools: list[dict[str, Any]] | None
-        if not valves.ENABLE_NATIVE_TOOL_CALLING or not model_capabilities.get(
-            "function_calling"
-        ):
-            body.pop("tools", None)
-            tools = None
-            self.log.debug("Native tool calling disabled or unsupported for %s", model)
-        else:
-            tools = transform_tools_for_responses_api(body.get("tools", []))
-            if valves.ENABLE_WEB_SEARCH and model_capabilities.get("web_search"):
-                tools.append(
-                    {
-                        "type": "web_search",
-                        "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                    }
-                )
-            if valves.ENABLE_IMAGE_GENERATION and model_capabilities.get(
-                "image_gen_tool"
-            ):
-                tools.append(
-                    {
-                        "type": "image_generation",
-                        "quality": valves.IMAGE_QUALITY,
-                        "size": valves.IMAGE_SIZE,
-                        "response_format": valves.IMAGE_FORMAT,
-                        **(
-                            {"output_compression": valves.IMAGE_COMPRESSION}
-                            if valves.IMAGE_COMPRESSION is not None
-                            else {}
-                        ),
-                        "background": valves.IMAGE_BACKGROUND,
-                    }
-                )
-
-        if self.log.isEnabledFor(logging.DEBUG):
-            self.log.debug(pretty_log_block(tools, "tools"))
 
         request_params = await prepare_payload(
-            valves,
-            body,
-            instructions,
-            tools,
-            __user__.get("email"),
-            chat_id=chat_id,
+            self, valves, body, chat_id, __user__, __request__
         )
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug(
@@ -1049,35 +952,23 @@ class Pipe:
 
     async def get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
-        if self._client and not self._client.is_closed:
+        if self.client and not self.client.is_closed:
             self.log.debug("Reusing existing httpx client.")
-            return self._client
-        async with self._client_lock:
-            if self._client and not self._client.is_closed:
+            return self.client
+        async with self.client_lock:
+            if self.client and not self.client.is_closed:
                 self.log.debug(
                     "Client initialized while waiting for lock. Reusing existing."
                 )
-                return self._client
+                return self.client
             self.log.debug("Creating new httpx.AsyncClient.")
             timeout = httpx.Timeout(900.0, connect=30.0)
             limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
             # HTTP/2 can stall if flow control windows aren't consumed quickly.
             # Using HTTP/1.1 avoids mid-stream pauses in high traffic scenarios.
-            self._transport = httpx.AsyncHTTPTransport(http2=False, limits=limits)
-            self._client = httpx.AsyncClient(transport=self._transport, timeout=timeout)
-        return self._client
-
-    @staticmethod
-    def _extract_instructions(body: dict[str, Any]) -> str:
-        """Return the last system message from the chat body."""
-        return next(
-            (
-                m.get("content")
-                for m in reversed(body.get("messages", []))
-                if m.get("role") == "system"
-            ),
-            "",
-        )
+            self.transport = httpx.AsyncHTTPTransport(http2=False, limits=limits)
+            self.client = httpx.AsyncClient(transport=self.transport, timeout=timeout)
+        return self.client
 
     @staticmethod
     def _update_usage(
@@ -1338,65 +1229,117 @@ def simplify_user_agent(ua: str) -> str:
 
 
 async def prepare_payload(
+    self,
     valves: Pipe.Valves,
     body: dict[str, Any],
-    instructions: str,
-    tools: list[dict[str, Any]] | None,
-    user_email: str | None,
     chat_id: str | None = None,
-    chat_history: list[dict] | None = None,
+    __user__: dict[str, Any] | None = None,
+    __request__: Any = None,
 ) -> dict[str, Any]:
     """Return the JSON payload for the Responses API."""
-    params = dict(body)
 
-    params.pop("stream_options", None)
+    # Normalize model
+    body["model"] = str(body["model"]).split(".", 1)[-1]
+    if body["model"] in {"o3-mini-high", "o4-mini-high"}:
+        body["reasoning_effort"] = "high"
+        body["model"] = body["model"].replace("-high", "")
 
-    model = (params.get("model") or valves.MODEL_ID.split(",")[0]).split(".", 1)[-1]
-    reasoning_effort = params.pop("reasoning_effort", "none")
-    if model in {"o3-mini-high", "o4-mini-high"}:
-        model = model.replace("-high", "")
-        reasoning_effort = "high"
+    # Check model capabilities
+    model_capabilities = MODEL_CAPABILITIES.get(
+        body["model"], MODEL_CAPABILITIES["default"]
+    )
 
-    if chat_history is None:
-        if chat_id:
-            chat_history = await build_chat_history_for_responses_api(chat_id=chat_id)
-        else:
-            chat_history = await build_chat_history_for_responses_api(
-                messages=params.get("messages", [])
+    # Tools injection
+    if model_capabilities.get("function_calling") and valves.ENABLE_NATIVE_TOOL_CALLING:
+        body["tools"] = transform_tools_for_responses_api(body.get("tools", []))
+        if model_capabilities.get("web_search") and valves.ENABLE_WEB_SEARCH:
+            body["tools"].append(
+                {
+                    "type": "web_search",
+                    "search_context_size": valves.SEARCH_CONTEXT_SIZE,
+                }
             )
+        if model_capabilities.get("image_gen_tool") and valves.ENABLE_IMAGE_GENERATION:
+            tool = {
+                "type": "image_generation",
+                "quality": valves.IMAGE_QUALITY,
+                "size": valves.IMAGE_SIZE,
+                "response_format": valves.IMAGE_FORMAT,
+                "background": valves.IMAGE_BACKGROUND,
+            }
+            if valves.IMAGE_COMPRESSION:
+                tool["output_compression"] = valves.IMAGE_COMPRESSION
+            body["tools"].append(tool)
+    else:
+        body.pop("tools", None)
+        self.log.debug(
+            "Native tool calling disabled or unsupported for %s", body["model"]
+        )
 
-    params.pop("messages", None)
+    # Reasoning
+    effort = body.get("reasoning_effort", "none")
+    if model_capabilities.get("reasoning") and (
+        effort != "none" or valves.REASON_SUMMARY
+    ):
+        body["reasoning"] = {
+            **({"effort": effort} if effort != "none" else {}),
+            **({"summary": valves.REASON_SUMMARY} if valves.REASON_SUMMARY else {}),
+        }
 
-    params.update(
+    # Extract the last system message for instructions
+    instructions = next(
+        (
+            m.get("content")
+            for m in reversed(body.get("messages", []))
+            if m.get("role") == "system"
+        ),
+        "",
+    )
+
+    # Optionally inject date
+    if valves.INJECT_CURRENT_DATE:
+        instructions += "\n\n" + self._get_current_date_suffix()
+
+    # Collect optional injection lines
+    injection_lines, note_parts = [], []
+    if valves.INJECT_USER_INFO:
+        injection_lines.append(self._get_user_info_suffix(__user__))
+        note_parts.append("`user_info`")
+    if valves.INJECT_BROWSER_INFO:
+        injection_lines.append(self._get_browser_info_suffix(__request__))
+        note_parts.append("`browser_info`")
+    if valves.INJECT_IP_INFO:
+        injection_lines.append(await self._get_ip_info_suffix(__request__))
+        note_parts.append("`ip_info`")
+
+    # Append note block if anything was injected
+    if injection_lines:
+        injection_lines.append(
+            "Note: "
+            + ", ".join(note_parts)
+            + " provided solely for AI contextual enrichment."
+        )
+        instructions += "\n\n" + "\n".join(injection_lines)
+
+    # Update final fields in body
+    body.update(
         {
-            "model": model,
             "instructions": instructions,
             "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
-            "user": user_email,
+            "user": __user__.get("email", "unknown"),
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "store": True,
-            "input": chat_history,
+            "input": await build_chat_history_for_responses_api(chat_id=chat_id),
+            "tool_choice": "auto" if body.get("tools") else "none",
         }
     )
 
-    if tools is not None:
-        params["tools"] = tools
-        params["tool_choice"] = "auto" if tools else "none"
+    # Remove unnecessary fields
+    body.pop("stream_options", None)
+    body.pop("messages", None)
 
-    model_capabilities = MODEL_CAPABILITIES.get(model, {})
-
-    if model_capabilities.get("reasoning") and (
-        reasoning_effort != "none" or valves.REASON_SUMMARY
-    ):
-        reasoning = {}
-        if reasoning_effort != "none":
-            reasoning["effort"] = reasoning_effort
-        if valves.REASON_SUMMARY:
-            reasoning["summary"] = valves.REASON_SUMMARY
-        params["reasoning"] = reasoning
-
-    return params
+    return body
 
 
 def parse_responses_sse(event_type: str | None, data: str) -> dict[str, Any]:
