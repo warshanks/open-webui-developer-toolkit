@@ -407,7 +407,6 @@ class Pipe:
         cleanup_ids: list[str] = []
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
-        last_image_url: str | None = None
 
         for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
             self.log.debug("Loop iteration #%d", loop_count)
@@ -586,16 +585,18 @@ class Pipe:
                         ):
                             #TODO IMPLEMENT LOGIC FOR UPLOADING IMAGE TO FILES AND EMITTING IT
                            if __event_emitter__:
-                               await __event_emitter__(
-                                   {
-                                       "type": "chat:message:files",
-                                       "data": {
-                                           "file.s": [
-                                               {"type": "image", "url": url}
-                                           ]
-                                       },
-                                   }
-                               )
+                               image_url = item.get("url")
+                               if image_url:
+                                   await __event_emitter__(
+                                       {
+                                           "type": "chat:message:files",
+                                           "data": {
+                                               "file.s": [
+                                                   {"type": "image", "url": image_url}
+                                               ]
+                                           },
+                                       }
+                                   )
                                await self._emit_status(
                                    __event_emitter__,
                                    "🖼️ Image generation completed",
