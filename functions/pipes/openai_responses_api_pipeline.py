@@ -113,7 +113,6 @@ ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 
 
-
 def save_base64_image(b64: Any, request: Request, user: dict[str, Any]) -> str:
     """Decode image data and store it using the Files API.
 
@@ -211,9 +210,7 @@ class Pipe:
 
         ENABLE_IMAGE_GENERATION: bool = Field(
             default=False,
-            description=(
-                "Enable the built-in 'image_generation' tool when supported."
-            ),
+            description=("Enable the built-in 'image_generation' tool when supported."),
         )
 
         IMAGE_SIZE: str = Field(
@@ -221,7 +218,7 @@ class Pipe:
             description="Image width x height (e.g. 1024x1024 or 'auto').",
         )
 
-        IMAGE_QUALITY: str = Field(
+        IMAGE_QUALITY: Literal["low", "medium", "high", "auto"] = Field(
             default="auto",
             description="Image rendering quality: low | medium | high | auto.",
         )
@@ -457,7 +454,9 @@ class Pipe:
                         "search_context_size": valves.SEARCH_CONTEXT_SIZE,
                     }
                 )
-            if valves.ENABLE_IMAGE_GENERATION and model_capabilities.get("image_gen_tool"):
+            if valves.ENABLE_IMAGE_GENERATION and model_capabilities.get(
+                "image_gen_tool"
+            ):
                 tools.append(
                     {
                         "type": "image_generation",
@@ -465,9 +464,7 @@ class Pipe:
                         "size": valves.IMAGE_SIZE,
                         "response_format": valves.IMAGE_FORMAT,
                         **(
-                            {
-                                "output_compression": valves.IMAGE_COMPRESSION
-                            }
+                            {"output_compression": valves.IMAGE_COMPRESSION}
                             if valves.IMAGE_COMPRESSION is not None
                             else {}
                         ),
@@ -697,7 +694,9 @@ class Pipe:
                         ):
                             result_b64 = item.get("result")
                             if result_b64:
-                                url = save_base64_image(result_b64, __request__, __user__)
+                                url = save_base64_image(
+                                    result_b64, __request__, __user__
+                                )
                                 if url != last_image_url:
                                     last_image_url = url
                                     if __event_emitter__:
