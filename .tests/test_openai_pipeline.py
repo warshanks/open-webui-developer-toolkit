@@ -2,6 +2,8 @@ import json
 import types
 from types import SimpleNamespace
 
+import logging
+
 import httpx
 import pytest
 
@@ -136,3 +138,16 @@ def test_info_suffix_helpers():
     )
     expected = "browser_info: Mobile | Linux | Browser: Chrome 123"
     assert pipe._get_browser_info_suffix(request) == expected
+
+
+def test_user_valve_log_level_override():
+    pipe = Pipe()
+    assert pipe.log.level == logging.INFO
+
+    valves = Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG")
+    pipe._apply_user_valve_overrides(valves)
+
+    assert pipe.log.level == logging.DEBUG
+    handler, _ = pipe._attach_debug_handler()
+    assert handler is not None
+    pipe._detach_debug_handler(handler)

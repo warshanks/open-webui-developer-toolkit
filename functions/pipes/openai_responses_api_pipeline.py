@@ -369,8 +369,8 @@ class Pipe:
         """
         start_ns = time.perf_counter_ns()
         last_status: list[tuple[str, bool] | None] = [None]
-        mem_handler, debug_logs = self._attach_debug_handler()
         valves = self._apply_user_valve_overrides(__user__.get("valves"))
+        mem_handler, debug_logs = self._attach_debug_handler()
         self._debug_block(
             "pipe_call",
             {
