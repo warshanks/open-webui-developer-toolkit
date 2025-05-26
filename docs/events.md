@@ -93,6 +93,29 @@ Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, {"content
 ```
 【F:external/open-webui/backend/open_webui/models/chats.py†L228-L249】
 
+### Custom metadata persistence
+
+`Chats.upsert_message_to_chat_by_id_and_message_id` merges the provided
+dictionary with any existing message data. Fields not mentioned remain
+untouched, so you can store additional keys for your own use. Later
+updates from the pipeline—such as the final `chat:completion` write—only
+replace the built-in fields like `content` and preserve everything else.
+This allows pipes to attach hidden state to a message and read it back in
+subsequent turns.
+
+The middleware may strip the `id` fields from the message list passed to
+your pipe. To inspect prior metadata look up the stored history yourself:
+
+```python
+chat = Chats.get_chat_by_id(chat_id)
+history = chat.chat.get("history", {})
+msgs = history.get("messages", {})
+chain = get_message_list(msgs, history.get("currentId")) or []
+# ``chain[-1]`` is the incoming user message, ``chain[-2]`` the
+# previous assistant reply
+previous_meta = chain[-2].get("custom_meta") if len(chain) > 1 else None
+```
+
 ## Common event types
 
 | type                | Purpose                                              |
