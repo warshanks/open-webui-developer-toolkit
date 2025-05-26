@@ -283,27 +283,12 @@ class Pipe:
         )
 
     def __init__(self) -> None:
-        """Initialize the pipeline and logging."""
+        """Initialize the pipeline."""
         self.valves = self.Valves()
         self.log_name = "OpenAI Responses"
         self.client: httpx.AsyncClient | None = None
         self.transport: httpx.AsyncHTTPTransport | None = None
         self.client_lock = asyncio.Lock()
-
-        self.log = logging.getLogger(self.log_name)
-        self.log.propagate = False
-        self.log.setLevel(logging.INFO)
-
-        # Console handler with the required format & emoji
-        ch = logging.StreamHandler(sys.stderr)
-        fmt = logging.Formatter(
-            "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
-        )
-        ch.setFormatter(fmt)
-        ch.addFilter(
-            lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "❓")) or True
-        )
-        self.log.handlers = [ch]
 
     def pipes(self):
         """Return models exposed by this pipe."""
@@ -337,31 +322,40 @@ class Pipe:
         last_status: list[tuple[str, bool] | None] = [None]
         valves = self._apply_user_valve_overrides(__user__.get("valves"))
 
-        # Update log level
-        self.log.setLevel(getattr(logging, valves.CUSTOM_LOG_LEVEL, logging.INFO))
+        # Local logger for this request
+        log = logging.Logger(self.log_name)
+        log.propagate = False
+        log.setLevel(getattr(logging, valves.CUSTOM_LOG_LEVEL, logging.INFO))
 
-        # Create an in-memory handler if DEBUG is active
+        ch = logging.StreamHandler(sys.stderr)
+        fmt = logging.Formatter(
+            "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
+        )
+        ch.setFormatter(fmt)
+        ch.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "❓")) or True)
+        log.handlers = [ch]
+
+        # Capture logs when DEBUG is enabled
         mem_handler = None
-        debug_logs = []
-        if self.log.isEnabledFor(logging.DEBUG):
+        debug_logs: list[str] = []
+        if log.isEnabledFor(logging.DEBUG):
             mem_handler = logging.Handler(level=logging.DEBUG)
-            mem_handler.setFormatter(self.log.handlers[0].formatter)
-            mem_handler.addFilter(self.log.handlers[0].filters[0])
+            mem_handler.setFormatter(log.handlers[0].formatter)
+            mem_handler.addFilter(log.handlers[0].filters[0])
 
-            # Override emit to append the formatted record to debug_logs
             def emit(record: logging.LogRecord) -> None:
                 debug_logs.append(mem_handler.format(record))
 
-            mem_handler.emit = emit
-            self.log.addHandler(mem_handler)
+            mem_handler.emit = emit  # type: ignore[assignment]
+            log.addHandler(mem_handler)
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
-            await self._enable_native_function_support(__metadata__)
+            await self._enable_native_function_support(__metadata__, log)
 
         chat_id = __metadata__.get("chat_id")
         message_id = __metadata__.get("message_id")
 
-        self.log.info(
+        log.info(
             'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
             self.log_name,
             body.get("model", valves.MODEL_ID),
@@ -370,10 +364,16 @@ class Pipe:
             message_id,
         )
 
-        client = await self.get_http_client()
+        client = await self.get_http_client(log)
 
         request_params = await prepare_request_body(
-            self, valves, body, chat_id, __user__, __request__
+            self,
+            log,
+            valves,
+            body,
+            chat_id,
+            __user__,
+            __request__,
         )
         usage_total: dict[str, Any] = {}
         last_response_id = None
@@ -384,7 +384,7 @@ class Pipe:
 
         try:
             for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
-                self.log.debug("Loop iteration #%d", loop_count)
+                log.debug("Loop iteration #%d", loop_count)
                 if loop_count > 1:
                     request_params.update(
                         {
@@ -395,7 +395,7 @@ class Pipe:
                     temp_input = []
 
                 pending_calls: list[SimpleNamespace] = []
-                self.log.debug("Starting response stream (loop #%d)", loop_count)
+                log.debug("Starting response stream (loop #%d)", loop_count)
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
@@ -409,6 +409,7 @@ class Pipe:
 
                 async for event in stream_responses(
                     self,
+                    log,
                     client,
                     valves.BASE_URL,
                     valves.API_KEY,
@@ -416,7 +417,7 @@ class Pipe:
                 ):
                     et = event.get("type")
                     if not et.endswith(".delta"):
-                        self.log.debug("Event received: %s", et)
+                        log.debug("Event received: %s", et)
 
                     if et == "response.created":
                         if last_response_id:
@@ -429,7 +430,7 @@ class Pipe:
                         "response.incomplete",
                         "error",
                     }:
-                        self.log.error("Stream ended with event: %s", et)
+                        log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
                         # The <think> tag is emitted at stream start when
@@ -607,7 +608,9 @@ class Pipe:
 
                 if pending_calls:
                     results = await execute_responses_tool_calls(
-                        pending_calls, __tools__, self.log
+                        pending_calls,
+                        __tools__,
+                        log,
                     )
                     for call, result in zip(pending_calls, results):
                         function_call_output = {
@@ -679,7 +682,7 @@ class Pipe:
                     break
 
         except Exception as ex:
-            self.log.error("Error in pipeline loop %d: %s", loop_count, ex)
+            log.error("Error in pipeline loop %d: %s", loop_count, ex)
             if __event_emitter__:
                 await __event_emitter__(
                     {
@@ -693,7 +696,7 @@ class Pipe:
         finally:
             await self._emit_status(__event_emitter__, "", last_status, done=True)
 
-            self.log.info(
+            log.info(
                 "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
                 chat_id,
                 (time.perf_counter_ns() - start_ns) / 1e6,
@@ -722,12 +725,12 @@ class Pipe:
                         last_response_id,
                     )
                 except Exception as ex:  # pragma: no cover - logging only
-                    self.log.warning(
+                    log.warning(
                         "Failed to delete response %s: %s", last_response_id, ex
                     )
             # Detach the in-memory handler
             if mem_handler:
-                self.log.removeHandler(mem_handler)
+                log.removeHandler(mem_handler)
 
                 # If logs were captured, emit them as a citation
                 if debug_logs and __event_emitter__:
@@ -790,10 +793,10 @@ class Pipe:
         """Return today's date formatted for prompt injection."""
         return "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
 
-    async def _lookup_ip_info(self, ip: str) -> str:
+    async def _lookup_ip_info(self, ip: str, log: logging.Logger) -> str:
         """Return IP geolocation information for ``ip`` or ``""`` on failure."""
         try:
-            client = await self.get_http_client()
+            client = await self.get_http_client(log)
             resp = await client.get(f"http://ip-api.com/json/{ip}")
             resp.raise_for_status()
             data = resp.json()
@@ -807,9 +810,9 @@ class Pipe:
             info = f"{location} (approx based on IP) (ISP: {isp})" if isp else location
         except Exception as exc:  # pragma: no cover - network errors
             info = ""
-            self.log.debug("IP lookup failed for %s: %s", ip, exc)
+            log.debug("IP lookup failed for %s: %s", ip, exc)
         else:
-            self.log.debug("IP lookup result %s -> %r", ip, info)
+            log.debug("IP lookup result %s -> %r", ip, info)
         return info
 
     def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
@@ -829,17 +832,17 @@ class Pipe:
             f"{simplify_user_agent(headers.get('user-agent', '') if request else '')}"
         )
 
-    async def _get_ip_info_suffix(self, request: Request | None) -> str:
+    async def _get_ip_info_suffix(self, request: Request | None, log: logging.Logger) -> str:
         """Return an ``ip_info`` line with geolocation details if available."""
         ip = (
             getattr(getattr(request, "client", None), "host", "unknown")
             if request
             else "unknown"
         )
-        info = await self._lookup_ip_info(ip) if ip != "unknown" else ""
+        info = await self._lookup_ip_info(ip, log) if ip != "unknown" else ""
         return f"ip_info: {ip}{f' - {info}' if info else ''}"
 
-    async def _enable_native_function_support(self, metadata: dict[str, Any]) -> None:
+    async def _enable_native_function_support(self, metadata: dict[str, Any], log: logging.Logger) -> None:
         """Ensure native function calling is enabled for the current model."""
         if metadata.get("function_calling") == "native":
             return
@@ -848,9 +851,9 @@ class Pipe:
         model_id = model_dict.get("id") if isinstance(model_dict, dict) else model_dict
         model_capabilities = MODEL_CAPABILITIES.get(model_id, {})
         if not model_capabilities.get("function_calling"):
-            self.log.debug("Model %s does not support native tool calling", model_id)
+            log.debug("Model %s does not support native tool calling", model_id)
             return
-        self.log.debug("Enabling native function calling for %s", model_id)
+        log.debug("Enabling native function calling for %s", model_id)
 
         model_info = (
             await asyncio.to_thread(Models.get_model_by_id, model_id)
@@ -865,28 +868,28 @@ class Pipe:
                 Models.update_model_by_id, model_info.id, ModelForm(**model_data)
             )
             if updated:
-                self.log.info(
+                log.info(
                     "✅ Set model %s to native function calling", model_info.id
                 )
             else:
-                self.log.error("❌ Failed to update model %s", model_info.id)
+                log.error("❌ Failed to update model %s", model_info.id)
         else:
-            self.log.warning("⚠️ Model info not found for id %s", model_id)
+            log.warning("⚠️ Model info not found for id %s", model_id)
 
         metadata["function_calling"] = "native"
 
-    async def get_http_client(self) -> httpx.AsyncClient:
+    async def get_http_client(self, log: logging.Logger) -> httpx.AsyncClient:
         """Return a shared httpx client."""
         if self.client and not self.client.is_closed:
-            self.log.debug("Reusing existing httpx client.")
+            log.debug("Reusing existing httpx client.")
             return self.client
         async with self.client_lock:
             if self.client and not self.client.is_closed:
-                self.log.debug(
-                    "Client initialized while waiting for lock. Reusing existing."
+                log.debug(
+                    "Client initialized while waiting for lock. Reusing existing." 
                 )
                 return self.client
-            self.log.debug("Creating new httpx.AsyncClient.")
+            log.debug("Creating new httpx.AsyncClient.")
             timeout = httpx.Timeout(900.0, connect=30.0)
             limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
             # HTTP/2 can stall if flow control windows aren't consumed quickly.
@@ -918,6 +921,7 @@ class Pipe:
 
 async def stream_responses(
     self,
+    log: logging.Logger,
     client: httpx.AsyncClient,
     base_url: str,
     api_key: str,
@@ -932,7 +936,7 @@ async def stream_responses(
         "Content-Type": "application/json",
     }
 
-    self.log.debug(
+    log.debug(
         "POST %s/responses model=%s",
         base_url.rstrip("/"),
         params.get("model"),
@@ -940,7 +944,7 @@ async def stream_responses(
 
     async with client.stream("POST", url, headers=headers, json=params) as resp:
         resp.raise_for_status()
-        self.log.debug("Streaming response with status %s", resp.status_code)
+        log.debug("Streaming response with status %s", resp.status_code)
         event_type: str | None = None
         async for raw in resp.aiter_lines():
             line = raw.rstrip("\r")
@@ -960,7 +964,7 @@ async def stream_responses(
                 yield payload
                 event_type = None
 
-    self.log.debug("Response stream closed")
+    log.debug("Response stream closed")
 
 
 async def delete_response(
@@ -1008,13 +1012,16 @@ def transform_tools_for_responses_api(tools: list[dict] | None) -> list[dict]:
 
 
 async def build_chat_history_for_responses_api(
-    self, chat_id: str | None = None, messages: list[dict] | None = None
+    self,
+    log: logging.Logger,
+    chat_id: str | None = None,
+    messages: list[dict] | None = None,
 ) -> list[dict]:
     """Return chat history formatted for the Responses API."""
 
     from_history = bool(chat_id)
     if chat_id:
-        self.log.debug("Retrieving message history for chat_id=%s", chat_id)
+        log.debug("Retrieving message history for chat_id=%s", chat_id)
         chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
         if not chat_model:
             messages = []
@@ -1102,6 +1109,7 @@ async def build_chat_history_for_responses_api(
 
 async def prepare_request_body(
     self,
+    log: logging.Logger,
     valves: Pipe.Valves,
     body: dict[str, Any],
     chat_id: str | None = None,
@@ -1142,7 +1150,7 @@ async def prepare_request_body(
             body["tools"].append(tool)
     else:
         body.pop("tools", None)
-        self.log.debug("Native tool calling disabled or unsupported for %s", model_id)
+        log.debug("Native tool calling disabled or unsupported for %s", model_id)
 
     # Reasoning only if model supports it and user requested it
     effort = body.get("reasoning_effort", "none")
@@ -1174,7 +1182,7 @@ async def prepare_request_body(
         extras.append(self._get_browser_info_suffix(__request__))
         notes.append("`browser_info`")
     if valves.INJECT_IP_INFO:
-        extras.append(await self._get_ip_info_suffix(__request__))
+        extras.append(await self._get_ip_info_suffix(__request__, log))
         notes.append("`ip_info`")
     if extras:
         extras.append(
@@ -1194,7 +1202,7 @@ async def prepare_request_body(
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "store": True,
-            "input": await build_chat_history_for_responses_api(self, chat_id=chat_id),
+            "input": await build_chat_history_for_responses_api(self, log, chat_id=chat_id),
             "tool_choice": "auto" if body.get("tools") else "none",
         }
     )
