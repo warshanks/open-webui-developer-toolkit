@@ -114,6 +114,26 @@ replace the built-in fields like `content` and preserve everything else.
 This allows pipes to attach hidden state to a message and read it back in
 subsequent turns.
 
+Be aware that the emitter's automatic persistence for the `message` and
+`replace` types only writes the `content` field. Any extra keys in the
+event payload are ignored, so new custom data sent with these events will
+not be saved (existing custom metadata remains untouched):
+
+```python
+if update_db:
+    if "type" in event_data and event_data["type"] == "message":
+        Chats.upsert_message_to_chat_by_id_and_message_id(..., {"content": content})
+    if "type" in event_data and event_data["type"] == "replace":
+        Chats.upsert_message_to_chat_by_id_and_message_id(..., {"content": content})
+```
+【F:external/open-webui/backend/open_webui/socket/main.py†L334-L369】
+
+To persist additional metadata you must call
+`Chats.upsert_message_to_chat_by_id_and_message_id` yourself—either after
+emitting a `chat:completion` event or by requesting the emitter with
+`update_db=False` and handling the save manually. This ensures your
+custom keys survive the final write.
+
 The middleware may strip the `id` fields from the message list passed to
 your pipe. To inspect prior metadata look up the stored history yourself:
 
@@ -202,3 +222,9 @@ A pipe may simply `yield` strings. Each value is converted to an SSE `data:` lin
 
 Using `__event_emitter__` lets you push partial content (`chat:message:delta`), status updates or attachments while streaming. These events reach all active sessions immediately and can update the database in real time if enabled.
 Lines that begin with `data:` are also forwarded as `chat:completion` events over the WebSocket. Emitting events yourself gives full control over when each chunk is sent and persisted.
+
+When the stream ends the middleware writes the final assistant message to the
+database using `Chats.upsert_message_to_chat_by_id_and_message_id({"content" :
+final_text})`. Custom metadata already stored on that message is preserved, but
+new metadata must be saved manually (for example by calling `upsert_message` on
+your last chunk) if you want it recorded.
