@@ -1,9 +1,4 @@
 """
-DO NOT USE _ THIS DOES NOT WORK.
-
----
-
-
 title: Example Persisting Custom Chat Metadata
 id: example_persist_custom_chat_metadata
 author: Justin Kropp
