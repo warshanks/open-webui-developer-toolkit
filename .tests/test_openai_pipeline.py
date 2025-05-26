@@ -9,35 +9,11 @@ import pytest
 
 from functions.pipes.openai_responses_api_pipeline import (
     Pipe,
-    _MemHandler,
     execute_responses_tool_calls,
-    parse_responses_sse,
-    sanitize_for_log,
     simplify_user_agent,
     stream_responses,
     transform_tools_for_responses_api,
 )
-
-
-def test_sanitize_for_log():
-    data = {
-        "profile_image_url": "http://example.com/pic.png",
-        "files": [
-            {
-                "id": "1",
-                "name": "orig.txt",
-                "size": 10,
-                "file": {"filename": "ignored.txt", "meta": {"size": 20}},
-            }
-        ],
-        "data": {"content": "secret"},
-        "nested": [{"profile_image_url": "foo"}],
-    }
-    out = sanitize_for_log(data)
-    assert out["profile_image_url"] == "<profile_image_url>"
-    assert out["files"] == [{"id": "1", "name": "orig.txt", "size": 10}]
-    assert out["data"] == {"content": "<content>"}
-    assert out["nested"][0]["profile_image_url"] == "<profile_image_url>"
 
 
 def test_simplify_user_agent():
@@ -48,18 +24,6 @@ def test_simplify_user_agent():
     assert simplify_user_agent(chrome) == "Chrome 123"
     assert simplify_user_agent("") == "Unknown"
     assert simplify_user_agent("FooBar/1.0") == "FooBar/1.0".split()[0]
-
-
-def test_parse_responses_sse():
-    data = json.dumps({"foo": 1})
-    result = parse_responses_sse("delta", data)
-    assert result == {"foo": 1, "type": "delta"}
-
-    result = parse_responses_sse("delta", json.dumps({"type": "other"}))
-    assert result == {"type": "other"}
-
-    result = parse_responses_sse(None, json.dumps({"bar": 2}))
-    assert result == {"bar": 2, "type": "message"}
 
 
 def test_transform_tools_for_responses_api():
@@ -119,7 +83,8 @@ async def test_stream_responses():
         return httpx.Response(200, content=content)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    gen = stream_responses(client, "https://api", "KEY", {"model": "gpt"})
+    pipe = Pipe()
+    gen = stream_responses(pipe, client, "https://api", "KEY", {"model": "gpt"})
     events = [event async for event in gen]
     await client.aclose()
     assert events == [{"foo": 1, "type": "delta"}]
@@ -146,39 +111,9 @@ def test_user_valve_log_level_override():
     assert pipe.log.level == logging.INFO
 
     valves = Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG")
-    pipe._apply_user_valve_overrides(valves)
+    updated = pipe._apply_user_valve_overrides(valves)
 
-    assert pipe.log.level == logging.DEBUG
-    handler, _ = pipe._attach_debug_handler()
-    assert handler is not None
-    pipe._detach_debug_handler(handler)
-
-
-def test_log_level_toggle_clears_debug_handler():
-    pipe = Pipe()
-
-    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG"))
-    handler, _ = pipe._attach_debug_handler()
-    assert handler is not None
-    pipe._detach_debug_handler(handler)
-
-    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="INFO"))
-    handler, _ = pipe._attach_debug_handler()
-    assert handler is None
-
-
-def test_debug_handler_cleanup_on_reentry():
-    pipe = Pipe()
-
-    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG"))
-    handler, _ = pipe._attach_debug_handler()
-    assert handler is not None
-    # simulate crash by not detaching handler
-
-    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="INFO"))
-    handler2, _ = pipe._attach_debug_handler()
-    assert handler2 is None
-    assert all(
-        not isinstance(h, _MemHandler) for h in pipe.log.handlers
-    )
+    assert updated.CUSTOM_LOG_LEVEL == "DEBUG"
+    # Log level is applied later in the pipe, not here
+    assert pipe.log.level == logging.INFO
 
