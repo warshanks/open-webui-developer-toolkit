@@ -223,8 +223,10 @@ A pipe may simply `yield` strings. Each value is converted to an SSE `data:` lin
 Using `__event_emitter__` lets you push partial content (`chat:message:delta`), status updates or attachments while streaming. These events reach all active sessions immediately and can update the database in real time if enabled.
 Lines that begin with `data:` are also forwarded as `chat:completion` events over the WebSocket. Emitting events yourself gives full control over when each chunk is sent and persisted.
 
-When the stream ends the middleware writes the final assistant message to the
-database using `Chats.upsert_message_to_chat_by_id_and_message_id({"content" :
-final_text})`. Custom metadata already stored on that message is preserved, but
-new metadata must be saved manually (for example by calling `upsert_message` on
-your last chunk) if you want it recorded.
+When streaming finishes the middleware persists the assistant's reply with
+`Chats.upsert_message_to_chat_by_id_and_message_id({"content": final_text})`.
+This happens once at the end when `ENABLE_REALTIME_CHAT_SAVE` is **off** and on
+every chunk when it is **on**. The upsert merges with any existing message data
+so keys you previously stored remain intact. To record additional metadata make
+another call to `Chats.upsert_message_to_chat_by_id_and_message_id` after
+emitting your final chunk.
