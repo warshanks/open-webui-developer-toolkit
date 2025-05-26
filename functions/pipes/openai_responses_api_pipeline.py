@@ -209,6 +209,40 @@ class Pipe:
             ),
         )
 
+        ENABLE_IMAGE_GENERATION: bool = Field(
+            default=False,
+            description=(
+                "Enable the built-in 'image_generation' tool when supported."
+            ),
+        )
+
+        IMAGE_SIZE: str = Field(
+            default="auto",
+            description="Image width x height (e.g. 1024x1024 or 'auto').",
+        )
+
+        IMAGE_QUALITY: str = Field(
+            default="auto",
+            description="Image rendering quality: low | medium | high | auto.",
+        )
+
+        IMAGE_FORMAT: Literal["png", "jpeg", "webp"] = Field(
+            default="png",
+            description="Return format for generated images.",
+        )
+
+        IMAGE_COMPRESSION: int | None = Field(
+            default=None,
+            ge=0,
+            le=100,
+            description="Compression level for jpeg/webp (0-100).",
+        )
+
+        IMAGE_BACKGROUND: Literal["transparent", "opaque", "auto"] = Field(
+            default="auto",
+            description="Background: transparent, opaque or auto.",
+        )
+
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set.",
@@ -421,6 +455,23 @@ class Pipe:
                     {
                         "type": "web_search",
                         "search_context_size": valves.SEARCH_CONTEXT_SIZE,
+                    }
+                )
+            if valves.ENABLE_IMAGE_GENERATION and model_capabilities.get("image_gen_tool"):
+                tools.append(
+                    {
+                        "type": "image_generation",
+                        "quality": valves.IMAGE_QUALITY,
+                        "size": valves.IMAGE_SIZE,
+                        "response_format": valves.IMAGE_FORMAT,
+                        **(
+                            {
+                                "output_compression": valves.IMAGE_COMPRESSION
+                            }
+                            if valves.IMAGE_COMPRESSION is not None
+                            else {}
+                        ),
+                        "background": valves.IMAGE_BACKGROUND,
                     }
                 )
 
