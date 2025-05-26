@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Dict, Any
+from typing import Any, Awaitable, Callable, Dict
 
 from open_webui.models.chats import Chats
 
@@ -24,7 +24,12 @@ from open_webui.models.chats import Chats
 class Pipe:
     """Pipe demonstrating metadata-only updates on chat messages."""
 
-    async def pipe(self, body: Dict[str, Any], __metadata__: Dict[str, Any]):
+    async def pipe(
+        self,
+        body: Dict[str, Any],
+        __event_emitter__: Callable[[Dict[str, Any]], Awaitable[None]],
+        __metadata__: Dict[str, Any],
+    ):
         chat_id = __metadata__.get("chat_id")
         message_id = __metadata__.get("message_id")
         user_msg = body["messages"][-1]["content"]
@@ -37,6 +42,11 @@ class Pipe:
             "content": f"Echo: {user_msg}",
             "processed_at": int(time.time()),
         }
+        await __event_emitter__(
+            {"type": "chat:completion", "data": {"done": True, "content": simulated_response["content"]}}
+        )
+
+        # Persist final text and custom metadata together
         Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, message_id, simulated_response)
         stored_response = Chats.get_message_by_id_and_message_id(chat_id, message_id)
 
