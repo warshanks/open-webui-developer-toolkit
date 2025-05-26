@@ -40,4 +40,4 @@ exclude = [
 [tool.pytest.ini_options]
 # Only collect tests from our local ``tests`` directory
 testpaths = [".tests"]
-addopts = "-ra --import-mode=importlib --cov=openwebui_devtoolkit --cov-report=term-missing"
+addopts = "-ra --import-mode=importlib --cov=functions --cov-report=term-missing"
