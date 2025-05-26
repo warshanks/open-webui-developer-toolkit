@@ -332,7 +332,9 @@ class Pipe:
             "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
         )
         ch.setFormatter(fmt)
-        ch.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "❓")) or True)
+        ch.addFilter(
+            lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "❓")) or True
+        )
         log.handlers = [ch]
 
         # Capture logs when DEBUG is enabled
@@ -383,6 +385,8 @@ class Pipe:
         loop_count = 0
 
         try:
+            reasoning_summaries = ""
+
             for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
                 log.debug("Loop iteration #%d", loop_count)
                 if loop_count > 1:
@@ -399,13 +403,17 @@ class Pipe:
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
-                    if __event_emitter__:
-                        await __event_emitter__(
-                            {
-                                "type": "chat:message:delta",
-                                "data": {"content": "<think>"},
-                            }
-                        )
+                    yield "<think>"
+                    """
+                    await __event_emitter__(
+                        {
+                            "type": "replace",
+                            "data": {
+                                "content": "<details type='reasoning' done='false'>\n<summary>Thinking...</summary>\n> Preparing thoughts...\n</details>\n"
+                            },
+                        }
+                    )
+                    """
 
                 async for event in stream_responses(
                     self,
@@ -437,34 +445,59 @@ class Pipe:
                         # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        if __event_emitter__:
-                            await __event_emitter__(
-                                {
-                                    "type": "chat:message:delta",
-                                    "data": {"content": event.get("delta")},
-                                }
-                            )
+                        yield event.get("delta", "")
+                        """
+                        reasoning_summaries += event.get("delta", "")
+                        await __event_emitter__(
+                            {
+                                "type": "replace",
+                                "data": {
+                                    "content": (
+                                        "<details type='reasoning' done='false'>\n"
+                                        "<summary>Thinking…</summary>\n"
+                                        f"{reasoning_summaries}\n"
+                                        "</details>\n"
+                                    )
+                                },
+                            }
+                        )
+                        """
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        if __event_emitter__:
-                            await __event_emitter__(
-                                {
-                                    "type": "chat:message:delta",
-                                    "data": {"content": "\n\n---\n\n"},
-                                }
-                            )
+                        yield "\n----\n"
+                        """
+                        if reasoning_summaries:
+                            reasoning_summaries += "\n----\n"
+                        await __event_emitter__(
+                            {
+                                "type": "replace",
+                                "data": {
+                                    "content": (
+                                        "<details type='reasoning' done='true'>\n"
+                                        "<summary>Finished Reasoning</summary>\n"
+                                        f"{reasoning_summaries}\n"
+                                        "</details>\n"
+                                    )
+                                },
+                            }
+                        )
+                        """
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            if __event_emitter__:
-                                await __event_emitter__(
-                                    {
-                                        "type": "chat:message:delta",
-                                        "data": {"content": "</think>\n"},
-                                    }
-                                )
-
+                            yield "</think>"
+                            """
+                            combined = "\n----\n".join(reasoning_summaries)
+                            await __event_emitter__(
+                                {
+                                    "type": "replace",
+                                    "data": {
+                                        "content": f"<details type='reasoning' done='true'>\n<summary>Finished Reasoning</summary>\n{combined}\n</details>\n"
+                                    },
+                                }
+                            )
+                            """
                         continue
                     if et == "response.output_text.delta":
                         if __event_emitter__:
@@ -779,20 +812,14 @@ class Pipe:
     def _apply_user_valve_overrides(
         self, user_valves: BaseModel | None
     ) -> "Pipe.Valves":
-        """Apply user overrides and update log level.
-
-        The ``CUSTOM_LOG_LEVEL`` field defaults to ``INHERIT``. Any field set to
-        ``INHERIT`` is removed so the pipe's defaults remain in effect.
-        """
-        self.valves = self.Valves()
         if user_valves:
-            raw_user_valves = (
-                user_valves.model_dump()
-            )  # or .dict() depending on version
+            raw_user_valves = user_valves.model_dump()  # or .dict()
             filtered = {
                 k: v for k, v in raw_user_valves.items() if str(v).lower() != "inherit"
             }
+            # Merge user overrides into the existing self.valves
             self.valves = self.valves.model_copy(update=filtered)
+
         return self.valves
 
     @staticmethod
@@ -839,7 +866,9 @@ class Pipe:
             f"{simplify_user_agent(headers.get('user-agent', '') if request else '')}"
         )
 
-    async def _get_ip_info_suffix(self, request: Request | None, log: logging.Logger) -> str:
+    async def _get_ip_info_suffix(
+        self, request: Request | None, log: logging.Logger
+    ) -> str:
         """Return an ``ip_info`` line with geolocation details if available."""
         ip = (
             getattr(getattr(request, "client", None), "host", "unknown")
@@ -849,7 +878,9 @@ class Pipe:
         info = await self._lookup_ip_info(ip, log) if ip != "unknown" else ""
         return f"ip_info: {ip}{f' - {info}' if info else ''}"
 
-    async def _enable_native_function_support(self, metadata: dict[str, Any], log: logging.Logger) -> None:
+    async def _enable_native_function_support(
+        self, metadata: dict[str, Any], log: logging.Logger
+    ) -> None:
         """Ensure native function calling is enabled for the current model."""
         if metadata.get("function_calling") == "native":
             return
@@ -875,9 +906,7 @@ class Pipe:
                 Models.update_model_by_id, model_info.id, ModelForm(**model_data)
             )
             if updated:
-                log.info(
-                    "✅ Set model %s to native function calling", model_info.id
-                )
+                log.info("✅ Set model %s to native function calling", model_info.id)
             else:
                 log.error("❌ Failed to update model %s", model_info.id)
         else:
@@ -893,7 +922,7 @@ class Pipe:
         async with self.client_lock:
             if self.client and not self.client.is_closed:
                 log.debug(
-                    "Client initialized while waiting for lock. Reusing existing." 
+                    "Client initialized while waiting for lock. Reusing existing."
                 )
                 return self.client
             log.debug("Creating new httpx.AsyncClient.")
@@ -1160,15 +1189,15 @@ async def prepare_request_body(
         log.debug("Native tool calling disabled or unsupported for %s", model_id)
 
     # Reasoning only if model supports it and user requested it
-    effort = body.get("reasoning_effort", "none")
-    if caps.get("reasoning") and (effort != "none" or valves.REASON_SUMMARY):
-        r = body.setdefault("reasoning", {})
-        if effort != "none":
-            r.setdefault("effort", effort)
-        if valves.REASON_SUMMARY:
-            r.setdefault("summary", valves.REASON_SUMMARY)
-    else:
+    if not caps.get("reasoning"):
         body.pop("reasoning", None)
+    else:
+        r = body.setdefault("reasoning", {})
+        effort = body.get("reasoning_effort")
+        if effort:
+            r["effort"] = effort
+        if valves.REASON_SUMMARY:
+            r["summary"] = valves.REASON_SUMMARY
 
     # Build instructions (system message + optional date/user info)
     instructions = next(
@@ -1209,7 +1238,9 @@ async def prepare_request_body(
             "text": {"format": {"type": "text"}},
             "truncation": "auto",
             "store": True,
-            "input": await build_chat_history_for_responses_api(self, log, chat_id=chat_id),
+            "input": await build_chat_history_for_responses_api(
+                self, log, chat_id=chat_id
+            ),
             "tool_choice": "auto" if body.get("tools") else "none",
         }
     )
