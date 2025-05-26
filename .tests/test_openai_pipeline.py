@@ -9,6 +9,7 @@ import pytest
 
 from functions.pipes.openai_responses_api_pipeline import (
     Pipe,
+    _MemHandler,
     execute_responses_tool_calls,
     parse_responses_sse,
     sanitize_for_log,
@@ -151,3 +152,33 @@ def test_user_valve_log_level_override():
     handler, _ = pipe._attach_debug_handler()
     assert handler is not None
     pipe._detach_debug_handler(handler)
+
+
+def test_log_level_toggle_clears_debug_handler():
+    pipe = Pipe()
+
+    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG"))
+    handler, _ = pipe._attach_debug_handler()
+    assert handler is not None
+    pipe._detach_debug_handler(handler)
+
+    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="INFO"))
+    handler, _ = pipe._attach_debug_handler()
+    assert handler is None
+
+
+def test_debug_handler_cleanup_on_reentry():
+    pipe = Pipe()
+
+    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG"))
+    handler, _ = pipe._attach_debug_handler()
+    assert handler is not None
+    # simulate crash by not detaching handler
+
+    pipe._apply_user_valve_overrides(Pipe.UserValves(CUSTOM_LOG_LEVEL="INFO"))
+    handler2, _ = pipe._attach_debug_handler()
+    assert handler2 is None
+    assert all(
+        not isinstance(h, _MemHandler) for h in pipe.log.handlers
+    )
+
