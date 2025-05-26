@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 1.6.23
+version: 1.6.25
 license: MIT
 requirements: httpx
 
@@ -36,6 +36,9 @@ requirements: httpx
 ------------------------------------------------------------------------------
 🛠 CHANGE LOG
 ------------------------------------------------------------------------------
+• 1.6.25: Clean up stale debug handlers before attaching new ones.
+• 1.6.24: Apply log level overrides before attaching debug handler so updates
+  take effect immediately.
 • 1.6.23: Fixed user valve merging when CUSTOM_LOG_LEVEL is set to 'INHERIT'.
 • 1.6.22: Added 'INHERIT' sentinel for CUSTOM_LOG_LEVEL.
 • 1.6.21: User valves trimmed to CUSTOM_LOG_LEVEL; legacy 'inherit' handled.
@@ -323,6 +326,9 @@ class Pipe:
     # Logging helpers
     # ------------------------------------------------------------------
     def _attach_debug_handler(self) -> tuple[_MemHandler | None, list[str]]:
+        for h in list(self.log.handlers):
+            if isinstance(h, _MemHandler):
+                self.log.removeHandler(h)
         if not self.log.isEnabledFor(logging.DEBUG):
             return None, []
         buf: list[str] = []
@@ -332,8 +338,12 @@ class Pipe:
         return handler, buf
 
     def _detach_debug_handler(self, handler: _MemHandler | None) -> None:
-        if handler:
+        if handler and handler in self.log.handlers:
             self.log.removeHandler(handler)
+        else:
+            for h in list(self.log.handlers):
+                if isinstance(h, _MemHandler):
+                    self.log.removeHandler(h)
 
     def _debug_block(self, label: str, data: Any) -> None:
         if self.log.isEnabledFor(logging.DEBUG):
