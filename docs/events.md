@@ -71,9 +71,14 @@ the message already exists. `message` events fetch the stored message (if any),
 append the new chunk, and then call
 `Chats.upsert_message_to_chat_by_id_and_message_id` to save the result. If no
 message exists the update is skipped. `replace` overwrites the current text with
-the provided content or creates the message if it doesn't already exist. The
-helper also updates `history.currentId` and the chat's `updated_at` timestamp
-each time a message is persisted.
+the provided content or creates the message if it doesn't already exist.
+
+When `Chats.upsert_message_to_chat_by_id_and_message_id` is used (for
+`message` or `replace`), it sets `history.currentId` to the affected message and
+`update_chat_by_id` refreshes the chat's `updated_at` timestamp. `status`
+updates call `add_message_status_to_chat_by_id_and_message_id`, which still
+touches `updated_at` but leaves `currentId` unchanged and has no effect if the
+message doesn't yet exist.
 
 Event types like `chat:completion` are transient unless you persist them
 explicitly. When using the standard pipeline this save happens automatically,
