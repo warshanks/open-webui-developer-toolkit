@@ -84,7 +84,7 @@ async def test_stream_responses():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     pipe = Pipe()
-    gen = stream_responses(pipe, client, "https://api", "KEY", {"model": "gpt"})
+    gen = stream_responses(pipe, logging.getLogger("test"), client, "https://api", "KEY", {"model": "gpt"})
     events = [event async for event in gen]
     await client.aclose()
     assert events == [{"foo": 1, "type": "delta"}]
@@ -108,12 +108,8 @@ def test_info_suffix_helpers():
 
 def test_user_valve_log_level_override():
     pipe = Pipe()
-    assert pipe.log.level == logging.INFO
-
     valves = Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG")
     updated = pipe._apply_user_valve_overrides(valves)
 
     assert updated.CUSTOM_LOG_LEVEL == "DEBUG"
-    # Log level is applied later in the pipe, not here
-    assert pipe.log.level == logging.INFO
 
