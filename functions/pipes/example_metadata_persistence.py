@@ -4,7 +4,6 @@
  version: 0.1.0
  description: Demonstrates storing custom metadata in chat history and reading it back on the next turn.
 """
-
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, Dict

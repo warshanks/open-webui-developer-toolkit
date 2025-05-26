@@ -115,7 +115,6 @@ chain = get_message_list(msgs, history.get("currentId")) or []
 # previous assistant reply
 previous_meta = chain[-2].get("custom_meta") if len(chain) > 1 else None
 ```
-
 ## Common event types
 
 | type                | Purpose                                              |
