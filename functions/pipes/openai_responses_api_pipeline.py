@@ -76,6 +76,23 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+
+def configure_logger(log: logging.Logger) -> None:
+    """Configure ``log`` with emoji formatting and default level."""
+    log.propagate = False
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
+        )
+    )
+    handler.addFilter(lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True)
+    log.handlers = [handler]
+    log.setLevel(logging.INFO)
+
+
+configure_logger(logger)
+
 EMOJI_LEVELS = {
     logging.DEBUG: "\U0001f50d",
     logging.INFO: "\u2139",
@@ -118,6 +135,24 @@ MODEL_CAPABILITIES = {
 # Precompiled regex for citation annotations
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
+
+
+def save_base64_image(b64: Any, request: Request, user: dict[str, Any]) -> str:
+    """Decode image data and upload it via the Files API."""
+    from open_webui.routers.images import upload_image, load_b64_image_data
+
+    if isinstance(b64, dict):
+        b64 = b64.get("b64_json") or b64.get("data") or ""
+
+    if isinstance(b64, str) and b64.startswith("data:"):
+        b64 = b64.split(",", 1)[-1]
+
+    result = load_b64_image_data(b64)
+    if not result:
+        raise ValueError("Invalid base64 image")
+
+    data, content_type = result
+    return upload_image(request, {}, data, content_type, SimpleNamespace(**user))
 
 
 class _MemHandler(logging.Handler):
@@ -302,18 +337,27 @@ class Pipe:
         self.client_lock = asyncio.Lock()
 
         self.log = logging.getLogger(self.log_name)
-        self.log.propagate = False
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(
-            logging.Formatter(
-                "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
-            )
-        )
-        handler.addFilter(
-            lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "\u2753")) or True
-        )
-        self.log.handlers = [handler]
-        self.log.setLevel(logging.INFO)
+        configure_logger(self.log)
+
+    # ------------------------------------------------------------------
+    # Logging helpers
+    # ------------------------------------------------------------------
+    def _attach_debug_handler(self) -> tuple[_MemHandler | None, list[str]]:
+        if not self.log.isEnabledFor(logging.DEBUG):
+            return None, []
+        buf: list[str] = []
+        handler = _MemHandler(buf)
+        handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+        self.log.addHandler(handler)
+        return handler, buf
+
+    def _detach_debug_handler(self, handler: _MemHandler | None) -> None:
+        if handler:
+            self.log.removeHandler(handler)
+
+    def _debug_block(self, label: str, data: Any) -> None:
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug(pretty_log_block(sanitize_for_log(data), label))
 
     def pipes(self):
         """Return models exposed by this pipe."""
@@ -345,26 +389,18 @@ class Pipe:
         """
         start_ns = time.perf_counter_ns()
         last_status: list[tuple[str, bool] | None] = [None]
-        debug_logs: list[str] = []
-        mem_handler = _MemHandler(debug_logs)
-        mem_handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
-        self.log.addHandler(mem_handler)
+        mem_handler, debug_logs = self._attach_debug_handler()
         valves = self._apply_user_valve_overrides(__user__.get("valves"))
-        if self.log.isEnabledFor(logging.DEBUG):
-            self.log.debug(
-                pretty_log_block(
-                    sanitize_for_log(
-                        {
-                            "body": body,
-                            "__user__": __user__,
-                            "__files__": __files__,
-                            "__metadata__": __metadata__,
-                            "__tools__": __tools__,
-                        }
-                    ),
-                    "pipe_call",
-                )
-            )
+        self._debug_block(
+            "pipe_call",
+            {
+                "body": body,
+                "__user__": __user__,
+                "__files__": __files__,
+                "__metadata__": __metadata__,
+                "__tools__": __tools__,
+            },
+        )
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
             await self._enable_native_function_support(__metadata__)
@@ -386,13 +422,7 @@ class Pipe:
         request_params = await prepare_payload(
             self, valves, body, chat_id, __user__, __request__
         )
-        if self.log.isEnabledFor(logging.DEBUG):
-            self.log.debug(
-                pretty_log_block(
-                    sanitize_for_log(request_params),
-                    "prepared_request_params",
-                )
-            )
+        self._debug_block("prepared_request_params", request_params)
         usage_total: dict[str, Any] = {}
         last_response_id = None
         cleanup_ids: list[str] = []
@@ -410,19 +440,12 @@ class Pipe:
                     }
                 )
                 temp_input = []
-            if self.log.isEnabledFor(logging.DEBUG):
-                self.log.debug(
-                    pretty_log_block(
-                        sanitize_for_log(request_params.get("input", [])),
-                        f"turn_input_{loop_count}",
-                    )
-                )
-                self.log.debug(
-                    pretty_log_block(
-                        sanitize_for_log(request_params),
-                        f"openai_request_params_{loop_count}",
-                    )
-                )
+            self._debug_block(
+                f"turn_input_{loop_count}", request_params.get("input", [])
+            )
+            self._debug_block(
+                f"openai_request_params_{loop_count}", request_params
+            )
 
             try:
                 pending_calls: list[SimpleNamespace] = []
@@ -445,9 +468,7 @@ class Pipe:
                     request_params,
                 ):
                     et = event.get("type")
-                    if self.log.isEnabledFor(logging.DEBUG) and not et.endswith(
-                        ".delta"
-                    ):
+                    if not et.endswith(".delta"):
                         self.log.debug("Event received: %s", et)
 
                     if et == "response.created":
@@ -731,11 +752,7 @@ class Pipe:
                     "content": [{"type": "output_text", "text": thought}],
                 }
                 temp_input.append(entry)
-                if self.log.isEnabledFor(logging.DEBUG):
-                    self.log.debug(
-                        "Appended to temp_input: %s",
-                        json.dumps(entry, indent=2),
-                    )
+                self._debug_block("temp_input_append", entry)
             break
 
         await self._emit_status(__event_emitter__, "", last_status, done=True)
@@ -802,7 +819,7 @@ class Pipe:
                 }
             )
 
-        self.log.removeHandler(mem_handler)
+        self._detach_debug_handler(mem_handler)
 
     async def _execute_tool_calls(
         self, calls: list[SimpleNamespace], registry: dict[str, Any]
@@ -814,9 +831,8 @@ class Pipe:
             ", ".join(c.name for c in calls),
         )
         results = await execute_responses_tool_calls(calls, registry, self.log)
-        if self.log.isEnabledFor(logging.DEBUG):
-            for call, result in zip(calls, results):
-                self.log.debug("%s -> %s", call.name, result)
+        for call, result in zip(calls, results):
+            self._debug_block(f"tool_result_{call.name}", result)
         return results
 
     async def _emit_status(
@@ -1092,8 +1108,7 @@ async def build_chat_history_for_responses_api(
             msg_lookup = chat.get("history", {}).get("messages", {})
             current_id = chat.get("history", {}).get("currentId")
             messages = get_message_list(msg_lookup, current_id) or []
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(pretty_log_block(messages, "history_thread"))
+        logger.debug(pretty_log_block(messages, "history_thread"))
     else:
         messages = messages or []
 
