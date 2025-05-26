@@ -136,25 +136,6 @@ MODEL_CAPABILITIES = {
 ANNOT_TITLE_RE = re.compile(r"title='([^']*)'")
 ANNOT_URL_RE = re.compile(r"url='([^']*)'")
 
-
-def save_base64_image(b64: Any, request: Request, user: dict[str, Any]) -> str:
-    """Decode image data and upload it via the Files API."""
-    from open_webui.routers.images import upload_image, load_b64_image_data
-
-    if isinstance(b64, dict):
-        b64 = b64.get("b64_json") or b64.get("data") or ""
-
-    if isinstance(b64, str) and b64.startswith("data:"):
-        b64 = b64.split(",", 1)[-1]
-
-    result = load_b64_image_data(b64)
-    if not result:
-        raise ValueError("Invalid base64 image")
-
-    data, content_type = result
-    return upload_image(request, {}, data, content_type, SimpleNamespace(**user))
-
-
 class _MemHandler(logging.Handler):
     """In-memory log handler for per-request debug capture."""
 
@@ -165,7 +146,6 @@ class _MemHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
         msg = self.format(record)
         self.buf.append(msg)
-
 
 class Pipe:
     """Pipeline to interact with the OpenAI Responses API."""
@@ -422,7 +402,6 @@ class Pipe:
         request_params = await prepare_payload(
             self, valves, body, chat_id, __user__, __request__
         )
-        self._debug_block("prepared_request_params", request_params)
         usage_total: dict[str, Any] = {}
         last_response_id = None
         cleanup_ids: list[str] = []
@@ -538,18 +517,7 @@ class Pipe:
                         )
                         continue
                     if et == "response.image_generation_call.partial_image":
-                        img_b64 = event.get("partial_image_b64")
-                        if img_b64:
-                            url = save_base64_image(img_b64, __request__, __user__)
-                            if __event_emitter__:
-                                await __event_emitter__(
-                                    {
-                                        "type": "chat:message:files",
-                                        "data": {
-                                            "files": [{"type": "image", "url": url}]
-                                        },
-                                    }
-                                )
+                        # TODO - ADD LOGIC HERE FOR EMITT. 
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
@@ -616,30 +584,24 @@ class Pipe:
                             isinstance(item, dict)
                             and item.get("type") == "image_generation_call"
                         ):
-                            result_b64 = item.get("result")
-                            if result_b64:
-                                url = save_base64_image(
-                                    result_b64, __request__, __user__
-                                )
-                                if url != last_image_url:
-                                    last_image_url = url
-                                    if __event_emitter__:
-                                        await __event_emitter__(
-                                            {
-                                                "type": "chat:message:files",
-                                                "data": {
-                                                    "files": [
-                                                        {"type": "image", "url": url}
-                                                    ]
-                                                },
-                                            }
-                                        )
-                            await self._emit_status(
-                                __event_emitter__,
-                                "🖼️ Image generation completed",
-                                last_status,
-                                done=True,
-                            )
+                            #TODO IMPLEMENT LOGIC FOR UPLOADING IMAGE TO FILES AND EMITTING IT
+                           if __event_emitter__:
+                               await __event_emitter__(
+                                   {
+                                       "type": "chat:message:files",
+                                       "data": {
+                                           "file.s": [
+                                               {"type": "image", "url": url}
+                                           ]
+                                       },
+                                   }
+                               )
+                               await self._emit_status(
+                                   __event_emitter__,
+                                   "🖼️ Image generation completed",
+                                   last_status,
+                                   done=True,
+                               )
                         continue
                     if et == "response.output_text.annotation.added":
                         raw = str(event.get("annotation", ""))
