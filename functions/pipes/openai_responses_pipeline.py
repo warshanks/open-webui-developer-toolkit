@@ -391,6 +391,7 @@ class Pipe:
                     temp_input = []
 
                 pending_calls: list[SimpleNamespace] = []
+                loop_deltas: list[str] = []
                 log.debug("Starting response stream (loop #%d)", loop_count)
 
                 if request_params.get("reasoning") and not is_model_thinking:
@@ -485,13 +486,16 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_text.delta":
-                        if __event_emitter__:
-                            await __event_emitter__(
-                                {
-                                    "type": "chat:message:delta",
-                                    "data": {"content": event.get("delta")},
-                                }
-                            )
+                        delta = event.get("delta")
+                        if delta:
+                            loop_deltas.append(delta)
+                            if __event_emitter__:
+                                await __event_emitter__(
+                                    {
+                                        "type": "chat:message:delta",
+                                        "data": {"content": delta},
+                                    }
+                                )
                         continue
                     if et == "response.output_text.done":
                         continue
@@ -624,6 +628,9 @@ class Pipe:
                         if usage:
                             self._update_usage(usage_total, usage, loop_count)
                         continue
+
+                if loop_deltas and __event_emitter__:
+                    await __event_emitter__({"type": "message", "data": {"content": "".join(loop_deltas)}})
 
                 if pending_calls:
                     results = await execute_responses_tool_calls(
