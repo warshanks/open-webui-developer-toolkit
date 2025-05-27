@@ -230,3 +230,9 @@ every chunk when it is **on**. The upsert merges with any existing message data
 so keys you previously stored remain intact. To record additional metadata make
 another call to `Chats.upsert_message_to_chat_by_id_and_message_id` after
 emitting your final chunk.
+
+If the client disconnects mid-stream, catch `asyncio.CancelledError` and
+temporarily disable the event emitter. Save the partial text with
+`Chats.upsert_message_to_chat_by_id_and_message_id`, then continue generating
+until the model finishes. Once complete, upsert the final message so the entire
+reply is stored even though the browser closed.
