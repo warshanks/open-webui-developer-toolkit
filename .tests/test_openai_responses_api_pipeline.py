@@ -1,5 +1,4 @@
 import json
-import logging
 import sys
 import types
 from types import SimpleNamespace
@@ -145,14 +144,13 @@ def test_info_suffix_helpers() -> None:
 @pytest.mark.asyncio
 async def test_build_chat_history_for_responses_api() -> None:
     pipe = Pipe()
-    log = logging.getLogger("test")
     messages = [
         {"role": "system", "content": "skip"},
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "hello"},
         {"role": "user", "content": [{"type": "image", "url": "http://img"}]},
     ]
-    history = await pipe._build_chat_history_for_responses_api(log, None, messages)
+    history = await pipe._build_chat_history_for_responses_api(None, messages)
     assert history == [
         {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
         {"role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
@@ -199,7 +197,6 @@ async def test_emit_status() -> None:
 @pytest.mark.asyncio
 async def test_prepare_request_body_injection(monkeypatch) -> None:
     pipe = Pipe()
-    log = logging.getLogger("test")
     valves = pipe.valves.model_copy(
         update={
             "INJECT_CURRENT_DATE": True,
@@ -247,7 +244,7 @@ async def test_prepare_request_body_injection(monkeypatch) -> None:
 
     user = {"name": "Jane", "email": "jane@example.com"}
 
-    result = await pipe._prepare_request_body(log, valves, body, None, user, request)
+    result = await pipe._prepare_request_body(valves, body, None, user, request)
     assert result["model"] == "o3-mini"
     assert "Today's date:" in result["instructions"]
     assert "browser_info:" in result["instructions"]
