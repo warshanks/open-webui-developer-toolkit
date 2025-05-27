@@ -377,28 +377,6 @@ class Pipe:
         loop_count = 0
         message_content = ""
 
-        event_emitter = __event_emitter__
-
-        async def emit(event: dict[str, Any]) -> None:
-            nonlocal event_emitter
-            if event_emitter is None:
-                return
-            try:
-                await event_emitter(event)
-            except asyncio.CancelledError:
-                log.warning("Event emitter cancelled; continuing without client")
-                event_emitter = None
-                if chat_id and message_id:
-                    await asyncio.to_thread(
-                        Chats.upsert_message_to_chat_by_id_and_message_id,
-                        chat_id,
-                        message_id,
-                        {"content": message_content},
-                    )
-            except Exception as ex:  # pragma: no cover - ignore emitter errors
-                log.warning("Event emitter failed: %s", ex)
-                event_emitter = None
-
         try:
             reasoning_summaries = ""
 
@@ -421,7 +399,7 @@ class Pipe:
                     is_model_thinking = True
                     yield "<think>"
                     """
-                    await emit(
+                    await __event_emitter__(
                         {
                             "type": "replace",
                             "data": {
@@ -459,7 +437,7 @@ class Pipe:
                         continue
                     if et == "response.reasoning_summary_text.delta":
                         reasoning_summaries += event.get("delta", "")
-                        await emit(
+                        await __event_emitter__(
                             {
                                 "type": "replace",
                                 "data": {
@@ -476,7 +454,7 @@ class Pipe:
                     if et == "response.reasoning_summary_text.done":
                         if reasoning_summaries:
                             reasoning_summaries += "\n----\n"
-                        await emit(
+                        await __event_emitter__(
                             {
                                 "type": "replace",
                                 "data": {
@@ -494,7 +472,7 @@ class Pipe:
                         if is_model_thinking:
                             is_model_thinking = False
                             combined = reasoning_summaries.rstrip("-\n")
-                            await emit(
+                            await __event_emitter__(
                                 {
                                     "type": "replace",
                                     "data": {
@@ -512,8 +490,8 @@ class Pipe:
                         delta = event.get("delta")
                         if delta:
                             message_content += delta
-                            if emit:
-                                await emit(
+                            if __event_emitter__:
+                                await __event_emitter__(
                                     {
                                         "type": "chat:message:delta",
                                         "data": {"content": delta},
@@ -524,7 +502,7 @@ class Pipe:
                         continue
                     if et in {"response.image_generation_call.in_progress"}:
                         await self._emit_status(
-                            emit,
+                            __event_emitter__,
                             "🖼️ Generating image...",
                             last_status,
                         )
@@ -534,7 +512,7 @@ class Pipe:
                         continue
                     if et == "response.image_generation_call.completed":
                         await self._emit_status(
-                            emit,
+                            __event_emitter__,
                             "🖼️ Image generation completed",
                             last_status,
                             done=True,
@@ -547,7 +525,7 @@ class Pipe:
                             and item.get("type") == "function_call"
                         ):
                             await self._emit_status(
-                                emit,
+                                __event_emitter__,
                                 f"🔧 Running {item.get('name')}...",
                                 last_status,
                             )
@@ -556,7 +534,7 @@ class Pipe:
                             and item.get("type") == "web_search_call"
                         ):
                             await self._emit_status(
-                                emit,
+                                __event_emitter__,
                                 "🔍 Searching the internet...",
                                 last_status,
                             )
@@ -565,7 +543,7 @@ class Pipe:
                             and item.get("type") == "image_generation_call"
                         ):
                             await self._emit_status(
-                                emit,
+                                __event_emitter__,
                                 "🖼️ Generating image...",
                                 last_status,
                             )
@@ -578,7 +556,7 @@ class Pipe:
                         ):
                             pending_calls.append(SimpleNamespace(**item))
                             await self._emit_status(
-                                emit,
+                                __event_emitter__,
                                 f"🔧 Running {item.get('name')}...",
                                 last_status,
                                 done=True,
@@ -588,7 +566,7 @@ class Pipe:
                             and item.get("type") == "web_search_call"
                         ):
                             await self._emit_status(
-                                emit,
+                                __event_emitter__,
                                 "🔍 Searching the internet...",
                                 last_status,
                                 done=True,
@@ -598,10 +576,10 @@ class Pipe:
                             and item.get("type") == "image_generation_call"
                         ):
                             # TODO IMPLEMENT LOGIC FOR UPLOADING IMAGE TO FILES AND EMITTING IT
-                            if emit:
+                            if __event_emitter__:
                                 image_url = item.get("url")
                                 if image_url:
-                                    await emit(
+                                    await __event_emitter__(
                                         {
                                             "type": "chat:message:files",
                                             "data": {
@@ -612,7 +590,7 @@ class Pipe:
                                         }
                                     )
                                 await self._emit_status(
-                                    emit,
+                                    __event_emitter__,
                                     "🖼️ Image generation completed",
                                     last_status,
                                     done=True,
@@ -629,8 +607,8 @@ class Pipe:
                         url = url.replace("?utm_source=openai", "").replace(
                             "&utm_source=openai", ""
                         )
-                        if emit:
-                            await emit(
+                        if __event_emitter__:
+                            await __event_emitter__(
                                 {
                                     "type": "citation",
                                     "data": {
@@ -652,8 +630,8 @@ class Pipe:
                             self._update_usage(usage_total, usage, loop_count)
                         continue
 
-                if len(message_content) > message_start and emit:
-                    await emit({"type": "replace", "data": {"content": message_content}})
+                if len(message_content) > message_start and __event_emitter__:
+                    await __event_emitter__({"type": "replace", "data": {"content": message_content}})
 
                 if pending_calls:
                     results = await execute_responses_tool_calls(
@@ -668,7 +646,7 @@ class Pipe:
                             "output": str(result),
                         }
                         temp_input.insert(0, function_call_output)
-                        if emit:
+                        if __event_emitter__:
                             citation_data = {
                                 "document": [
                                     f"{call.name}({call.arguments})\n\n{result}"
@@ -692,7 +670,7 @@ class Pipe:
                                         "output": str(result),
                                     }
                                 ]
-                            await emit(
+                            await __event_emitter__(
                                 {"type": "citation", "data": citation_data}
                             )
                     if chat_id and message_id:
@@ -745,23 +723,10 @@ class Pipe:
                     # Done with the iteration's tool calls, produce final output
                     break
 
-        except asyncio.CancelledError:
-            log.warning("Task was cancelled!")
-            if chat_id and message_id:
-                await asyncio.to_thread(
-                    Chats.upsert_message_to_chat_by_id_and_message_id,
-                    chat_id,
-                    message_id,
-                    {"content": message_content},
-                )
-            if emit:
-                await emit({"type": "task-cancelled"})
-            raise
-
         except Exception as ex:
             log.error("Error in pipeline loop %d: %s", loop_count, ex)
-            if emit:
-                await emit(
+            if __event_emitter__:
+                await __event_emitter__(
                     {
                         "type": "chat:message:delta",
                         "data": {
@@ -771,7 +736,7 @@ class Pipe:
                 )
 
         finally:
-            await self._emit_status(emit, "", last_status, done=True)
+            await self._emit_status(__event_emitter__, "", last_status, done=True)
 
             log.info(
                 "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
@@ -782,8 +747,8 @@ class Pipe:
                 usage_total.get("output_tokens", 0),
                 usage_total.get("total_tokens", 0),
             )
-            if emit:
-                await emit(
+            if __event_emitter__:
+                await __event_emitter__(
                     {
                         "type": "chat:completion",
                         "data": {
@@ -808,10 +773,10 @@ class Pipe:
             # Detach the in-memory handler
             if buf_handler:
                 log.removeHandler(buf_handler)
-                if buf_handler.buffer and emit:
+                if buf_handler.buffer and __event_emitter__:
                     # format each record and join with newlines
                     formatted = [buf_handler.format(rec) for rec in buf_handler.buffer]
-                    await emit(
+                    await __event_emitter__(
                         {
                             "type": "citation",
                             "data": {
@@ -826,14 +791,6 @@ class Pipe:
                             },
                         }
                     )
-
-            if event_emitter is None and chat_id and message_id:
-                await asyncio.to_thread(
-                    Chats.upsert_message_to_chat_by_id_and_message_id,
-                    chat_id,
-                    message_id,
-                    {"content": message_content},
-                )
 
     async def _build_chat_history_for_responses_api(
         self,
