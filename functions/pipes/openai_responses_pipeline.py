@@ -70,6 +70,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 
+from starlette.requests import Request
+
 import httpx
 from open_webui.models.chats import Chats
 from open_webui.models.models import Models, ModelForm, ModelParams
@@ -338,8 +340,8 @@ class Pipe:
             # buffer up to 1000 records (or tune as you like)
             buf_handler = BufferingHandler(capacity=1000)
             buf_handler.setLevel(logging.DEBUG)
-            buf_handler.setFormatter(ch.formatter)  # reuse your same formatter
-            buf_handler.addFilter(ch.filters[0])  # reuse its filter
+            buf_handler.setFormatter(h.formatter)  # reuse your same formatter
+            buf_handler.addFilter(h.filters[0])  # reuse its filter
             log.addHandler(buf_handler)
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
@@ -587,7 +589,7 @@ class Pipe:
                     if et == "response.output_text.annotation.added":
                         m = re.search(
                             r"title='([^']*)'.*?url='([^']*)'",
-                            raw := str(event.get("annotation", "")),
+                            str(event.get("annotation", "")),
                         )
                         title, url = (
                             (m.group(1), m.group(2)) if m else ("Unknown Title", "")

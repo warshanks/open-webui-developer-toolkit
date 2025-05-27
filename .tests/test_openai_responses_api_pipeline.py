@@ -1,22 +1,30 @@
 import json
+import logging
+import sys
 import types
 from types import SimpleNamespace
 
-import logging
+# Provide a minimal orjson stub when the real library isn't installed
+if "orjson" not in sys.modules:
+    orjson_stub = types.SimpleNamespace(
+        loads=lambda b: json.loads(b),
+        dumps=lambda obj: json.dumps(obj).encode(),
+    )
+    sys.modules["orjson"] = orjson_stub
 
 import httpx
 import pytest
 
-from functions.pipes.openai_responses_api_pipeline import (
+from functions.pipes.openai_responses_pipeline import (
     Pipe,
+    delete_response,
     execute_responses_tool_calls,
     simplify_user_agent,
-    stream_responses,
     transform_tools_for_responses_api,
 )
 
 
-def test_simplify_user_agent():
+def test_simplify_user_agent() -> None:
     chrome = (
         "Mozilla/5.0 (X11; Linux x86_64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
@@ -26,7 +34,7 @@ def test_simplify_user_agent():
     assert simplify_user_agent("FooBar/1.0") == "FooBar/1.0".split()[0]
 
 
-def test_transform_tools_for_responses_api():
+def test_transform_tools_for_responses_api() -> None:
     tools = [
         {"type": "function", "function": {"name": "hello"}},
         {"type": "web_search", "web_search": {"search_context_size": "high"}},
@@ -40,7 +48,7 @@ def test_transform_tools_for_responses_api():
     assert out[3] == {"other": 1}
 
 
-def test_update_usage():
+def test_update_usage() -> None:
     pipe = Pipe()
     total: dict[str, int] = {}
     pipe._update_usage(total, {"input_tokens": 5}, 1)
@@ -52,7 +60,7 @@ def test_update_usage():
 
 
 @pytest.mark.asyncio
-async def test_execute_responses_tool_calls():
+async def test_execute_responses_tool_calls() -> None:
     async def a_tool(x: int) -> int:
         return x * 2
 
@@ -73,24 +81,28 @@ async def test_execute_responses_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_stream_responses():
+async def test_stream_responses() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://api/responses")
+        assert request.headers["Authorization"] == "Bearer KEY"
         content = (
             b"event: delta\n"
-            b'data: {"foo": 1}\n\n'
+            b'data: {"type": "delta", "foo": 1}\n\n'
             b"data: [DONE]\n\n"
         )
         return httpx.Response(200, content=content)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     pipe = Pipe()
-    gen = stream_responses(pipe, logging.getLogger("test"), client, "https://api", "KEY", {"model": "gpt"})
-    events = [event async for event in gen]
+    valves = pipe.valves.model_copy(update={"BASE_URL": "https://api", "API_KEY": "KEY"})
+    events = [
+        event async for event in pipe._stream_responses(valves, client, {"model": "gpt"})
+    ]
     await client.aclose()
-    assert events == [{"foo": 1, "type": "delta"}]
+    assert events == [{"type": "delta", "foo": 1}]
 
 
-def test_info_suffix_helpers():
+def test_info_suffix_helpers() -> None:
     pipe = Pipe()
     user = {"name": "Jane", "email": "jane@example.com"}
     assert pipe._get_user_info_suffix(user) == "user_info: Jane <jane@example.com>"
@@ -106,10 +118,36 @@ def test_info_suffix_helpers():
     assert pipe._get_browser_info_suffix(request) == expected
 
 
-def test_user_valve_log_level_override():
+@pytest.mark.asyncio
+async def test_build_chat_history_for_responses_api() -> None:
     pipe = Pipe()
-    valves = Pipe.UserValves(CUSTOM_LOG_LEVEL="DEBUG")
-    updated = pipe._apply_user_valve_overrides(valves)
+    log = logging.getLogger("test")
+    messages = [
+        {"role": "system", "content": "skip"},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": [{"type": "image", "url": "http://img"}]},
+    ]
+    history = await pipe._build_chat_history_for_responses_api(log, None, messages)
+    assert history == [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
+        {"role": "user", "content": [{"type": "input_image", "image_url": "http://img"}]},
+    ]
 
-    assert updated.CUSTOM_LOG_LEVEL == "DEBUG"
 
+@pytest.mark.asyncio
+async def test_delete_response() -> None:
+    called = False
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        assert request.method == "DELETE"
+        assert request.url == httpx.URL("https://api/responses/123")
+        return httpx.Response(204)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await delete_response(client, "https://api", "KEY", "123")
+    await client.aclose()
+    assert called
