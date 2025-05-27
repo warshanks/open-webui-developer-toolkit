@@ -758,6 +758,13 @@ class Pipe:
                     }
                 )
 
+            if chat_id and message_id:
+                Chats.upsert_message_to_chat_by_id_and_message_id(
+                    chat_id,
+                    message_id,
+                    {"role": "assistant", "content": message_content},
+                )
+
             if last_response_id and not valves.STORE_RESPONSE:
                 try:
                     await delete_response(
