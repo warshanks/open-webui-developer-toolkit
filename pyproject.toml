@@ -41,7 +41,7 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [".tests"]
 addopts = """
 -ra
 --import-mode=importlib
