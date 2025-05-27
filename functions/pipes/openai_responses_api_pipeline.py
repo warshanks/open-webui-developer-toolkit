@@ -75,6 +75,7 @@ from open_webui.models.chats import Chats
 from open_webui.models.models import Models, ModelForm, ModelParams
 from open_webui.utils.misc import get_message_list
 from pydantic import BaseModel, Field
+from logging.handlers import BufferingHandler
 
 EMOJI_LEVELS = {
     logging.DEBUG: "\U0001f50d",
@@ -320,33 +321,26 @@ class Pipe:
         )
 
         # Local logger for this request
-        log = logging.Logger(self.log_name)
-        log.propagate = False
-        log.setLevel(getattr(logging, valves.CUSTOM_LOG_LEVEL, logging.INFO))
-
-        ch = logging.StreamHandler(sys.stderr)
-        fmt = logging.Formatter(
-            "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
+        log_format = "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
+        log = logging.Logger(
+            self.log_name, getattr(logging, valves.CUSTOM_LOG_LEVEL, logging.INFO)
         )
-        ch.setFormatter(fmt)
-        ch.addFilter(
+        log.propagate = False
+        log.handlers[:] = [h := logging.StreamHandler(sys.stderr)]
+        h.setFormatter(logging.Formatter(log_format))
+        h.addFilter(
             lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "❓")) or True
         )
-        log.handlers = [ch]
 
         # Capture logs when DEBUG is enabled
-        mem_handler = None
-        debug_logs: list[str] = []
+        buf_handler: BufferingHandler | None = None
         if log.isEnabledFor(logging.DEBUG):
-            mem_handler = logging.Handler(level=logging.DEBUG)
-            mem_handler.setFormatter(log.handlers[0].formatter)
-            mem_handler.addFilter(log.handlers[0].filters[0])
-
-            def emit(record: logging.LogRecord) -> None:
-                debug_logs.append(mem_handler.format(record))
-
-            mem_handler.emit = emit  # type: ignore[assignment]
-            log.addHandler(mem_handler)
+            # buffer up to 1000 records (or tune as you like)
+            buf_handler = BufferingHandler(capacity=1000)
+            buf_handler.setLevel(logging.DEBUG)
+            buf_handler.setFormatter(ch.formatter)  # reuse your same formatter
+            buf_handler.addFilter(ch.filters[0])  # reuse its filter
+            log.addHandler(buf_handler)
 
         if valves.ENABLE_NATIVE_TOOL_CALLING:
             await self._enable_native_function_support(__metadata__, log)
@@ -591,11 +585,13 @@ class Pipe:
                                 )
                         continue
                     if et == "response.output_text.annotation.added":
-                        raw = str(event.get("annotation", ""))
-                        title_m = ANNOT_TITLE_RE.search(raw)
-                        url_m = ANNOT_URL_RE.search(raw)
-                        title = title_m.group(1) if title_m else "Unknown Title"
-                        url = url_m.group(1) if url_m else ""
+                        m = re.search(
+                            r"title='([^']*)'.*?url='([^']*)'",
+                            raw := str(event.get("annotation", "")),
+                        )
+                        title, url = (
+                            (m.group(1), m.group(2)) if m else ("Unknown Title", "")
+                        )
                         url = url.replace("?utm_source=openai", "").replace(
                             "&utm_source=openai", ""
                         )
@@ -752,16 +748,16 @@ class Pipe:
                         "Failed to delete response %s: %s", last_response_id, ex
                     )
             # Detach the in-memory handler
-            if mem_handler:
-                log.removeHandler(mem_handler)
-
-                # If logs were captured, emit them as a citation
-                if debug_logs and __event_emitter__:
+            if buf_handler:
+                log.removeHandler(buf_handler)
+                if buf_handler.buffer and __event_emitter__:
+                    # format each record and join with newlines
+                    formatted = [buf_handler.format(rec) for rec in buf_handler.buffer]
                     await __event_emitter__(
                         {
                             "type": "citation",
                             "data": {
-                                "document": ["\n".join(debug_logs)],
+                                "document": ["\n".join(formatted)],
                                 "metadata": [
                                     {
                                         "date_accessed": datetime.now().isoformat(),
