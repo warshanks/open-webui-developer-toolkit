@@ -309,7 +309,15 @@ class Pipe:
         """
         start_ns = time.perf_counter_ns()
         last_status: list[tuple[str, bool] | None] = [None]
-        valves = self._apply_user_valve_overrides(__user__.get("valves"))
+        # inline merge default valves + per-user overrides (dropping "inherit")
+        user_vals = __user__.get("valves")
+        valves = self.valves.model_copy(
+            update={
+                k: v
+                for k, v in (user_vals.model_dump().items() if user_vals else [])
+                if str(v).lower() != "inherit"
+            }
+        )
 
         # Local logger for this request
         log = logging.Logger(self.log_name)
@@ -1017,23 +1025,6 @@ class Pipe:
         await emitter(
             {"type": "status", "data": {"description": description, "done": done}}
         )
-
-    def _apply_user_valve_overrides(self, user_valves: BaseModel | None) -> Pipe.Valves:
-        """
-        Return a fresh Valves object built from self.valves plus any
-        per-user overrides, but do not mutate self.valves.
-        """
-        # Start from the defaults
-        effective = self.valves.model_copy()
-
-        if user_valves:
-            raw = user_valves.model_dump()
-            # Drop “inherit” entries
-            overrides = {k: v for k, v in raw.items() if str(v).lower() != "inherit"}
-            # Produce a new Valves with those overrides
-            effective = effective.model_copy(update=overrides)
-
-        return effective
 
     def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
         """Return a user_info line."""
