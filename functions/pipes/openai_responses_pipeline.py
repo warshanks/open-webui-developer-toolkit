@@ -375,6 +375,7 @@ class Pipe:
         temp_input: list[dict[str, Any]] = []
         is_model_thinking = False
         loop_count = 0
+        message_content = ""
 
         try:
             reasoning_summaries = ""
@@ -391,6 +392,7 @@ class Pipe:
                     temp_input = []
 
                 pending_calls: list[SimpleNamespace] = []
+                message_start = len(message_content)
                 log.debug("Starting response stream (loop #%d)", loop_count)
 
                 if request_params.get("reasoning") and not is_model_thinking:
@@ -485,13 +487,16 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_text.delta":
-                        if __event_emitter__:
-                            await __event_emitter__(
-                                {
-                                    "type": "chat:message:delta",
-                                    "data": {"content": event.get("delta")},
-                                }
-                            )
+                        delta = event.get("delta")
+                        if delta:
+                            message_content += delta
+                            if __event_emitter__:
+                                await __event_emitter__(
+                                    {
+                                        "type": "chat:message:delta",
+                                        "data": {"content": delta},
+                                    }
+                                )
                         continue
                     if et == "response.output_text.done":
                         continue
@@ -625,6 +630,9 @@ class Pipe:
                             self._update_usage(usage_total, usage, loop_count)
                         continue
 
+                if len(message_content) > message_start and __event_emitter__:
+                    await __event_emitter__({"type": "replace", "data": {"content": message_content}})
+
                 if pending_calls:
                     results = await execute_responses_tool_calls(
                         pending_calls,
@@ -665,6 +673,14 @@ class Pipe:
                             await __event_emitter__(
                                 {"type": "citation", "data": citation_data}
                             )
+                    if chat_id and message_id:
+                        updated = await asyncio.to_thread(
+                            Chats.get_message_by_id_and_message_id,
+                            chat_id,
+                            message_id,
+                        )
+                        if updated:
+                            message_content = updated.get("content", message_content)
                     remaining = valves.MAX_TOOL_CALL_LOOPS - loop_count
                     thought = ""
                     if loop_count == valves.MAX_TOOL_CALL_LOOPS:
