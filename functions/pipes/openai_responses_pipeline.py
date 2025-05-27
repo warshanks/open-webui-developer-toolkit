@@ -469,12 +469,17 @@ class Pipe:
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            combined = "\n----\n".join(reasoning_summaries)
+                            combined = reasoning_summaries.rstrip("-\n")
                             await __event_emitter__(
                                 {
                                     "type": "replace",
                                     "data": {
-                                        "content": f"<details type='reasoning' done='true'>\n<summary>Finished Reasoning</summary>\n{combined}\n</details>\n"
+                                        "content": (
+                                            "<details type='reasoning' done='true'>\n"
+                                            "<summary>Finished Reasoning</summary>\n"
+                                            f"{combined}\n"
+                                            "</details>\n"
+                                        )
                                     },
                                 }
                             )
