@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 version: 1.6.25
 license: MIT
-requirements: httpx
+requirements: httpx, orjson
 
 ------------------------------------------------------------------------------
 🚀 CURRENT FEATURES
@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
+import orjson
 import logging
 import os
 import re
@@ -71,7 +71,6 @@ from types import SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal
 
 import httpx
-from fastapi import Request
 from open_webui.models.chats import Chats
 from open_webui.models.models import Models, ModelForm, ModelParams
 from open_webui.utils.misc import get_message_list
@@ -218,8 +217,7 @@ class Pipe:
             description="Whether tool calls can be parallelized. Defaults to True if not set.",
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls
 
-        # TODO Need to rename as it's not truely max tool calls.  It's max tool loops.  It can call an unlimited number of tools within a single loop.
-        MAX_TOOL_CALLS: int = Field(
+        MAX_TOOL_CALL_LOOPS: int = Field(
             default=5,
             description=(
                 "Maximum number of tool calls the model can make in a single request. This is a hard stop safety limit to prevent infinite loops. Defaults to 5."
@@ -264,14 +262,6 @@ class Pipe:
             ),
         )
 
-        INJECT_IP_INFO: bool = Field(
-            default=False,
-            description=(
-                "Append IP information with location if available. "
-                "Example: `ip_info: 207.194.4.18 - Waterloo, Ontario, Canada (Bell Canada)`."
-            ),
-        )
-
     class UserValves(BaseModel):
         """Per-user valve overrides."""
 
@@ -288,7 +278,6 @@ class Pipe:
         self.log_name = "OpenAI Responses"
         self.client: httpx.AsyncClient | None = None
         self.transport: httpx.AsyncHTTPTransport | None = None
-        self.client_lock = asyncio.Lock()
 
     def pipes(self):
         """Return models exposed by this pipe."""
@@ -366,10 +355,9 @@ class Pipe:
             message_id,
         )
 
-        client = await self.get_http_client(log)
+        client = await self._get_http_client(log)
 
-        request_params = await prepare_request_body(
-            self,
+        request_params = await self._prepare_request_body(
             log,
             valves,
             body,
@@ -387,7 +375,7 @@ class Pipe:
         try:
             reasoning_summaries = ""
 
-            for loop_count in range(1, valves.MAX_TOOL_CALLS + 1):
+            for loop_count in range(1, valves.MAX_TOOL_CALL_LOOPS + 1):
                 log.debug("Loop iteration #%d", loop_count)
                 if loop_count > 1:
                     request_params.update(
@@ -415,16 +403,13 @@ class Pipe:
                     )
                     """
 
-                async for event in stream_responses(
-                    self,
-                    log,
+                async for event in self._stream_responses(
+                    valves,
                     client,
-                    valves.BASE_URL,
-                    valves.API_KEY,
                     request_params,
                 ):
                     et = event.get("type")
-                    if not et.endswith(".delta"):
+                    if log.isEnabledFor(logging.DEBUG):
                         log.debug("Event received: %s", et)
 
                     if et == "response.created":
@@ -445,8 +430,6 @@ class Pipe:
                         # reasoning is enabled. No action needed here.
                         continue
                     if et == "response.reasoning_summary_text.delta":
-                        yield event.get("delta", "")
-                        """
                         reasoning_summaries += event.get("delta", "")
                         await __event_emitter__(
                             {
@@ -461,11 +444,8 @@ class Pipe:
                                 },
                             }
                         )
-                        """
                         continue
                     if et == "response.reasoning_summary_text.done":
-                        yield "\n----\n"
-                        """
                         if reasoning_summaries:
                             reasoning_summaries += "\n----\n"
                         await __event_emitter__(
@@ -481,13 +461,10 @@ class Pipe:
                                 },
                             }
                         )
-                        """
                         continue
                     if et == "response.content_part.added":
                         if is_model_thinking:
                             is_model_thinking = False
-                            yield "</think>"
-                            """
                             combined = "\n----\n".join(reasoning_summaries)
                             await __event_emitter__(
                                 {
@@ -497,7 +474,6 @@ class Pipe:
                                     },
                                 }
                             )
-                            """
                         continue
                     if et == "response.output_text.delta":
                         if __event_emitter__:
@@ -509,7 +485,6 @@ class Pipe:
                             )
                         continue
                     if et == "response.output_text.done":
-                        # This delta marks the end of the current output block.
                         continue
                     if et in {"response.image_generation_call.in_progress"}:
                         await self._emit_status(
@@ -679,27 +654,27 @@ class Pipe:
                             await __event_emitter__(
                                 {"type": "citation", "data": citation_data}
                             )
-                    remaining = valves.MAX_TOOL_CALLS - loop_count
+                    remaining = valves.MAX_TOOL_CALL_LOOPS - loop_count
                     thought = ""
-                    if loop_count == valves.MAX_TOOL_CALLS:
+                    if loop_count == valves.MAX_TOOL_CALL_LOOPS:
                         request_params["tool_choice"] = "none"
                         thought = (
-                            f"[Internal thought] Final iteration ({loop_count}/{valves.MAX_TOOL_CALLS}). "
+                            f"[Internal thought] Final iteration ({loop_count}/{valves.MAX_TOOL_CALL_LOOPS}). "
                             "Tool-calling phase is over; I'll produce my final answer now."
                         )
-                    elif loop_count == 2 and valves.MAX_TOOL_CALLS > 2:
+                    elif loop_count == 2 and valves.MAX_TOOL_CALL_LOOPS > 2:
                         thought = (
                             f"[Internal thought] I've just received the initial tool results from iteration 1. "
-                            f"I'm now continuing an iterative tool interaction with up to {valves.MAX_TOOL_CALLS} iterations."
+                            f"I'm now continuing an iterative tool interaction with up to {valves.MAX_TOOL_CALL_LOOPS} iterations."
                         )
                     elif remaining == 1:
                         thought = (
-                            f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS}. "
+                            f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALL_LOOPS}. "
                             "Next iteration is answer-only; any remaining tool calls must happen now."
                         )
                     elif loop_count > 2:
                         thought = (
-                            f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALLS} "
+                            f"[Internal thought] Iteration {loop_count}/{valves.MAX_TOOL_CALL_LOOPS} "
                             f"({remaining} remaining, no action needed)."
                         )
                     if thought:
@@ -790,6 +765,240 @@ class Pipe:
                         }
                     )
 
+    async def _build_chat_history_for_responses_api(
+        self,
+        log: logging.Logger,
+        chat_id: str | None = None,
+        messages: list[dict] | None = None,
+    ) -> list[dict]:
+        """Return chat history formatted for the Responses API."""
+        from_history = bool(chat_id)
+        if chat_id:
+            log.debug("Retrieving message history for chat_id=%s", chat_id)
+            chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
+            if not chat_model:
+                messages = []
+            else:
+                chat = chat_model.chat
+                msg_lookup = chat.get("history", {}).get("messages", {})
+                current_id = chat.get("history", {}).get("currentId")
+                messages = get_message_list(msg_lookup, current_id) or []
+        else:
+            messages = messages or []
+
+        history: list[dict] = []
+        for m in messages:
+            role = m.get("role")
+            if role == "system":
+                continue
+            from_assistant = role == "assistant"
+
+            if from_history and from_assistant:
+                for src in m.get("sources", []):
+                    for fc in src.get("_fc", []):
+                        cid = fc.get("call_id") or fc.get("id")
+                        if not cid:
+                            continue
+                        history.append(
+                            {
+                                "type": "function_call",
+                                "call_id": cid,
+                                "name": fc.get("name") or fc.get("n"),
+                                "arguments": fc.get("arguments") or fc.get("a"),
+                            }
+                        )
+                        history.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": cid,
+                                "output": fc.get("output") or fc.get("o"),
+                            }
+                        )
+
+            blocks: list[dict] = []
+            raw_blocks = m.get("content", []) or []
+            if not isinstance(raw_blocks, list):
+                raw_blocks = [raw_blocks]
+            for b in raw_blocks:
+                if not b:
+                    continue
+                if isinstance(b, dict) and b.get("type") in ("image", "image_url"):
+                    url = b.get("url") or b.get("image_url", {}).get("url")
+                    if url:
+                        blocks.append(
+                            {
+                                "type": (
+                                    "input_image" if role == "user" else "output_image"
+                                ),
+                                "image_url": url,
+                            }
+                        )
+                else:
+                    text = b.get("text") if isinstance(b, dict) else str(b)
+                    if from_history and from_assistant and not text.strip():
+                        continue
+                    if text.strip():
+                        blocks.append(
+                            {
+                                "type": (
+                                    "input_text" if role == "user" else "output_text"
+                                ),
+                                "text": text,
+                            }
+                        )
+
+            if from_history:
+                for f in m.get("files", []):
+                    if f and f.get("type") in ("image", "image_url"):
+                        blocks.append(
+                            {
+                                "type": (
+                                    "input_image" if role == "user" else "output_image"
+                                ),
+                                "image_url": f.get("url")
+                                or f.get("image_url", {}).get("url"),
+                            }
+                        )
+
+            if blocks:
+                history.append({"role": role, "content": blocks})
+
+        return history
+
+    async def _prepare_request_body(
+        self,
+        log: logging.Logger,
+        valves: Pipe.Valves,
+        body: dict[str, Any],
+        chat_id: str | None = None,
+        __user__: dict[str, Any] | None = None,
+        __request__: Any = None,
+    ) -> dict[str, Any]:
+        """Assemble the JSON payload for the OpenAI Responses API."""
+        # 1. Normalize model ID (handle *-high aliases)
+        model_id = str(body["model"]).split(".", 1)[-1]
+        if model_id in {"o3-mini-high", "o4-mini-high"}:
+            body.setdefault("reasoning", {}).setdefault("effort", "high")
+            model_id = model_id.replace("-high", "")
+
+        # 2. Determine capabilities
+        caps = MODEL_CAPABILITIES.get(model_id, MODEL_CAPABILITIES["default"])
+
+        # 3. Tools
+        if caps.get("function_calling") and valves.ENABLE_NATIVE_TOOL_CALLING:
+            body["tools"] = transform_tools_for_responses_api(body.get("tools", []))
+            if caps.get("web_search") and valves.ENABLE_WEB_SEARCH:
+                body["tools"].append(
+                    {
+                        "type": "web_search",
+                        "search_context_size": valves.SEARCH_CONTEXT_SIZE,
+                    }
+                )
+            if caps.get("image_gen_tool") and valves.ENABLE_IMAGE_GENERATION:
+                tool = {
+                    "type": "image_generation",
+                    "quality": valves.IMAGE_QUALITY,
+                    "size": valves.IMAGE_SIZE,
+                    "response_format": valves.IMAGE_FORMAT,
+                    "background": valves.IMAGE_BACKGROUND,
+                }
+                if valves.IMAGE_COMPRESSION:
+                    tool["output_compression"] = valves.IMAGE_COMPRESSION
+                body["tools"].append(tool)
+        else:
+            body.pop("tools", None)
+            log.debug("Native tool calling disabled or unsupported for %s", model_id)
+
+        # 4. Reasoning
+        if not caps.get("reasoning"):
+            body.pop("reasoning", None)
+        else:
+            r = body.setdefault("reasoning", {})
+            effort = body.get("reasoning_effort")
+            if effort:
+                r["effort"] = effort
+            if valves.REASON_SUMMARY:
+                r["summary"] = valves.REASON_SUMMARY
+
+        # 5. Build instructions from system messages + any injected context
+        instructions = next(
+            (
+                m["content"]
+                for m in reversed(body.get("messages", []))
+                if m["role"] == "system"
+            ),
+            "",
+        )
+        if valves.INJECT_CURRENT_DATE:
+            instructions += (
+                "\n\n" + "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
+            )
+
+        extras, notes = [], []
+        if valves.INJECT_USER_INFO:
+            extras.append(self._get_user_info_suffix(__user__))
+            notes.append("`user_info`")
+        if valves.INJECT_BROWSER_INFO:
+            extras.append(self._get_browser_info_suffix(__request__))
+            notes.append("`browser_info`")
+        if extras:
+            extras.append(
+                "Note: "
+                + ", ".join(notes)
+                + " provided solely for AI contextual enrichment."
+            )
+            instructions += "\n\n" + "\n".join(extras)
+
+        # 6. Final payload fields
+        body.update(
+            {
+                "model": model_id,
+                "instructions": instructions,
+                "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
+                "user": __user__.get("email", "unknown"),
+                "text": {"format": {"type": "text"}},
+                "truncation": "auto",
+                "store": True,
+                "input": await self._build_chat_history_for_responses_api(log, chat_id),
+                "tool_choice": "auto" if body.get("tools") else "none",
+            }
+        )
+
+        # 7. Remove unsupported fields
+        for field in ("stream_options", "messages", "reasoning_effort"):
+            body.pop(field, None)
+
+        return body
+
+    async def _stream_responses(
+        self,
+        valves: Pipe.Valves,
+        client: httpx.AsyncClient,
+        request_params: dict[str, Any],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield parsed SSE events from the API as dictionaries."""
+        url = valves.BASE_URL.rstrip("/") + "/responses"
+        headers = {
+            "Authorization": f"Bearer {valves.API_KEY.strip()}",
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+        }
+        loads = orjson.loads
+
+        async with client.stream(
+            "POST", url, headers=headers, json=request_params
+        ) as response:
+            response.raise_for_status()
+            async for raw_line in response.aiter_lines():
+                line = raw_line.strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        return
+                    yield loads(data_str)
+
     async def _emit_status(
         self,
         emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
@@ -809,45 +1018,22 @@ class Pipe:
             {"type": "status", "data": {"description": description, "done": done}}
         )
 
-    def _apply_user_valve_overrides(
-        self, user_valves: BaseModel | None
-    ) -> "Pipe.Valves":
+    def _apply_user_valve_overrides(self, user_valves: BaseModel | None) -> Pipe.Valves:
+        """
+        Return a fresh Valves object built from self.valves plus any
+        per-user overrides, but do not mutate self.valves.
+        """
+        # Start from the defaults
+        effective = self.valves.model_copy()
+
         if user_valves:
-            raw_user_valves = user_valves.model_dump()  # or .dict()
-            filtered = {
-                k: v for k, v in raw_user_valves.items() if str(v).lower() != "inherit"
-            }
-            # Merge user overrides into the existing self.valves
-            self.valves = self.valves.model_copy(update=filtered)
+            raw = user_valves.model_dump()
+            # Drop “inherit” entries
+            overrides = {k: v for k, v in raw.items() if str(v).lower() != "inherit"}
+            # Produce a new Valves with those overrides
+            effective = effective.model_copy(update=overrides)
 
-        return self.valves
-
-    @staticmethod
-    def _get_current_date_suffix() -> str:
-        """Return today's date formatted for prompt injection."""
-        return "Today's date: " + datetime.now().strftime("%A, %B %d, %Y")
-
-    async def _lookup_ip_info(self, ip: str, log: logging.Logger) -> str:
-        """Return IP geolocation information for ``ip`` or ``""`` on failure."""
-        try:
-            client = await self.get_http_client(log)
-            resp = await client.get(f"http://ip-api.com/json/{ip}")
-            resp.raise_for_status()
-            data = resp.json()
-            location = ", ".join(
-                filter(
-                    None,
-                    (data.get("city"), data.get("regionName"), data.get("country")),
-                )
-            )
-            isp = data.get("isp") or ""
-            info = f"{location} (approx based on IP) (ISP: {isp})" if isp else location
-        except Exception as exc:  # pragma: no cover - network errors
-            info = ""
-            log.debug("IP lookup failed for %s: %s", ip, exc)
-        else:
-            log.debug("IP lookup result %s -> %r", ip, info)
-        return info
+        return effective
 
     def _get_user_info_suffix(self, user: Dict[str, Any]) -> str:
         """Return a user_info line."""
@@ -865,18 +1051,6 @@ class Pipe:
             f"browser_info: {device_type} | {platform} | Browser: "
             f"{simplify_user_agent(headers.get('user-agent', '') if request else '')}"
         )
-
-    async def _get_ip_info_suffix(
-        self, request: Request | None, log: logging.Logger
-    ) -> str:
-        """Return an ``ip_info`` line with geolocation details if available."""
-        ip = (
-            getattr(getattr(request, "client", None), "host", "unknown")
-            if request
-            else "unknown"
-        )
-        info = await self._lookup_ip_info(ip, log) if ip != "unknown" else ""
-        return f"ip_info: {ip}{f' - {info}' if info else ''}"
 
     async def _enable_native_function_support(
         self, metadata: dict[str, Any], log: logging.Logger
@@ -914,24 +1088,19 @@ class Pipe:
 
         metadata["function_calling"] = "native"
 
-    async def get_http_client(self, log: logging.Logger) -> httpx.AsyncClient:
+    async def _get_http_client(self, log: logging.Logger) -> httpx.AsyncClient:
         """Return a shared httpx client."""
         if self.client and not self.client.is_closed:
             log.debug("Reusing existing httpx client.")
             return self.client
-        async with self.client_lock:
-            if self.client and not self.client.is_closed:
-                log.debug(
-                    "Client initialized while waiting for lock. Reusing existing."
-                )
-                return self.client
-            log.debug("Creating new httpx.AsyncClient.")
-            timeout = httpx.Timeout(900.0, connect=30.0)
-            limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
-            # HTTP/2 can stall if flow control windows aren't consumed quickly.
-            # Using HTTP/1.1 avoids mid-stream pauses in high traffic scenarios.
-            self.transport = httpx.AsyncHTTPTransport(http2=False, limits=limits)
-            self.client = httpx.AsyncClient(transport=self.transport, timeout=timeout)
+
+        log.debug("Creating new httpx.AsyncClient.")
+        timeout = httpx.Timeout(900.0, connect=30.0)
+        limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
+        # HTTP/2 can stall if flow control windows aren't consumed quickly.
+        # Using HTTP/1.1 avoids mid-stream pauses in high traffic scenarios.
+        self.transport = httpx.AsyncHTTPTransport(http2=False, limits=limits)
+        self.client = httpx.AsyncClient(transport=self.transport, timeout=timeout)
         return self.client
 
     @staticmethod
@@ -953,54 +1122,6 @@ class Pipe:
                     if isinstance(subval, (int, float)):
                         inner[subkey] = inner.get(subkey, 0) + subval
         total["loops"] = loops
-
-
-async def stream_responses(
-    self,
-    log: logging.Logger,
-    client: httpx.AsyncClient,
-    base_url: str,
-    api_key: str,
-    params: dict[str, Any],
-) -> AsyncIterator[dict[str, Any]]:
-    """Yield parsed SSE events from the API as dictionaries."""
-
-    url = base_url.rstrip("/") + "/responses"
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Accept": "text/event-stream",
-        "Content-Type": "application/json",
-    }
-
-    log.debug(
-        "POST %s/responses model=%s",
-        base_url.rstrip("/"),
-        params.get("model"),
-    )
-
-    async with client.stream("POST", url, headers=headers, json=params) as resp:
-        resp.raise_for_status()
-        log.debug("Streaming response with status %s", resp.status_code)
-        event_type: str | None = None
-        async for raw in resp.aiter_lines():
-            line = raw.rstrip("\r")
-            if not line or line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                event_type = line[len("event:") :].strip()
-                continue
-            if line.startswith("data:"):
-                data = line[len("data:") :].strip()
-                if data.strip() == "[DONE]":
-                    return
-
-                payload = json.loads(data)
-                payload["type"] = payload.get("type", event_type or "message")
-
-                yield payload
-                event_type = None
-
-    log.debug("Response stream closed")
 
 
 async def delete_response(
@@ -1047,212 +1168,6 @@ def transform_tools_for_responses_api(tools: list[dict] | None) -> list[dict]:
     return transformed_tools
 
 
-async def build_chat_history_for_responses_api(
-    self,
-    log: logging.Logger,
-    chat_id: str | None = None,
-    messages: list[dict] | None = None,
-) -> list[dict]:
-    """Return chat history formatted for the Responses API."""
-
-    from_history = bool(chat_id)
-    if chat_id:
-        log.debug("Retrieving message history for chat_id=%s", chat_id)
-        chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
-        if not chat_model:
-            messages = []
-        else:
-            chat = chat_model.chat
-            msg_lookup = chat.get("history", {}).get("messages", {})
-            current_id = chat.get("history", {}).get("currentId")
-            messages = get_message_list(msg_lookup, current_id) or []
-    else:
-        messages = messages or []
-
-    history: list[dict] = []
-    for m in messages:
-        role = m.get("role")
-        if role == "system":
-            continue
-        from_assistant = role == "assistant"
-
-        if from_history and from_assistant:
-            for src in m.get("sources", []):
-                for fc in src.get("_fc", []):
-                    cid = fc.get("call_id") or fc.get("id")
-                    if not cid:
-                        continue
-                    history.append(
-                        {
-                            "type": "function_call",
-                            "call_id": cid,
-                            "name": fc.get("name") or fc.get("n"),
-                            "arguments": fc.get("arguments") or fc.get("a"),
-                        }
-                    )
-                    history.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": cid,
-                            "output": fc.get("output") or fc.get("o"),
-                        }
-                    )
-
-        blocks: list[dict] = []
-        raw_blocks = m.get("content", []) or []
-        if not isinstance(raw_blocks, list):
-            raw_blocks = [raw_blocks]
-        for b in raw_blocks:
-            if not b:
-                continue
-            if isinstance(b, dict) and b.get("type") in ("image", "image_url"):
-                url = b.get("url") or b.get("image_url", {}).get("url")
-                if url:
-                    blocks.append(
-                        {
-                            "type": "input_image" if role == "user" else "output_image",
-                            "image_url": url,
-                        }
-                    )
-            else:
-                text = b.get("text") if isinstance(b, dict) else str(b)
-                if from_history and from_assistant and not text.strip():
-                    continue
-                if text.strip():
-                    blocks.append(
-                        {
-                            "type": "input_text" if role == "user" else "output_text",
-                            "text": text,
-                        }
-                    )
-
-        if from_history:
-            for f in m.get("files", []):
-                if f and f.get("type") in ("image", "image_url"):
-                    blocks.append(
-                        {
-                            "type": "input_image" if role == "user" else "output_image",
-                            "image_url": f.get("url")
-                            or f.get("image_url", {}).get("url"),
-                        }
-                    )
-
-        if blocks:
-            history.append({"role": role, "content": blocks})
-
-    return history
-
-
-async def prepare_request_body(
-    self,
-    log: logging.Logger,
-    valves: Pipe.Valves,
-    body: dict[str, Any],
-    chat_id: str | None = None,
-    __user__: dict[str, Any] | None = None,
-    __request__: Any = None,
-) -> dict[str, Any]:
-
-    model_id = str(body["model"]).split(".", 1)[-1]
-
-    # Handle *-high aliases
-    if model_id in {"o3-mini-high", "o4-mini-high"}:
-        body.setdefault("reasoning", {}).setdefault("effort", "high")
-        model_id = model_id.replace("-high", "")
-
-    # Identify capabilities
-    caps = MODEL_CAPABILITIES.get(model_id, MODEL_CAPABILITIES["default"])
-
-    # Handle tools if supported
-    if caps.get("function_calling") and valves.ENABLE_NATIVE_TOOL_CALLING:
-        body["tools"] = transform_tools_for_responses_api(body.get("tools", []))
-        if caps.get("web_search") and valves.ENABLE_WEB_SEARCH:
-            body["tools"].append(
-                {
-                    "type": "web_search",
-                    "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                }
-            )
-        if caps.get("image_gen_tool") and valves.ENABLE_IMAGE_GENERATION:
-            tool = {
-                "type": "image_generation",
-                "quality": valves.IMAGE_QUALITY,
-                "size": valves.IMAGE_SIZE,
-                "response_format": valves.IMAGE_FORMAT,
-                "background": valves.IMAGE_BACKGROUND,
-            }
-            if valves.IMAGE_COMPRESSION:
-                tool["output_compression"] = valves.IMAGE_COMPRESSION
-            body["tools"].append(tool)
-    else:
-        body.pop("tools", None)
-        log.debug("Native tool calling disabled or unsupported for %s", model_id)
-
-    # Reasoning only if model supports it and user requested it
-    if not caps.get("reasoning"):
-        body.pop("reasoning", None)
-    else:
-        r = body.setdefault("reasoning", {})
-        effort = body.get("reasoning_effort")
-        if effort:
-            r["effort"] = effort
-        if valves.REASON_SUMMARY:
-            r["summary"] = valves.REASON_SUMMARY
-
-    # Build instructions (system message + optional date/user info)
-    instructions = next(
-        (
-            m["content"]
-            for m in reversed(body.get("messages", []))
-            if m["role"] == "system"
-        ),
-        "",
-    )
-    if valves.INJECT_CURRENT_DATE:
-        instructions += "\n\n" + self._get_current_date_suffix()
-    extras, notes = [], []
-    if valves.INJECT_USER_INFO:
-        extras.append(self._get_user_info_suffix(__user__))
-        notes.append("`user_info`")
-    if valves.INJECT_BROWSER_INFO:
-        extras.append(self._get_browser_info_suffix(__request__))
-        notes.append("`browser_info`")
-    if valves.INJECT_IP_INFO:
-        extras.append(await self._get_ip_info_suffix(__request__, log))
-        notes.append("`ip_info`")
-    if extras:
-        extras.append(
-            "Note: "
-            + ", ".join(notes)
-            + " provided solely for AI contextual enrichment."
-        )
-        instructions += "\n\n" + "\n".join(extras)
-
-    # Final fields
-    body.update(
-        {
-            "model": model_id,
-            "instructions": instructions,
-            "parallel_tool_calls": valves.PARALLEL_TOOL_CALLS,
-            "user": __user__.get("email", "unknown"),
-            "text": {"format": {"type": "text"}},
-            "truncation": "auto",
-            "store": True,
-            "input": await build_chat_history_for_responses_api(
-                self, log, chat_id=chat_id
-            ),
-            "tool_choice": "auto" if body.get("tools") else "none",
-        }
-    )
-
-    # Remove parms not supported by response API.
-    body.pop("stream_options", None)
-    body.pop("messages", None)
-    body.pop("reasoning_effort", None)
-
-    return body
-
-
 async def execute_responses_tool_calls(
     calls: list[SimpleNamespace],
     registry: dict[str, Any],
@@ -1265,7 +1180,7 @@ async def execute_responses_tool_calls(
         if entry is None:
             tasks.append(asyncio.create_task(asyncio.sleep(0, result="Tool not found")))
         else:
-            args = json.loads(call.arguments or "{}")
+            args = orjson.loads(call.arguments or "{}")
             func = entry["callable"]
             if inspect.iscoroutinefunction(func):
                 tasks.append(asyncio.create_task(func(**args)))
