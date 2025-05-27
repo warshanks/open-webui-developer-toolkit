@@ -573,7 +573,7 @@ class Pipe:
                                         {
                                             "type": "chat:message:files",
                                             "data": {
-                                                "file.s": [
+                                                "files": [
                                                     {"type": "image", "url": image_url}
                                                 ]
                                             },
