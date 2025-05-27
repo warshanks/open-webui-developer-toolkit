@@ -3,6 +3,7 @@ import logging
 import sys
 import types
 from types import SimpleNamespace
+from datetime import datetime
 
 # Provide a minimal orjson stub when the real library isn't installed
 if "orjson" not in sys.modules:
@@ -46,6 +47,9 @@ def test_transform_tools_for_responses_api() -> None:
     assert out[1] == {"type": "web_search", "search_context_size": "high"}
     assert out[2] == {"type": "noop"}
     assert out[3] == {"other": 1}
+
+    assert transform_tools_for_responses_api(None) == []
+    assert transform_tools_for_responses_api([1, {"type": "noop"}]) == [{"type": "noop"}]
 
 
 def test_update_usage() -> None:
@@ -102,6 +106,26 @@ async def test_stream_responses() -> None:
     assert events == [{"type": "delta", "foo": 1}]
 
 
+@pytest.mark.asyncio
+async def test_stream_responses_ignores_comments() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        content = (
+            b": comment\n\n"
+            b"data: {\"bar\": 2}\n\n"
+            b"data: [DONE]\n\n"
+        )
+        return httpx.Response(200, content=content)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    pipe = Pipe()
+    valves = pipe.valves.model_copy(update={"BASE_URL": "https://api", "API_KEY": "KEY"})
+    events = [
+        event async for event in pipe._stream_responses(valves, client, {"model": "gpt"})
+    ]
+    await client.aclose()
+    assert events == [{"bar": 2}]
+
+
 def test_info_suffix_helpers() -> None:
     pipe = Pipe()
     user = {"name": "Jane", "email": "jane@example.com"}
@@ -151,3 +175,85 @@ async def test_delete_response() -> None:
     await delete_response(client, "https://api", "KEY", "123")
     await client.aclose()
     assert called
+
+
+@pytest.mark.asyncio
+async def test_emit_status() -> None:
+    pipe = Pipe()
+    events: list[dict] = []
+
+    async def emitter(event: dict) -> None:
+        events.append(event)
+
+    last_status = [None]
+    await pipe._emit_status(emitter, "start", last_status)
+    # Duplicate status should not emit
+    await pipe._emit_status(emitter, "start", last_status)
+    await pipe._emit_status(emitter, "done", last_status, done=True)
+    assert events == [
+        {"type": "status", "data": {"description": "start", "done": False}},
+        {"type": "status", "data": {"description": "done", "done": True}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_request_body_injection(monkeypatch) -> None:
+    pipe = Pipe()
+    log = logging.getLogger("test")
+    valves = pipe.valves.model_copy(
+        update={
+            "INJECT_CURRENT_DATE": True,
+            "INJECT_USER_INFO": True,
+            "INJECT_BROWSER_INFO": True,
+            "BASE_URL": "https://api",
+            "API_KEY": "KEY",
+        }
+    )
+
+    async def fake_history(*_args, **_kwargs):
+        return [
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+        ]
+
+    monkeypatch.setattr(pipe, "_build_chat_history_for_responses_api", fake_history)
+
+    class FakeDateTime:
+        @staticmethod
+        def now():
+            return datetime(2000, 1, 1)
+
+        @staticmethod
+        def strftime(fmt: str) -> str:  # pragma: no cover - unused
+            return ""
+
+    monkeypatch.setattr(
+        "functions.pipes.openai_responses_pipeline.datetime",
+        FakeDateTime,
+    )
+
+    body = {
+        "model": "o3-mini-high",
+        "messages": [{"role": "system", "content": "sys"}],
+        "tools": [{"type": "function", "function": {"name": "hello"}}],
+    }
+
+    request = types.SimpleNamespace(
+        headers={
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Linux"',
+            "user-agent": "Mozilla/5.0 Chrome/123 Safari/537.36",
+        }
+    )
+
+    user = {"name": "Jane", "email": "jane@example.com"}
+
+    result = await pipe._prepare_request_body(log, valves, body, None, user, request)
+    assert result["model"] == "o3-mini"
+    assert "Today's date:" in result["instructions"]
+    assert "browser_info:" in result["instructions"]
+    assert result["user"] == "jane@example.com"
+    assert result["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    ]
+    # reasoning effort inferred from model alias
+    assert result["reasoning"]["effort"] == "high"
