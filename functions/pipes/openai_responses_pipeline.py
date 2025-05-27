@@ -60,11 +60,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import orjson
-import logging
 import os
 import re
-import sys
-import time
 import traceback
 from datetime import datetime
 from types import SimpleNamespace
@@ -77,15 +74,6 @@ from open_webui.models.chats import Chats
 from open_webui.models.models import Models, ModelForm, ModelParams
 from open_webui.utils.misc import get_message_list
 from pydantic import BaseModel, Field
-from logging.handlers import BufferingHandler
-
-EMOJI_LEVELS = {
-    logging.DEBUG: "\U0001f50d",
-    logging.INFO: "\u2139",
-    logging.WARNING: "\u26a0",
-    logging.ERROR: "\u274c",
-    logging.CRITICAL: "\U0001f525",
-}
 
 # Feature support by model
 # Defaults are assumed to be False for capabilities not listed.
@@ -234,13 +222,6 @@ class Pipe:
             ),
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-store
 
-        CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = (
-            Field(
-                default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
-                description="Select logging level.",
-            )
-        )
-
         INJECT_CURRENT_DATE: bool = Field(
             default=False,
             description=(
@@ -267,18 +248,11 @@ class Pipe:
 
     class UserValves(BaseModel):
         """Per-user valve overrides."""
-
-        CUSTOM_LOG_LEVEL: Literal[
-            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT", None
-        ] = Field(
-            default="INHERIT",
-            description="Select logging level. 'INHERIT' uses the pipe default.",
-        )
+        pass
 
     def __init__(self) -> None:
         """Initialize the pipeline."""
         self.valves = self.Valves()
-        self.log_name = "OpenAI Responses"
         self.client: httpx.AsyncClient | None = None
         self.transport: httpx.AsyncHTTPTransport | None = None
 
@@ -310,7 +284,6 @@ class Pipe:
         """
         Stream responses from OpenAI and handle tool calls.
         """
-        start_ns = time.perf_counter_ns()
         last_status: list[tuple[str, bool] | None] = [None]
         # inline merge default valves + per-user overrides (dropping "inherit")
         user_vals = __user__.get("valves")
@@ -322,47 +295,15 @@ class Pipe:
             }
         )
 
-        # Local logger for this request
-        log_format = "%(emo)s %(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
-        log = logging.Logger(
-            self.log_name, getattr(logging, valves.CUSTOM_LOG_LEVEL, logging.INFO)
-        )
-        log.propagate = False
-        log.handlers[:] = [h := logging.StreamHandler(sys.stderr)]
-        h.setFormatter(logging.Formatter(log_format))
-        h.addFilter(
-            lambda r: setattr(r, "emo", EMOJI_LEVELS.get(r.levelno, "❓")) or True
-        )
-
-        # Capture logs when DEBUG is enabled
-        buf_handler: BufferingHandler | None = None
-        if log.isEnabledFor(logging.DEBUG):
-            # buffer up to 1000 records (or tune as you like)
-            buf_handler = BufferingHandler(capacity=1000)
-            buf_handler.setLevel(logging.DEBUG)
-            buf_handler.setFormatter(h.formatter)  # reuse your same formatter
-            buf_handler.addFilter(h.filters[0])  # reuse its filter
-            log.addHandler(buf_handler)
-
         if valves.ENABLE_NATIVE_TOOL_CALLING:
-            await self._enable_native_function_support(__metadata__, log)
+            await self._enable_native_function_support(__metadata__)
 
         chat_id = __metadata__.get("chat_id")
         message_id = __metadata__.get("message_id")
 
-        log.info(
-            'CHAT_MSG pipe="%s" model=%s user=%s chat=%s message=%s',
-            self.log_name,
-            body.get("model", valves.MODEL_ID),
-            __user__.get("email", "anon"),
-            chat_id,
-            message_id,
-        )
-
-        client = await self._get_http_client(log)
+        client = await self._get_http_client()
 
         request_params = await self._prepare_request_body(
-            log,
             valves,
             body,
             chat_id,
@@ -381,7 +322,6 @@ class Pipe:
             reasoning_summaries = ""
 
             for loop_count in range(1, valves.MAX_TOOL_CALL_LOOPS + 1):
-                log.debug("Loop iteration #%d", loop_count)
                 if loop_count > 1:
                     request_params.update(
                         {
@@ -393,7 +333,6 @@ class Pipe:
 
                 pending_calls: list[SimpleNamespace] = []
                 message_start = len(message_content)
-                log.debug("Starting response stream (loop #%d)", loop_count)
 
                 if request_params.get("reasoning") and not is_model_thinking:
                     is_model_thinking = True
@@ -415,8 +354,6 @@ class Pipe:
                     request_params,
                 ):
                     et = event.get("type")
-                    if log.isEnabledFor(logging.DEBUG):
-                        log.debug("Event received: %s", et)
 
                     if et == "response.created":
                         if last_response_id:
@@ -429,7 +366,6 @@ class Pipe:
                         "response.incomplete",
                         "error",
                     }:
-                        log.error("Stream ended with event: %s", et)
                         break
                     if et == "response.reasoning_summary_part.added":
                         # The <think> tag is emitted at stream start when
@@ -637,7 +573,6 @@ class Pipe:
                     results = await execute_responses_tool_calls(
                         pending_calls,
                         __tools__,
-                        log,
                     )
                     for call, result in zip(pending_calls, results):
                         function_call_output = {
@@ -724,7 +659,6 @@ class Pipe:
                     break
 
         except Exception as ex:
-            log.error("Error in pipeline loop %d: %s", loop_count, ex)
             if __event_emitter__:
                 await __event_emitter__(
                     {
@@ -738,15 +672,6 @@ class Pipe:
         finally:
             await self._emit_status(__event_emitter__, "", last_status, done=True)
 
-            log.info(
-                "CHAT_DONE chat=%s dur_ms=%.0f loops=%d in_tok=%d out_tok=%d total_tok=%d",
-                chat_id,
-                (time.perf_counter_ns() - start_ns) / 1e6,
-                usage_total.get("loops", 1),
-                usage_total.get("input_tokens", 0),
-                usage_total.get("output_tokens", 0),
-                usage_total.get("total_tokens", 0),
-            )
             if __event_emitter__:
                 await __event_emitter__(
                     {
@@ -766,42 +691,17 @@ class Pipe:
                         valves.API_KEY,
                         last_response_id,
                     )
-                except Exception as ex:  # pragma: no cover - logging only
-                    log.warning(
-                        "Failed to delete response %s: %s", last_response_id, ex
-                    )
-            # Detach the in-memory handler
-            if buf_handler:
-                log.removeHandler(buf_handler)
-                if buf_handler.buffer and __event_emitter__:
-                    # format each record and join with newlines
-                    formatted = [buf_handler.format(rec) for rec in buf_handler.buffer]
-                    await __event_emitter__(
-                        {
-                            "type": "citation",
-                            "data": {
-                                "document": ["\n".join(formatted)],
-                                "metadata": [
-                                    {
-                                        "date_accessed": datetime.now().isoformat(),
-                                        "source": "Debug Logs",
-                                    }
-                                ],
-                                "source": {"name": "Debug Logs"},
-                            },
-                        }
-                    )
+                except Exception:
+                    pass
 
     async def _build_chat_history_for_responses_api(
         self,
-        log: logging.Logger,
         chat_id: str | None = None,
         messages: list[dict] | None = None,
     ) -> list[dict]:
         """Return chat history formatted for the Responses API."""
         from_history = bool(chat_id)
         if chat_id:
-            log.debug("Retrieving message history for chat_id=%s", chat_id)
             chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
             if not chat_model:
                 messages = []
@@ -894,7 +794,6 @@ class Pipe:
 
     async def _prepare_request_body(
         self,
-        log: logging.Logger,
         valves: Pipe.Valves,
         body: dict[str, Any],
         chat_id: str | None = None,
@@ -934,7 +833,6 @@ class Pipe:
                 body["tools"].append(tool)
         else:
             body.pop("tools", None)
-            log.debug("Native tool calling disabled or unsupported for %s", model_id)
 
         # 4. Reasoning
         if not caps.get("reasoning"):
@@ -986,7 +884,7 @@ class Pipe:
                 "text": {"format": {"type": "text"}},
                 "truncation": "auto",
                 "store": True,
-                "input": await self._build_chat_history_for_responses_api(log, chat_id),
+                "input": await self._build_chat_history_for_responses_api(chat_id),
                 "tool_choice": "auto" if body.get("tools") else "none",
             }
         )
@@ -1063,7 +961,7 @@ class Pipe:
         )
 
     async def _enable_native_function_support(
-        self, metadata: dict[str, Any], log: logging.Logger
+        self, metadata: dict[str, Any]
     ) -> None:
         """Ensure native function calling is enabled for the current model."""
         if metadata.get("function_calling") == "native":
@@ -1073,9 +971,7 @@ class Pipe:
         model_id = model_dict.get("id") if isinstance(model_dict, dict) else model_dict
         model_capabilities = MODEL_CAPABILITIES.get(model_id, {})
         if not model_capabilities.get("function_calling"):
-            log.debug("Model %s does not support native tool calling", model_id)
             return
-        log.debug("Enabling native function calling for %s", model_id)
 
         model_info = (
             await asyncio.to_thread(Models.get_model_by_id, model_id)
@@ -1086,25 +982,17 @@ class Pipe:
             model_data = model_info.model_dump()
             model_data["params"]["function_calling"] = "native"
             model_data["params"] = ModelParams(**model_data["params"])
-            updated = await asyncio.to_thread(
+            await asyncio.to_thread(
                 Models.update_model_by_id, model_info.id, ModelForm(**model_data)
             )
-            if updated:
-                log.info("✅ Set model %s to native function calling", model_info.id)
-            else:
-                log.error("❌ Failed to update model %s", model_info.id)
-        else:
-            log.warning("⚠️ Model info not found for id %s", model_id)
 
         metadata["function_calling"] = "native"
 
-    async def _get_http_client(self, log: logging.Logger) -> httpx.AsyncClient:
+    async def _get_http_client(self) -> httpx.AsyncClient:
         """Return a shared httpx client."""
         if self.client and not self.client.is_closed:
-            log.debug("Reusing existing httpx client.")
             return self.client
 
-        log.debug("Creating new httpx.AsyncClient.")
         timeout = httpx.Timeout(900.0, connect=30.0)
         limits = httpx.Limits(max_keepalive_connections=10, max_connections=50)
         # HTTP/2 can stall if flow control windows aren't consumed quickly.
@@ -1181,7 +1069,6 @@ def transform_tools_for_responses_api(tools: list[dict] | None) -> list[dict]:
 async def execute_responses_tool_calls(
     calls: list[SimpleNamespace],
     registry: dict[str, Any],
-    log: logging.Logger | None = None,
 ) -> list[Any]:
     """Run tool calls asynchronously and return their results."""
     tasks: list[asyncio.Task] = []
@@ -1198,9 +1085,7 @@ async def execute_responses_tool_calls(
                 tasks.append(asyncio.to_thread(func, **args))
     try:
         return await asyncio.gather(*tasks)
-    except Exception as ex:  # pragma: no cover - log and return error results
-        if log:
-            log.error("Tool execution failed: %s", ex)
+    except Exception as ex:  # pragma: no cover - return error results
         return [f"Error: {ex}"] * len(tasks)
 
 
