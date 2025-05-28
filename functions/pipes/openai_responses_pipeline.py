@@ -1,6 +1,6 @@
 """
 title: OpenAI Responses API Pipeline Test
-id: openai_responses-test
+id: openai_responses_test
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
