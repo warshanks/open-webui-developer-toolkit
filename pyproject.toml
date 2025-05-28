@@ -6,9 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "httpx",
+  "httpx-aiohttp",
   "fastapi",
   "pydantic>=2",
-  "requests"
 ]
 
 [project.optional-dependencies]
@@ -43,6 +43,9 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = [".tests"]
+pythonpath = [
+  "external/open-webui/backend"
+]
 addopts = """
 -ra
 --import-mode=importlib
