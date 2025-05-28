@@ -1,16 +1,5 @@
 {
-  "emeraldwalk.runonsave": {
-    "commands": [
-      {
-        // any .py file in pipes, filters, or tools folders
-        "match": "openwebui_devtoolkit[\\\\/](pipes|filters|tools)[\\\\/].*\\.py$",
-
-        // tell VS Code to run the task
-        "command": "workbench.action.tasks.runTask",
-        "args": "Publish (local)",       // 👉 task label
-
-        "isAsync": true                  // keep UI responsive
-      }
-    ]
-  }
+  "python.analysis.extraPaths": [
+    "external/open-webui/backend"
+  ]
 }
