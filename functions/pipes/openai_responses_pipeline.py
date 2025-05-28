@@ -17,6 +17,7 @@ import aiohttp
 import contextvars
 import logging
 import orjson
+import time
 
 from fastapi import Request
 from logging.handlers import MemoryHandler
@@ -30,10 +31,12 @@ from open_webui.models.chats import Chats
 from open_webui.models.files import Files
 from open_webui.storage.provider import Storage
 
+
 class Pipe:
     class Valves(BaseModel):
         BASE_URL: str = Field(
-            default=os.getenv("OPENAI_API_BASE_URL").strip() or "https://api.openai.com/v1",
+            default=os.getenv("OPENAI_API_BASE_URL").strip()
+            or "https://api.openai.com/v1",
             description=(
                 "The base URL to use with the OpenAI SDK. Defaults to the official "
                 "OpenAI API endpoint. Supports LiteLLM and other custom endpoints."
@@ -179,7 +182,8 @@ class Pipe:
         """Per-user valve overrides."""
 
         CUSTOM_LOG_LEVEL: Literal[
-            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"] = Field(
+            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"
+        ] = Field(
             default="INHERIT",
             description="Select logging level. 'INHERIT' uses the pipe default.",
         )
@@ -196,7 +200,9 @@ class Pipe:
         if not self.log.handlers:
             ch = logging.StreamHandler(sys.stdout)
             ch.setFormatter(
-                logging.Formatter("%(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s")
+                logging.Formatter(
+                    "%(levelname)-8s | %(name)-20s:%(lineno)-4d — %(message)s"
+                )
             )
             self.log.addHandler(ch)
 
@@ -206,10 +212,13 @@ class Pipe:
         At this point, global pipe values `self.valves` are set.
         """
         # Use valve value (with safe fallback) --------------------------------
-        self.log.setLevel(getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO))
+        self.log.setLevel(
+            getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
+        )
 
         models = [m.strip() for m in self.valves.MODEL_ID.split(",") if m.strip()]
         return [{"id": model, "name": f"OpenAI: {model}"} for model in models]
+
     # --------------------------------------------------
     #  3. Handling Inference/Generation (Main Method)
     # --------------------------------------------------
@@ -220,7 +229,7 @@ class Pipe:
         __user__: dict[str, Any],
         __request__: Request,
         __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
-        __metadata__: dict[str, Any]
+        __metadata__: dict[str, Any],
     ) -> AsyncGenerator[str, None] | str | None:
         """
         This method is called every time a user sends a chat request to an OpenAI model you exposed via `pipes()`.
@@ -234,7 +243,9 @@ class Pipe:
         """
 
         # STEP 1: Setup
-        valves = self._merge_valves(self.valves, __user__.get("valves", {})) # Merge user valve overrides (thread‑safe via ContextVar)
+        valves = self._merge_valves(
+            self.valves, __user__.get("valves", {})
+        )  # Merge user valve overrides (thread‑safe via ContextVar)
         self.session = await self._get_or_create_aiohttp_session()
         model_id = self._get_model_id(body)
         is_streaming = body.get("stream", False)
@@ -257,35 +268,52 @@ class Pipe:
             loop_count += 1
 
             if is_streaming:
-                self.log.info("Streaming mode enabled. Preparing to stream OpenAI responses.")
+                self.log.info(
+                    "Streaming mode enabled. Preparing to stream OpenAI responses."
+                )
                 async for event in self._stream_sse_events(
-                        openai_response_api_payload,
-                        valves.API_KEY,
-                        valves.BASE_URL,
-                    ):
-                        et = event.get("type")
+                    openai_response_api_payload,
+                    valves.API_KEY,
+                    valves.BASE_URL,
+                ):
+                    et = event.get("type")
 
-                        # Yield partial text
-                        if et == "response.output_text.delta":
-                            delta = event.get("delta", "")
-                            if delta:
-                                final_output += delta
-                                #await __event_emitter__({"type": "chat:completion","data": {"content": final_output}})
-                                yield delta  # Yielding partial text to Open WebUI
+                    # Yield partial text
+                    if et == "response.output_text.delta":
+                        delta = event.get("delta", "")
+                        if delta:
+                            final_output += delta
+                            """
+                            await __event_emitter__(
+                                {
+                                    "type": "chat:completion",
+                                    "data": {"content": final_output},
+                                }
+                            )
+                            """
+                            yield delta  # Yielding partial text to Open WebUI
 
-                        # Capture tool calls
-                        if et == "response.output_item.done":
-                            item = event.get("item")
-                            if isinstance(item, dict):
-                                pending_calls.append(item)
+                    # Capture tool calls
+                    if et == "response.output_item.done":
+                        item = event.get("item")
+                        if isinstance(item, dict):
+                            pending_calls.append(item)
 
-                        # Emit other info: annotations, reasoning, etc.
-                        # (You already have this logic in a previous response)
+                    # Emit other info: annotations, reasoning, etc.
+                    # (You already have this logic in a previous response)
 
+                # await asyncio.sleep(0.05)
 
+                await __event_emitter__(
+                    {"type": "replace", "data": {"content": final_output, "done": True}}
+                )
+                await __event_emitter__(
+                    {
+                        "type": "chat:completion",
+                        "data": {"content": final_output, "done": True},
+                    }
+                )
                 """
-                await __event_emitter__({"type": "replace", "data": {"content":final_output, "done": True}})
-                await __event_emitter__({"type": "chat:completion", "data": {"content":final_output,"done": True}})
                 Chats.upsert_message_to_chat_by_id_and_message_id(
                     chat_id=__metadata__.get("chat_id"),
                     message_id=__metadata__.get("message_id"),
@@ -293,17 +321,17 @@ class Pipe:
                     role="assistant",
                 )
                 """
-                
+
             else:
                 self.log.info("Non-streaming mode. Generating a synchronous response.")
                 response_text = await self._non_streaming_response(
                     payload=openai_response_api_payload,
                     api_key=valves.API_KEY,
-                    base_url=valves.BASE_URL
+                    base_url=valves.BASE_URL,
                 )
                 yield ""
-            
-            break # for now, we only handle one loop iteration
+
+            break  # for now, we only handle one loop iteration
             if not pending_calls:
                 break
 
@@ -313,16 +341,13 @@ class Pipe:
             body.setdefault("reasoning", {}).setdefault("effort", "high")
             model_id = model_id.replace("-high", "")
         return model_id
-        
+
     # --------------------------------------------------
     #  4. Helpers (Streaming, Non-streaming, Logging, etc.)
     # --------------------------------------------------
 
     async def _stream_sse_events(
-        self,
-        request_params: dict[str, Any],
-        api_key: str,
-        base_url: str
+        self, request_params: dict[str, Any], api_key: str, base_url: str
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Streams SSE events from OpenAI's /responses endpoint and yields them ASAP.
@@ -341,7 +366,9 @@ class Pipe:
         async with self.session.post(url, json=request_params, headers=headers) as resp:
             resp.raise_for_status()
 
-            async for chunk in resp.content.iter_any(): # parsing small chucks; may switch to iter_chunked(4096) if needed.
+            async for chunk in resp.content.iter_chunked(
+                4096
+            ):  # iter_any()  # parsing small chucks; may switch to iter_chunked(4096) if needed.
                 buf.extend(chunk)
                 while b"\n" in buf:
                     line, _, remainder = buf.partition(b"\n")
@@ -350,9 +377,11 @@ class Pipe:
 
                     # SSE comment or empty line
                     if not line or line.startswith(b":"):
+                        await asyncio.sleep(0)
                         continue
                     # Must start with "data:"
                     if not line.startswith(b"data:"):
+                        await asyncio.sleep(0)
                         continue
 
                     data_part = line[5:].strip()
@@ -361,11 +390,10 @@ class Pipe:
 
                     yield orjson_loads(data_part)
 
+                    await asyncio.sleep(0)
+
     async def _non_streaming_response(
-        self,
-        payload: dict[str, Any],
-        api_key: str,
-        base_url: str
+        self, payload: dict[str, Any], api_key: str, base_url: str
     ) -> str:
         """
         Single-shot call to the OpenAI Responses endpoint.
@@ -388,15 +416,21 @@ class Pipe:
             async with self.session.post(url, json=payload, headers=headers) as resp:
                 if resp.status >= 400:
                     error_text = await resp.text()
-                    self.log.error("OpenAI /responses failed [%s]: %s", resp.status, error_text)
-                    raise RuntimeError(f"OpenAI /responses error {resp.status}: {error_text}")
+                    self.log.error(
+                        "OpenAI /responses failed [%s]: %s", resp.status, error_text
+                    )
+                    raise RuntimeError(
+                        f"OpenAI /responses error {resp.status}: {error_text}"
+                    )
 
                 raw_bytes = await resp.read()
                 try:
                     data = orjson.loads(raw_bytes)
                 except orjson.JSONDecodeError as e:
                     self.log.error("JSON decode error from /responses: %s", e)
-                    self.log.debug("Raw response: %s", raw_bytes.decode(errors="replace"))
+                    self.log.debug(
+                        "Raw response: %s", raw_bytes.decode(errors="replace")
+                    )
                     raise
 
         except aiohttp.ClientError as e:
@@ -424,9 +458,7 @@ class Pipe:
             raise
 
     async def _emit_error(
-        self,
-        message: str,
-        event_emitter: Callable[[dict[str, Any]], Awaitable[None]]
+        self, message: str, event_emitter: Callable[[dict[str, Any]], Awaitable[None]]
     ):
         """
         Emits an event to the front-end that signals an error occurred.
@@ -434,16 +466,13 @@ class Pipe:
         """
         error_event = {
             "type": "chat:completion",
-            "data": {
-                "error": {"detail": message},
-                "done": True
-            }
+            "data": {"error": {"detail": message}, "done": True},
         }
         await event_emitter(error_event)
 
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """
-        Merge user-level valves into default. 
+        Merge user-level valves into default.
         Ignores any user value set to "INHERIT" (case-insensitive).
         """
         if not user_valves:
@@ -466,29 +495,29 @@ class Pipe:
         if self.session is not None and not self.session.closed:
             self.log.debug("Reusing existing aiohttp.ClientSession")
             return self.session
-        
+
         self.log.debug("Creating new aiohttp.ClientSession")
 
         # Configure TCP connector for connection pooling and DNS caching
         connector = aiohttp.TCPConnector(
-            limit=50,               # Max total simultaneous connections
-            limit_per_host=10,      # Max connections per host
-            keepalive_timeout=75,   # Seconds to keep idle sockets open
-            ttl_dns_cache=300       # DNS cache time-to-live in seconds
+            limit=50,  # Max total simultaneous connections
+            limit_per_host=10,  # Max connections per host
+            keepalive_timeout=75,  # Seconds to keep idle sockets open
+            ttl_dns_cache=300,  # DNS cache time-to-live in seconds
         )
 
         # Set reasonable timeouts for connection and socket operations
         timeout = aiohttp.ClientTimeout(
-            connect=30,             # Max seconds to establish connection
-            sock_connect=30,        # Max seconds for socket connect
-            sock_read=3600          # Max seconds for reading from socket (1 hour)
+            connect=30,  # Max seconds to establish connection
+            sock_connect=30,  # Max seconds for socket connect
+            sock_read=3600,  # Max seconds for reading from socket (1 hour)
         )
 
         # Use orjson for fast JSON serialization
         session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
-            json_serialize=lambda obj: orjson.dumps(obj).decode()
+            json_serialize=lambda obj: orjson.dumps(obj).decode(),
         )
 
         return session
