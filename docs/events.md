@@ -179,8 +179,6 @@ if (type === 'chat:message:delta' || type === 'message') {
 }
 ```
 【F:external/open-webui/src/lib/components/chat/Chat.svelte†L276-L299】
-
-```
 ## Common event types
 
 | type                | Purpose                                              |
@@ -281,3 +279,8 @@ if not ENABLE_REALTIME_CHAT_SAVE:
     )
 ```
 【F:external/open-webui/backend/open_webui/utils/middleware.py†L2310-L2358】
+
+These lines are part of `post_response_handler` in `middleware.py`. When
+`process_chat_response` finishes sending the response, this handler streams
+final `chat:completion` events to the browser and writes the message to the
+database.
