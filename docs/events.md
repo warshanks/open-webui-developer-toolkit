@@ -88,6 +88,18 @@ variable. When enabled the pipeline saves after each streamed chunk; otherwise
 events yourself, call `Chats.upsert_message_to_chat_by_id_and_message_id` when
 you're done.
 
+```python
+if ENABLE_REALTIME_CHAT_SAVE:
+    Chats.upsert_message_to_chat_by_id_and_message_id(
+        metadata["chat_id"],
+        metadata["message_id"],
+        {"content": serialize_content_blocks(content_blocks)},
+    )
+else:
+    data = {"content": serialize_content_blocks(content_blocks)}
+```
+【F:external/open-webui/backend/open_webui/utils/middleware.py†L1912-L1928】
+
 To emit without touching the database pass `False` when retrieving the emitter:
 
 ```python
@@ -145,6 +157,29 @@ chain = get_message_list(msgs, history.get("currentId")) or []
 # ``chain[-1]`` is the incoming user message, ``chain[-2]`` the
 # previous assistant reply
 previous_meta = chain[-2].get("custom_meta") if len(chain) > 1 else None
+
+## Frontend event handling
+
+On the browser side the Svelte component listens for these WebSocket events and mutates the in-memory chat history. `Chat.svelte` registers the handler during `onMount` and removes it on destroy:
+
+```svelte
+$socket?.on('chat-events', chatEventHandler);
+...
+$socket?.off('chat-events', chatEventHandler);
+```
+【F:external/open-webui/src/lib/components/chat/Chat.svelte†L431-L507】
+
+The function `chatEventHandler` dispatches updates based on `event.data.type`. Append events add text while replace events overwrite the current content:
+
+```svelte
+if (type === 'chat:message:delta' || type === 'message') {
+    message.content += data.content;
+} else if (type === 'chat:message' || type === 'replace') {
+    message.content = data.content;
+}
+```
+【F:external/open-webui/src/lib/components/chat/Chat.svelte†L276-L299】
+
 ```
 ## Common event types
 
@@ -152,7 +187,8 @@ previous_meta = chain[-2].get("custom_meta") if len(chain) > 1 else None
 |---------------------|------------------------------------------------------|
 | `status`            | Progress or activity updates                          |
 | `chat:message:delta`| Append streamed text to the current message           |
-| `chat:message`      | Replace the current message content                   |
+| `chat:message`      | Replace the current message content (UI only)         |
+| `replace`           | Replace the message and persist once                  |
 | `chat:completion`   | Send streamed completion chunks or final content      |
 | `chat:message:files`| Attach or update message files                        |
 | `chat:title`        | Update the conversation title                         |
@@ -168,8 +204,13 @@ Custom event types may be used if the frontend knows how to handle them.
 `message` and `replace` are backend shortcuts the UI treats as
 `chat:message:delta` and `chat:message`. A similar alias `files` maps to
 `chat:message:files`. Only `status`, `message` and `replace` trigger automatic
-updates to the stored message. `chat:completion` events rely on the pipeline to
-call `Chats.upsert_message_to_chat_by_id_and_message_id`.
+updates to the stored message. The `chat:message` event updates the bubble in
+the UI but does **not** touch the database. Use `replace` when you want the
+current message to be overwritten and saved in a single upsert. `chat:completion`
+events rely on the pipeline to call `Chats.upsert_message_to_chat_by_id_and_message_id`.
+
+To disable these automatic writes entirely, request the emitter with
+`update_db=False` and handle persistence yourself.
 
 ## Examples
 
@@ -230,3 +271,13 @@ every chunk when it is **on**. The upsert merges with any existing message data
 so keys you previously stored remain intact. To record additional metadata make
 another call to `Chats.upsert_message_to_chat_by_id_and_message_id` after
 emitting your final chunk.
+
+```python
+if not ENABLE_REALTIME_CHAT_SAVE:
+    Chats.upsert_message_to_chat_by_id_and_message_id(
+        metadata["chat_id"],
+        metadata["message_id"],
+        {"content": serialize_content_blocks(content_blocks)},
+    )
+```
+【F:external/open-webui/backend/open_webui/utils/middleware.py†L2310-L2358】
