@@ -80,7 +80,8 @@ jobs:
         run: echo "TARGET_BRANCH=${{ secrets.TARGET_BRANCH }}" >> $GITHUB_ENV
 
       - name: Deploy
-        if: startsWith(github.ref, 'refs/heads/') && (replace(github.ref, 'refs/heads/', '') == env.TARGET_BRANCH) && steps.changed.outputs.any_changed == 'true'
+        # Compare the branch name directly to your env.TARGET_BRANCH
+        if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name == env.TARGET_BRANCH }}
         env:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
@@ -90,7 +91,6 @@ jobs:
             | while IFS= read -r file; do
                 echo "Deploying $file to '${{ matrix.environment_name }}' environment..."
 
-                # Determine plugin type from path
                 if [[ "$file" == functions/pipes/* ]]; then
                   type=pipe
                 elif [[ "$file" == functions/filters/* ]]; then
@@ -100,11 +100,9 @@ jobs:
                 else
                   type=pipe
                 fi
-
-                # Now call your publish script, using environment secrets
                 python .scripts/publish_to_webui.py "$file" --type "$type"
               done
 
-      - name: Skip Deploy (Not matching branch)
-        if: startsWith(github.ref, 'refs/heads/') && (replace(github.ref, 'refs/heads/', '') != env.TARGET_BRANCH)
-        run: echo "Skipping deploy for environment '${{ matrix.environment_name }}', because it's pinned to '${{ env.TARGET_BRANCH }}'."
+      - name: Skip Deploy
+        if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name != env.TARGET_BRANCH }}
+        run: echo "Skipping deploy for '${{ matrix.environment_name }}' because it targets '${{ env.TARGET_BRANCH }}' but we're on '${{ github.ref_name }}' branch."
