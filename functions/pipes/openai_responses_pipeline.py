@@ -50,10 +50,13 @@ current_message_id = ContextVar("current_message_id", default=None)
 # In-memory logs keyed by message ID
 logs_by_msg_id = defaultdict(list)
 
-def log_filter(record):
-    message_id = record.__dict__.get("message_id", current_message_id.get())
-    setattr(record, "message_id", message_id)
-    return True
+
+class MessageIdFilter(logging.Filter):
+    """Injects the current message ID into each log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401 - simple
+        record.message_id = getattr(record, "message_id", None) or current_message_id.get()
+        return True
 
 class Pipe:
     class Valves(BaseModel):
@@ -167,15 +170,9 @@ class Pipe:
         self.log.propagate = False
         self.log.setLevel(logging.DEBUG)
 
-        # Attach the debug filter to the logger so every handler sees the contextual message ID
-        inline_filter = lambda record: (
-            setattr(
-                record,
-                "message_id",
-                getattr(record, "message_id", None) or current_message_id.get()
-            ) or True
-        )
-        self.log.addFilter(inline_filter)
+        # Ensure fresh handlers and attach our message ID filter
+        self.log.handlers.clear()
+        self.log.addFilter(MessageIdFilter())
 
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(
