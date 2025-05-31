@@ -15,8 +15,7 @@ A pipeline that integrates the OpenAI Responses API into Open WebUI. It exposes 
 ## Installation
 
 1. Copy `openai_responses_manifold.py` into your Open WebUI instance under **Admin ▸ Pipelines**.
-2. Install required packages if prompted: `aiohttp` and `orjson`.
-3. Activate the pipe and configure valves as needed.
+2. Activate the pipe and configure valves as needed.
 
 ## Valves
 
