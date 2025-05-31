@@ -19,7 +19,9 @@ This repo uses three long‑lived branches:
 2. **`alpha-preview`** – next release candidate. More stable than `development`.
 3. **`main`** – production‑ready code pulled from `beta`.
 
-Feature work typically happens in short‑lived branches, merged into `development` via pull requests. Changes are prompted from `dev` → `alpha-preview` → and finally `main` after testing.
+Feature work typically happens in short‑lived branches, merged into `development` via pull requests.
+
+Changes are prompted from `dev` → `alpha-preview` → and finally `main` after testing.
 
 ## Installing Toolkit Locally (for developers)
 ```bash
