@@ -1,52 +1,36 @@
 # Open-WebUI Developer Toolkit
 
-Self-contained **Pipes**, **Filters**, and **Tools** you can copy-paste into [Open WebUI](https://github.com/open-webui/open-webui) → *Admin ▸ Pipelines*.
+A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](https://github.com/open-webui/open-webui). Every module lives in its own folder so you can copy it directly into a WebUI instance.
 
 ```bash
-# local dev
+# local development
 pip install -e '.[dev]'
 nox -s lint tests
 ```
 
-Installing the optional `dev` extras adds linting and testing tools like `ruff`, `pytest` and `nox`.
-The `external/open-webui` folder mirrors the upstream project for reference.
+Installing with the `dev` extras provides `ruff`, `pytest` and `nox`. The `nox` sessions reuse your current Python environment and run the test suite with coverage enabled.
 
-`nox` reuses the current Python environment and sets up `PYTHONPATH` so tests run
-quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
-checks so you get fast feedback before committing. Fixtures under `.tests/` stub
-out `open_webui` so the suite can run without the external project.
+The `external/` directory mirrors the upstream project for reference. **Do not edit** files under `external/open-webui`.
 
-## Examples
+## Repository Layout
 
-Example extensions live under `functions/` and `tools/`. Each pipe now sits in its own folder with a README.
-The repository currently includes `functions/pipes/OpenAI Responses Manifold/openai_responses_manifold.py` as a working sample.
-Additional examples will be added over time.
+- `functions/pipes/` – self‑contained pipes
+- `functions/filters/` – reusable filters
+- `tools/` – standalone tools
+- `docs/` – internal notes and how‑tos
 
-## Open WebUI Architecture
+Each subdirectory has a small README explaining its contents.
 
-Open WebUI is built on a **FastAPI** backend with a **React** front end. The
-backend exposes a chat *pipeline* where requests pass through **filters** and a
-final **pipe**. Filters can mutate the input and output while the pipe generates
-the main response and may invoke tools. The server emits events such as
-`message_created` or `tool_started` so the UI can update live. Extensions can
-hook into this event system to provide custom behaviour.
+## Branching Model
 
-Requests and responses are exchanged as JSON. A typical payload sent to a pipe
-looks like:
+This repo uses three long‑lived branches:
 
-```json
-{"chat_id": "123", "message": "hello"}
-```
+1. **`dev`** – active development and experiments; may break.
+2. **`beta`** – next release candidate. More stable than `dev`.
+3. **`main`** – production‑ready code pulled from `beta`.
 
-The pipe returns a JSON object such as:
+Feature work typically happens in short‑lived branches, merged into `dev` via pull requests. Promote changes from `dev` → `beta` → `main` only after testing.
 
-```json
-{"message": "hi there"}
-```
+## Finding Documentation
 
-Additional fields may appear depending on the tool and event systems.
-
-## Documentation
-Detailed notes about upstream Open WebUI internals live under `external/`.
-See `external/MIDDLEWARE_GUIDE.md` for an overview of the core middleware logic.
-The other `*_GUIDE.md` files summarise helper modules from the upstream source.
+Additional notes about WebUI internals and example extensions live under `docs/`. Start with `docs/README.md` to see what’s available.
