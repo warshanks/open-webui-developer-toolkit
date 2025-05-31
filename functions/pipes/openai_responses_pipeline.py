@@ -10,21 +10,15 @@ license: MIT
 requirements: aiohttp, orjson
 """
 
-from ast import Tuple
 import asyncio
 from collections import defaultdict
-import copy
 import datetime
 import json
 import sys
 import os
-import uuid
 import aiohttp
 import logging
 import orjson
-import importlib, asyncio, functools, contextvars
-import time
-from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
 from contextvars import ContextVar
@@ -32,12 +26,11 @@ from fastapi import Request
 from io import StringIO
 
 # Pydantic for config classes
-from pydantic import BaseModel, Field, field_validator
-from typing import Any, AsyncGenerator, Awaitable, Callable, Literal
+from pydantic import BaseModel, Field
+from typing import AsyncGenerator, Awaitable, Callable, Literal
 
 # Open WebUI Core imports
 from open_webui.models.chats import Chats, ChatModel
-from open_webui.tasks import list_task_ids_by_chat_id, stop_task, create_task, get_task
 # from open_webui.models.files import Files
 # from open_webui.storage.provider import Storage
 from open_webui.models.models import Models, ModelForm, ModelParams
@@ -172,32 +165,37 @@ class Pipe:
     def __init__(self):
         self.type = "manifold"
 
-        self.valves = self.Valves() # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
+        self.valves = self.Valves()  # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
         self.session: aiohttp.ClientSession | None = None
         self.log = logging.getLogger(__name__)
+        # Prevent propagation to the root logger which may add its own handlers
         self.log.propagate = False
         self.log.setLevel(logging.DEBUG)
-        if not self.log.handlers:
-            console = logging.StreamHandler(sys.stdout)
-            console.setFormatter(logging.Formatter(
-                "%(levelname)s [mid=%(message_id)s] %(message)s"
-            ))
-            console.addFilter(debug_filter)
-            self.log.addHandler(console)
 
-            mem_handler = logging.Handler()
-            mem_handler.setFormatter(logging.Formatter(
-                "%(asctime)s [%(levelname)s] %(message)s"
-            ))
-            mem_handler.addFilter(debug_filter)
+        # Clear handlers to avoid duplicates when multiple Pipe instances are created
+        self.log.handlers.clear()
 
-            def mem_emit(record):
-                msg_id = getattr(record, "message_id", None)
-                if msg_id:
-                    logs_by_msg_id[msg_id].append(mem_handler.format(record))
+        # Attach the debug filter to the logger so every handler sees the contextual message ID
+        self.log.addFilter(debug_filter)
 
-            mem_handler.emit = mem_emit
-            self.log.addHandler(mem_handler)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(
+            "%(levelname)s [mid=%(message_id)s] %(message)s"
+        ))
+        self.log.addHandler(console)
+
+        mem_handler = logging.Handler()
+        mem_handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s"
+        ))
+
+        def mem_emit(record):
+            msg_id = getattr(record, "message_id", None)
+            if msg_id:
+                logs_by_msg_id[msg_id].append(mem_handler.format(record))
+
+        mem_handler.emit = mem_emit
+        self.log.addHandler(mem_handler)
     
 
     def pipes(self):
@@ -330,7 +328,6 @@ class Pipe:
             )
 
             final_output = StringIO()
-            pending_calls = []
 
             # Loop until there are no remaining tool calls or we hit the max loop count
             for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
