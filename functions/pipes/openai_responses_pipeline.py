@@ -50,14 +50,6 @@ current_message_id = ContextVar("current_message_id", default=None)
 # In-memory logs keyed by message ID
 logs_by_msg_id = defaultdict(list)
 
-
-class MessageIdFilter(logging.Filter):
-    """Injects the current message ID into each log record."""
-
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401 - simple
-        record.message_id = getattr(record, "message_id", None) or current_message_id.get()
-        return True
-
 class Pipe:
     class Valves(BaseModel):
         BASE_URL: str = Field(
@@ -170,9 +162,17 @@ class Pipe:
         self.log.propagate = False
         self.log.setLevel(logging.INFO)
 
-        # Ensure fresh handlers and attach our message ID filter
-        self.log.handlers.clear()
-        self.log.addFilter(MessageIdFilter())
+        # Add an inline “filter” that injects `message_id` into each record
+        self.log.addFilter(
+            lambda record: (
+                setattr(
+                    record,
+                    "message_id",
+                    getattr(record, "message_id", None) or current_message_id.get()
+                )
+                or True
+            )
+        )
 
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(
@@ -185,11 +185,16 @@ class Pipe:
             "%(asctime)s [%(levelname)s] %(message)s"
         ))
 
+        # Inline emit function:
         mem_handler.emit = lambda record: (
-            logs_by_msg_id[record.message_id].append(mem_handler.format(record))
+            # Only proceed if record has a message_id
+            logs_by_msg_id.setdefault(getattr(record, "message_id", None), [])
+                        .append(mem_handler.format(record))
             if getattr(record, "message_id", None)
             else None
         )
+
+        self.log.addHandler(mem_handler)
     
     def pipes(self):
         # Update logging level (handy trick since valve values are accessible here)
@@ -223,7 +228,8 @@ class Pipe:
             self.log.info("In pipe, get() returns: %s", extra={"message_id": message_id})
 
             # Merge user valve overrides (thread‑safe via ContextVar)
-            valves = self._merge_valves(self.valves, __user__.get("valves", {}))
+            user_valves = self.UserValves.model_validate(__user__.get("valves", {}))
+            valves = self._merge_valves(self.valves, user_valves)
 
             # Initialize aiohttp session (if not already done)
             self.session = await self._get_or_create_aiohttp_session()
@@ -361,12 +367,34 @@ class Pipe:
                     )
                     yield response_text
 
-                raise Pipe.SelfTerminate("Test exception to check error handling.")  # Exit the loop after one iteration
+
+                # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
+                if valves.CUSTOM_LOG_LEVEL == "DEBUG" or user_valves.CUSTOM_LOG_LEVEL != "INHERIT":
+                    self.log.debug("Debug log citation: %s", logs_by_msg_id)
+                    # Emit the final output to the event emitter
+                    if __event_emitter__:
+                        logs = logs_by_msg_id.get(message_id, [])
+                        if logs:
+                            await __event_emitter__(
+                                {
+                                    "type": "citation",
+                                    "data": {
+                                        "document": ["\n".join(logs)],  # single doc item
+                                        "metadata": [
+                                            {
+                                                "date_accessed": datetime.datetime.now().isoformat(),
+                                                "source": valves.CUSTOM_LOG_LEVEL.capitalize() + " Logs",
+                                            }
+                                        ],
+                                        "source": {"name": valves.CUSTOM_LOG_LEVEL.capitalize() + " Logs"},
+                                    },
+                                }
+                            )
 
                 break  # for now, we only handle one loop iteration
 
         except Exception as caught_exception:
-            await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_debug_log_citation=True, done=True)
+            await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
             
         finally:
             self.log.debug("Cleaning up resources after loop iteration %d", loop_count)
@@ -514,7 +542,7 @@ class Pipe:
         error_obj: Exception | str,
         *,
         show_error_message: bool = True,
-        show_debug_log_citation: bool = False,
+        show_error_log_citation: bool = False,
         done: bool = False,
     ) -> None:
         """
@@ -535,7 +563,7 @@ class Pipe:
             )
 
             # 2) Optionally emit the citation with logs
-            if show_debug_log_citation:
+            if show_error_log_citation:
                 # Retrieve logs for the current message_id (if any)
                 msg_id = current_message_id.get()
                 logs = logs_by_msg_id.get(msg_id, [])
@@ -548,10 +576,10 @@ class Pipe:
                                 "metadata": [
                                     {
                                         "date_accessed": datetime.datetime.now().isoformat(),
-                                        "source": "Debug Logs",
+                                        "source": "Error Logs",
                                     }
                                 ],
-                                "source": {"name": "Debug Logs"},
+                                "source": {"name": "Error Logs"},
                             },
                         }
                     )
