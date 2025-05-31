@@ -3,12 +3,10 @@ name: Deploy Plugins
 on:
   push:
     branches: [dev, beta, main]
-  # Also allow manual triggers for demonstration
   workflow_dispatch:
 
 permissions:
-  contents: read
-  # If you need to pull environment info via the GitHub CLI, you may also need additional permissions.
+  contents: read  # needed to read environments and changed files, etc.
 
 jobs:
   # 1) Gather the list of environment names in this repo
@@ -16,6 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       environment_list: ${{ steps.collect.outputs.environment_list }}
+
+    # Provide GH_TOKEN so 'gh' can authenticate
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
@@ -25,11 +27,10 @@ jobs:
         id: collect
         run: |
           # Use GitHub CLI to list your repo's environments.
-          # e.g., "client-foo" "client-bar" "production" etc.
           # The --jq option prints each environment name on a separate line.
-          env_list=$(gh api repos/${{ github.repository }}/environments --jq '.environments[].name')
+          env_list=$(gh api "repos/${{ github.repository }}/environments" --jq '.environments[].name')
 
-          # Now convert those lines into a JSON array for the matrix:
+          # Now convert those lines into a JSON array:
           # e.g. ["client-foo","client-bar","production"]
           json_list=$(echo "$env_list" | jq -R . | jq -s .)
 
@@ -80,7 +81,7 @@ jobs:
         run: echo "TARGET_BRANCH=${{ secrets.TARGET_BRANCH }}" >> $GITHUB_ENV
 
       - name: Deploy
-        # Compare the branch name directly to your env.TARGET_BRANCH
+        # Compare the branch name directly to env.TARGET_BRANCH
         if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name == env.TARGET_BRANCH }}
         env:
           WEBUI_URL: ${{ secrets.WEBUI_URL }}
@@ -100,6 +101,7 @@ jobs:
                 else
                   type=pipe
                 fi
+
                 python .scripts/publish_to_webui.py "$file" --type "$type"
               done
 
