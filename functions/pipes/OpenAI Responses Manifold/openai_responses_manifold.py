@@ -240,6 +240,9 @@ class Pipe:
             getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
         )
 
+        final_output = StringIO()
+        loop_count = -1
+
         try:
             self.log.info("In pipe, get() returns: %s", extra={"message_id": message_id})
 
@@ -337,8 +340,6 @@ class Pipe:
                 "OpenAI request payload: %s",
                 json.dumps(transformed_body, indent=2, ensure_ascii=False)
             )
-
-            final_output = StringIO()
 
             # Loop until there are no remaining tool calls or we hit the max loop count
             for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
