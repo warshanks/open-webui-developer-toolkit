@@ -1,7 +1,7 @@
 # Events: `__event_emitter__` and `__event_call__`
 
-Open WebUI extensions can push real-time updates to the UI. Each Tool or Pipe
-receives two async helpers:
+Open WebUI extensions can push real-time updates to the UI. Every tool or pipe
+receives two asynchronous helpers:
 
 * `__event_emitter__` – fire-and-forget events
 * `__event_call__` – events that wait for user input and return the user's
