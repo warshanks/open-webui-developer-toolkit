@@ -165,17 +165,16 @@ class Pipe:
         self.log = logging.getLogger(__name__)
         # Prevent propagation to the root logger which may add its own handlers
         self.log.propagate = False
-        self.log.setLevel(logging.DEBUG)
+        self.log.setLevel(logging.INFO)
 
         # Attach the debug filter to the logger so every handler sees the contextual message ID
-        inline_filter = lambda record: (
+        self.log.addFilter(lambda record: (
             setattr(
                 record,
                 "message_id",
                 getattr(record, "message_id", None) or current_message_id.get()
             ) or True
-        )
-        self.log.addFilter(inline_filter)
+        ))
 
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(
@@ -188,13 +187,11 @@ class Pipe:
             "%(asctime)s [%(levelname)s] %(message)s"
         ))
 
-        def mem_emit(record):
-            msg_id = getattr(record, "message_id", None)
-            if msg_id:
-                logs_by_msg_id[msg_id].append(mem_handler.format(record))
-
-        mem_handler.emit = mem_emit
-        self.log.addHandler(mem_handler)
+        mem_handler.emit = lambda record: (
+            logs_by_msg_id[record.message_id].append(mem_handler.format(record))
+            if getattr(record, "message_id", None)
+            else None
+        )
     
     def pipes(self):
         # Update logging level (handy trick since valve values are accessible here)
@@ -365,6 +362,8 @@ class Pipe:
                         base_url=valves.BASE_URL,
                     )
                     yield response_text
+
+                raise Pipe.SelfTerminate("Test exception to check error handling.")  # Exit the loop after one iteration
 
                 break  # for now, we only handle one loop iteration
 
