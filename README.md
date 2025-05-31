@@ -1,52 +1,33 @@
 # Open-WebUI Developer Toolkit
 
-Self-contained **Pipes**, **Filters**, and **Tools** you can copy-paste into [Open WebUI](https://github.com/open-webui/open-webui) → *Admin ▸ Pipelines*.
+A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](https://github.com/open-webui/open-webui). Every module lives in its own folder so you can copy it directly into a WebUI instance.
 
+## Repository Layout
+
+- `functions/pipes/` – self‑contained pipes
+- `functions/filters/` – reusable filters
+- `tools/` – standalone tools
+- `docs/` – notes about WebUI internals (useful for thoses creating their own filters / pipes / tools).
+
+Each subdirectory has a small README explaining its contents.
+
+## Branching Model
+
+This repo uses three long‑lived branches:
+
+1. **`development`** – active development and experiments; may break.
+2. **`alpha-preview`** – next release candidate. More stable than `development`.
+3. **`main`** – production‑ready code pulled from `beta`.
+
+Feature work typically happens in short‑lived branches, merged into `development` via pull requests. Changes are prompted from `dev` → `alpha-preview` → and finally `main` after testing.
+
+## Installing Toolkit Locally (for developers)
 ```bash
-# local dev
+# local development
 pip install -e '.[dev]'
 nox -s lint tests
 ```
 
-Installing the optional `dev` extras adds linting and testing tools like `ruff`, `pytest` and `nox`.
-The `external/open-webui` folder mirrors the upstream project for reference.
+Installing with the `dev` extras provides `ruff`, `pytest` and `nox`. The `nox` sessions reuse your current Python environment and run the test suite with coverage enabled.
 
-`nox` reuses the current Python environment and sets up `PYTHONPATH` so tests run
-quickly. `pytest` executes with coverage enabled. Pre-commit hooks run the same
-checks so you get fast feedback before committing. Fixtures under `.tests/` stub
-out `open_webui` so the suite can run without the external project.
-
-## Examples
-
-Example extensions live under `functions/` and `tools/`. Each pipe now sits in its own folder with a README.
-The repository currently includes `functions/pipes/OpenAI Responses Manifold/openai_responses_manifold.py` as a working sample.
-Additional examples will be added over time.
-
-## Open WebUI Architecture
-
-Open WebUI is built on a **FastAPI** backend with a **React** front end. The
-backend exposes a chat *pipeline* where requests pass through **filters** and a
-final **pipe**. Filters can mutate the input and output while the pipe generates
-the main response and may invoke tools. The server emits events such as
-`message_created` or `tool_started` so the UI can update live. Extensions can
-hook into this event system to provide custom behaviour.
-
-Requests and responses are exchanged as JSON. A typical payload sent to a pipe
-looks like:
-
-```json
-{"chat_id": "123", "message": "hello"}
-```
-
-The pipe returns a JSON object such as:
-
-```json
-{"message": "hi there"}
-```
-
-Additional fields may appear depending on the tool and event systems.
-
-## Documentation
-Detailed notes about upstream Open WebUI internals live under `external/`.
-See `external/MIDDLEWARE_GUIDE.md` for an overview of the core middleware logic.
-The other `*_GUIDE.md` files summarise helper modules from the upstream source.
+The `external/` directory mirrors a read-only version of upstream Open WebUI repo for reference. Handy for local testing.

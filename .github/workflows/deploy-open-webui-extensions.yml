@@ -2,14 +2,41 @@ name: Deploy Plugins
 
 on:
   push:
-    branches: [dev, beta, main]
+    branches: [development, alpha-preview, main]
+    paths:
+      - "functions/pipes/**/*.py"
+      - "functions/filters/**/*.py"
+      - "tools/**/*.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.changed.outputs.any_changed }}
+      changed_files: ${{ steps.changed.outputs.all_changed_files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: changed
+        uses: tj-actions/changed-files@v43
+        with:
+          files: |
+            functions/pipes/**/*.py
+            functions/filters/**/*.py
+            tools/**/*.py
+          json: true
+      - name: No changes found
+        if: steps.changed.outputs.any_changed != 'true'
+        run: echo "No plugin updates detected; workflow will exit."
+
   gather-environments:
+    needs: check-changes
+    if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # So 'gh' can authenticate
@@ -29,7 +56,8 @@ jobs:
           echo "environment_list=$env_list" >> "$GITHUB_OUTPUT"
 
   deploy-plugins:
-    needs: gather-environments
+    needs: [check-changes, gather-environments]
+    if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -43,15 +71,11 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Identify changed plugin files
+      - name: Prepare changed plugin files
         id: changed
-        uses: tj-actions/changed-files@v43
-        with:
-          files: |
-            functions/pipes/**/*.py
-            functions/filters/**/*.py
-            tools/**/*.py
-          json: true
+        run: |
+          echo "all_changed_files=${{ needs.check-changes.outputs.changed_files }}" >> "$GITHUB_OUTPUT"
+          echo "any_changed=${{ needs.check-changes.outputs.has_changes }}" >> "$GITHUB_OUTPUT"
 
       - name: Load environment variables
         id: load-env
