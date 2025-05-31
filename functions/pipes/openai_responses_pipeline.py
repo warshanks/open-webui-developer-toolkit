@@ -47,9 +47,6 @@ FEATURE_SUPPORT = {
 # A global context var storing the current message ID
 current_message_id = ContextVar("current_message_id", default=None)
 
-# Log level ContextVar (defaults to INFO)
-current_log_level = ContextVar("current_log_level", default=logging.INFO)
-
 # In-memory logs keyed by message ID
 logs_by_msg_id = defaultdict(list)
 
@@ -165,23 +162,17 @@ class Pipe:
         self.log.propagate = False
         self.log.setLevel(logging.INFO)
 
-        # Add an inline "filter" that injects `message_id` into each record
+        # Add an inline “filter” that injects `message_id` into each record
         self.log.addFilter(
             lambda record: (
                 setattr(
                     record,
                     "message_id",
-                    getattr(record, "message_id", None) or current_message_id.get(),
+                    getattr(record, "message_id", None) or current_message_id.get()
                 )
                 or True
             )
         )
-
-        # Filter logs based on the ContextVar-controlled log level
-        def _per_message_level(record, logger=self.log):
-            return record.levelno >= current_log_level.get(logger.level)
-
-        self.log.addFilter(_per_message_level)
 
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(
@@ -237,10 +228,9 @@ class Pipe:
         user_valves = self.UserValves.model_validate(__user__.get("valves", {}))
         valves = self._merge_valves(self.valves, user_valves)
 
-        # Update per-message log level via ContextVar
-        log_token = current_log_level.set(
-            getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
-        )
+        # update log level
+        # TODO Right now, this effective all users logs.  Need to find a way to set per-user log level.
+        self.log.setLevel(getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO))
 
         try:
             self.log.info("In pipe, get() returns: %s", extra={"message_id": message_id})
@@ -413,7 +403,6 @@ class Pipe:
                 )
 
             current_message_id.reset(token)
-            current_log_level.reset(log_token)
             logs_by_msg_id.pop(message_id, None)
 
             if __metadata__.get("task") is None:
