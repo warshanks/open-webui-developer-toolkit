@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read  # Needed to read repo data, etc.
+  contents: read
 
 jobs:
   gather-environments:
@@ -19,10 +19,15 @@ jobs:
       - name: Fetch environment names
         id: collect
         run: |
+          # 1) Get all environment data from GitHub
           full_json=$(gh api "repos/${{ github.repository }}/environments")
-          env_list=$(echo "$full_json" | jq -r '.environments[].name')
-          json_list=$(echo "$env_list" | jq -R . | jq -s .)
-          echo "environment_list=$json_list" >> "$GITHUB_OUTPUT"
+
+          # 2) Extract just the names into a JSON array:
+          #    e.g. ["CLAC","AnotherEnv","Foo"]
+          env_list=$(echo "$full_json" | jq -r '.environments | map(.name) | @json')
+
+          # 3) Write the array to GITHUB_OUTPUT as environment_list
+          echo "environment_list=$env_list" >> "$GITHUB_OUTPUT"
 
   deploy-plugins:
     needs: gather-environments
@@ -39,7 +44,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Identify changed files
+      - name: Identify changed plugin files
         id: changed
         uses: tj-actions/changed-files@v43
         with:
@@ -52,6 +57,7 @@ jobs:
       - name: Load environment variables
         id: load-env
         run: |
+          # This environment variable is stored in each environment's config
           echo "TARGET_BRANCH=${{ env.TARGET_BRANCH }}" >> $GITHUB_ENV
           echo "WEBUI_URL=${{ env.WEBUI_URL }}" >> $GITHUB_ENV
 
@@ -59,12 +65,13 @@ jobs:
         if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name == env.TARGET_BRANCH }}
         env:
           WEBUI_URL: ${{ env.WEBUI_URL }}
-          WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
+          WEBUI_KEY: ${{ secrets.WEBUI_KEY }}   # secret stored per-environment
         run: |
           echo "${{ steps.changed.outputs.all_changed_files }}" \
             | jq -r '.[]' \
             | while IFS= read -r file; do
-                echo "Publishing $file to '${{ matrix.environment_name }}'..."
+                echo "Publishing $file to '${{ matrix.environment_name }}'…"
+                # Determine plugin type from path
                 if [[ "$file" == functions/pipes/* ]]; then
                   type=pipe
                 elif [[ "$file" == functions/filters/* ]]; then
