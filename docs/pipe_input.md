@@ -83,6 +83,8 @@ Example:
 
 If omitted, `CUSTOM_LOG_LEVEL` defaults to the sentinel value `INHERIT`.  Any
 field set to `INHERIT` is ignored, so the pipe's configured log level is used.
+The selected level applies only to that request because the pipeline tracks the
+active log level using a `ContextVar`.
 
 ## 3. `__request__`
 
