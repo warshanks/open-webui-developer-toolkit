@@ -7,7 +7,7 @@ A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](
 - `functions/pipes/` – self‑contained pipes
 - `functions/filters/` – reusable filters
 - `tools/` – standalone tools
-- `docs/` – internal notes and how‑tos
+- `docs/` – internal notes of how various parts of Open WebUI work (for reference when developing).
 
 Each subdirectory has a small README explaining its contents.
 
