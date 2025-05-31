@@ -30,4 +30,4 @@ nox -s lint tests
 
 Installing with the `dev` extras provides `ruff`, `pytest` and `nox`. The `nox` sessions reuse your current Python environment and run the test suite with coverage enabled.
 
-The `external/` directory mirrors a read-only version of upstream project for reference. Handy for local testing.
+The `external/` directory mirrors a read-only version of upstream Open WebUI repo for reference. Handy for local testing.
