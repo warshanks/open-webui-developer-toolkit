@@ -2,7 +2,7 @@ name: Deploy Plugins
 
 on:
   push:
-    branches: [development, beta, main]
+    branches: [development, alpha-preview, main]
     paths:
       - "functions/pipes/**/*.py"
       - "functions/filters/**/*.py"
