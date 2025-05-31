@@ -57,7 +57,7 @@ Custom pipes, filters and tools can be uploaded using the helper script `.script
 ```bash
 WEBUI_URL=http://localhost:8080 \
 WEBUI_KEY=sk-... \
-python .scripts/publish_to_webui.py functions/pipes/my_pipe.py
+python .scripts/publish_to_webui.py functions/pipes/My Pipe/my_pipe.py
 ```
 
 When your function needs to attach files it can emit a `chat:message:files` event with URLs returned by the Files API. The toolkit's `__event_emitter__` helper handles this for you.
