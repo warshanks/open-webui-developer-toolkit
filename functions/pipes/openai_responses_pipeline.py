@@ -371,24 +371,13 @@ class Pipe:
                 # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
                 if valves.CUSTOM_LOG_LEVEL == "DEBUG" or user_valves.CUSTOM_LOG_LEVEL != "INHERIT":
                     self.log.debug("Debug log citation: %s", logs_by_msg_id)
-                    # Emit the final output to the event emitter
                     if __event_emitter__:
                         logs = logs_by_msg_id.get(message_id, [])
                         if logs:
-                            await __event_emitter__(
-                                {
-                                    "type": "citation",
-                                    "data": {
-                                        "document": ["\n".join(logs)],  # single doc item
-                                        "metadata": [
-                                            {
-                                                "date_accessed": datetime.datetime.now().isoformat(),
-                                                "source": valves.CUSTOM_LOG_LEVEL.capitalize() + " Logs",
-                                            }
-                                        ],
-                                        "source": {"name": valves.CUSTOM_LOG_LEVEL.capitalize() + " Logs"},
-                                    },
-                                }
+                            await self._emit_citation(
+                                __event_emitter__,
+                                "\n".join(logs),
+                                valves.CUSTOM_LOG_LEVEL.capitalize() + " Logs",
                             )
 
                 break  # for now, we only handle one loop iteration
@@ -400,15 +389,13 @@ class Pipe:
             self.log.debug("Cleaning up resources after loop iteration %d", loop_count)
 
             if __event_emitter__:
-                await __event_emitter__(
+                await self._emit_completion(
+                    __event_emitter__,
                     {
-                        "type": "chat:completion",
-                        "data": {
-                            "done": True,
-                            "content": final_output.getvalue(),
-                            "title": "test",
-                        },
-                    }
+                        "done": True,
+                        "content": final_output.getvalue(),
+                        "title": "test",
+                    },
                 )
 
             current_message_id.reset(token)
@@ -553,40 +540,70 @@ class Pipe:
         self.log.error("Error: %s", error_message)
 
         if show_error_message and event_emitter:
-            # 1) Emit the error
-            await event_emitter(
-                {
-                    "type": "chat:completion",
-                    "data": {"error": {"message": error_message}},
-                    "done": done,
-                }
+            await self._emit_completion(
+                event_emitter,
+                {"error": {"message": error_message}},
+                done=done,
             )
 
             # 2) Optionally emit the citation with logs
             if show_error_log_citation:
-                # Retrieve logs for the current message_id (if any)
                 msg_id = current_message_id.get()
                 logs = logs_by_msg_id.get(msg_id, [])
                 if logs:
-                    await event_emitter(
-                        {
-                            "type": "citation",
-                            "data": {
-                                "document": ["\n".join(logs)],  # single doc item
-                                "metadata": [
-                                    {
-                                        "date_accessed": datetime.datetime.now().isoformat(),
-                                        "source": "Error Logs",
-                                    }
-                                ],
-                                "source": {"name": "Error Logs"},
-                            },
-                        }
+                    await self._emit_citation(
+                        event_emitter,
+                        "\n".join(logs),
+                        "Error Logs",
                     )
                 else:
                     self.log.warning(
                         "No debug logs found for message_id %s", msg_id
                     )
+
+    async def _emit_citation(
+        self,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        document: str | list[str],
+        source_name: str,
+    ) -> None:
+        """Emit a citation event to the UI if an emitter is provided."""
+        if event_emitter is None:
+            return
+
+        if isinstance(document, list):
+            doc_text = "\n".join(document)
+        else:
+            doc_text = document
+
+        await event_emitter(
+            {
+                "type": "citation",
+                "data": {
+                    "document": [doc_text],
+                    "metadata": [
+                        {
+                            "date_accessed": datetime.datetime.now().isoformat(),
+                            "source": source_name,
+                        }
+                    ],
+                    "source": {"name": source_name},
+                },
+            }
+        )
+
+    async def _emit_completion(
+        self,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        data: dict[str, Any],
+        *,
+        done: bool = False,
+    ) -> None:
+        """Emit a chat:completion event to the UI if possible."""
+        if event_emitter is None:
+            return
+
+        await event_emitter({"type": "chat:completion", "data": data, "done": done})
 
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """
