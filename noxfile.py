@@ -16,7 +16,7 @@ def tests(session):
     session.run(
         "pytest",
         "-vv",
-        "--cov=openwebui_devtoolkit",
+        "--cov=functions",
         "--cov-report=term-missing",
         *session.posargs,
         env=env,

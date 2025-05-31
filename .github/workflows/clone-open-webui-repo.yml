@@ -1,10 +1,8 @@
 name: Weekly OpenWebUI sync
 
 on:
-  push:
-    branches: [main, dev]
   schedule:
-    - cron: "0 7 * * 1"  # every Monday 07:00 UTC
+    - cron: "0 7 * * 1"  # every Monday at 07:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -14,21 +12,16 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      # 1. Check out the appropriate branch (respects the trigger branch)
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
 
-      # 2. Refresh the vendor folder
       - name: Update external copy
         run: |
           set -euo pipefail
           rm -rf external/open-webui
           git clone --depth 1 https://github.com/open-webui/open-webui.git external/open-webui
-          rm -rf external/open-webui/.git   # keep files, drop their .git dir
+          rm -rf external/open-webui/.git
 
-      # 3. Commit & push only when there’s a change
-      - name: Commit if needed (ignore .gitignore)
+      - name: Commit & push changes
         env:
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
@@ -37,9 +30,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Force-add external/open-webui to ignore any .gitignore rules
           git add -f external/open-webui
-
           if git diff --cached --quiet ; then
             echo "No updates – nothing to commit."
             exit 0
