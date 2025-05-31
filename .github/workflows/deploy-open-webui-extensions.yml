@@ -19,13 +19,14 @@ jobs:
     environment: staging-glc
 
     steps:
-      - uses: actions/checkout@v4          # pull two commits so diff works
-        with: { fetch-depth: 2 }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
 
-      # ➊ get list of changed plugin files (works for merges)
       - name: Get changed plugin files
         id: changed
         uses: tj-actions/changed-files@v43
@@ -34,15 +35,15 @@ jobs:
             functions/pipes/**/*.py
             functions/filters/**/*.py
             tools/**/*.py
+          json: true
 
-      # ➋ publish each changed file
       - name: Publish to GLC
         if: steps.changed.outputs.any_changed == 'true'
         env:
           WEBUI_URL: ${{ vars.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          for file in ${{ steps.changed.outputs.all_changed_files }}; do
+          echo "${{ steps.changed.outputs.all_changed_files }}" | jq -r '.[]' | while IFS= read -r file; do
             echo "Publishing $file to GLC …"
             if [[ "$file" == functions/pipes/* ]]; then
               type=pipe
@@ -66,10 +67,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 2 }
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
 
       - name: Get changed plugin files
         id: changed
@@ -79,6 +82,7 @@ jobs:
             functions/pipes/**/*.py
             functions/filters/**/*.py
             tools/**/*.py
+          json: true
 
       - name: Publish to CLAC
         if: steps.changed.outputs.any_changed == 'true'
@@ -86,8 +90,7 @@ jobs:
           WEBUI_URL: ${{ vars.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          IFS=$'\n'
-          for file in ${{ steps.changed.outputs.all_changed_files }}; do
+          echo "${{ steps.changed.outputs.all_changed_files }}" | jq -r '.[]' | while IFS= read -r file; do
             echo "Publishing $file to CLAC …"
             if [[ "$file" == functions/pipes/* ]]; then
               type=pipe
