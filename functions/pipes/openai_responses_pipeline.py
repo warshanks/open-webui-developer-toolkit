@@ -10,14 +10,22 @@ license: MIT
 requirements: aiohttp, orjson
 """
 
+from ast import Tuple
 import asyncio
+import copy
+import json
 import sys
 import os
+import uuid
 import aiohttp
 import logging
 import orjson
+import importlib, asyncio, functools, contextvars
+import time
+from contextlib import asynccontextmanager
+from typing import Optional, Dict, Any, List
 
-
+from contextvars import ContextVar
 from fastapi import Request
 from io import StringIO
 
@@ -26,8 +34,8 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal
 
 # Open WebUI Core imports
-from open_webui.models.chats import Chats
-# from open_webui.tasks import list_task_ids_by_chat_id, stop_task, create_task, get_task
+from open_webui.models.chats import Chats, ChatModel
+from open_webui.tasks import list_task_ids_by_chat_id, stop_task, create_task, get_task
 # from open_webui.models.files import Files
 # from open_webui.storage.provider import Storage
 from open_webui.models.models import Models, ModelForm, ModelParams
@@ -43,34 +51,29 @@ FEATURE_SUPPORT = {
 
 class Pipe:
     class Valves(BaseModel):
-        #TODO: Potential None.strip() Error.  To fix inline in future.
         BASE_URL: str = Field(
-            default=os.getenv("OPENAI_API_BASE_URL").strip() or "https://api.openai.com/v1",
+            default=((os.getenv("OPENAI_API_BASE_URL") or "").strip() or "https://api.openai.com/v1"),
             description="The base URL to use with the OpenAI SDK. Defaults to the official OpenAI API endpoint. Supports LiteLLM and other custom endpoints.",
         )
         API_KEY: str = Field(
-            default=os.getenv("OPENAI_API_KEY").strip() or "sk-xxxxx",
+            default=(os.getenv("OPENAI_API_KEY") or "").strip() or "sk-xxxxx",
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
         MODEL_ID: str = Field(
             default="gpt-4.1, gpt-4o",
             description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
         )
-        REASON_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
+        ENABLE_REASON_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
             description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
         ENABLE_NATIVE_TOOL_CALLING: bool = Field(
             default=True,
-            description="Enable native tool calling for supported models.",
+            description="Enable native tool calling for supported models. Highly recommended to leave enabled. If disabled, will fall back to OpenAI tool calling.",
         )
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
             description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini). Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
-        )
-        PERSIST_TOOL_RESULTS: bool = Field(
-            default=True,
-            description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -110,6 +113,10 @@ class Pipe:
             default=5,
             description="Maximum number of tool calls the model can make in a single request. This is a hard stop safety limit to prevent infinite loops. Defaults to 5.",
         )
+        PERSIST_TOOL_RESULTS: bool = Field(
+            default=True,
+            description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
+        )
         STORE_RESPONSE: bool = Field(
             default=False,
             description="Whether to store the generated model response (on OpenAI's side) for later debugging. Defaults to False.",
@@ -140,8 +147,13 @@ class Pipe:
             description="Select logging level. 'INHERIT' uses the pipe default.",
         )
 
+    class SelfTerminate(Exception):
+        """Intentionally raised to terminate task early without triggering CancelledError logic."""
+        pass
+
     def __init__(self):
         self.type = "manifold"
+
         self.valves = self.Valves() # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
         self.session: aiohttp.ClientSession | None = None
         self.log = logging.getLogger("openai_responses")
@@ -165,7 +177,6 @@ class Pipe:
     # --------------------------------------------------
     #  3. Handling Inference/Generation (Main Method)
     # --------------------------------------------------
-
     async def pipe(
         self,
         body: dict[str, Any],
@@ -177,6 +188,9 @@ class Pipe:
         """
         This method is called every time a user sends a chat request to an OpenAI model you exposed via `pipes()`.
         """
+        # TODO BUILD LOGIC FOR DETECTING DIRECT WHICH WOULDN"T HAVE CHAT_ID OR MESSAGE_ID
+        chat_id = __metadata__.get("chat_id")
+        message_id = __metadata__.get("message_id")
 
         # Merge user valve overrides (thread‑safe via ContextVar)
         valves = self._merge_valves(self.valves, __user__.get("valves", {}))
@@ -185,20 +199,15 @@ class Pipe:
         self.session = await self._get_or_create_aiohttp_session()
 
         # 2. Construct request payload for the OpenAI API
-        raw_model_id = str(body["model"]).split(".", 1)[-1]
-        model_id = (
-            raw_model_id.replace("-high", "")
-            if raw_model_id in {"o3-mini-high", "o4-mini-high"}
-            else raw_model_id
-        )
-        
+        model_id = str(body["model"]).split(".", 1)[-1]
+        if model_id in {"o3-mini-high", "o4-mini-high"}:
+            model_id = model_id.replace("-high", "")  # Remove "-high" suffix for these models
+            body["reasoning_effort"] = "high"  # Force high reasoning effort
+
         transformed_body = {
             "model": model_id,
-            "instructions": next(
-                (msg["content"] for msg in reversed(body.get("messages", [])) if msg.get("role") == "system"),
-                "",
-            ),
-            "input": await self._build_chat_history_for_responses_api(__metadata__.get("chat_id")),
+            "instructions": next((msg["content"] for msg in reversed(body.get("messages", [])) if msg.get("role") == "system"), ""),
+            "input": build_responses_history_by_chat_id_and_message_id(chat_id, message_id),
             "stream": body.get("stream", False),
             "user": __user__.get("email", "unknown_user"),
             "store": True,
@@ -207,6 +216,7 @@ class Pipe:
             **({"temperature": body["temperature"]} if "temperature" in body else {}),
             **({"top_p": body["top_p"]} if "top_p" in body else {}),
             **({"max_tokens": body["max_tokens"]} if "max_tokens" in body else {}),
+            **({"reasoning_effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}),
             
             # Inline conditional for tools:
             # Only include "tools" key if function calling is supported + enabled
@@ -234,6 +244,32 @@ class Pipe:
                 if (model_id in FEATURE_SUPPORT["function_calling"] and valves.ENABLE_NATIVE_TOOL_CALLING)
                 else {}
             ),
+
+            # Reasoning: only add if the model supports reasoning AND (effort or summary) was specified
+            **(
+                {
+                    "reasoning": {
+                        **({"effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}),
+                        **(
+                            {"summary": valves.ENABLE_REASON_SUMMARY}
+                            if valves.ENABLE_REASON_SUMMARY
+                            and model_id in FEATURE_SUPPORT["reasoning_summary"]
+                            else {}
+                        ),
+                    }
+                }
+                if (
+                    model_id in FEATURE_SUPPORT["reasoning"]
+                    and (
+                        "reasoning_effort" in body
+                        or (
+                            valves.ENABLE_REASON_SUMMARY
+                            and model_id in FEATURE_SUPPORT["reasoning_summary"]
+                        )
+                    )
+                )
+                else {}
+            ),
         }
         
         # If native tool calling is enabled, metadata is NOT native, and model supports native function calling
@@ -246,20 +282,10 @@ class Pipe:
         ):
             await self._enable_native_function_support(transformed_body["model"], __metadata__)
 
+        # write formated response to log
         self.log.debug(
-            "Constructed OpenAI request payload: %s", transformed_body
-        )
-
-        self.log.debug(
-            "[TOOL DEBUG] model=%s | function_calling=%s | native_enabled=%s | web_enabled=%s | web_ok=%s | img_enabled=%s | img_ok=%s | user_tools=%s",
-            model_id,
-            model_id in FEATURE_SUPPORT["function_calling"],
-            valves.ENABLE_NATIVE_TOOL_CALLING,
-            valves.ENABLE_WEB_SEARCH,
-            model_id in FEATURE_SUPPORT["web_search_tool"],
-            valves.ENABLE_IMAGE_GENERATION,
-            model_id in FEATURE_SUPPORT["image_gen_tool"],
-            bool(body.get("tools")),
+            "OpenAI request payload: %s",
+            json.dumps(transformed_body, indent=2, ensure_ascii=False)
         )
 
         final_output = StringIO()
@@ -285,9 +311,31 @@ class Pipe:
 
                     # Capture tool calls
                     if et == "response.output_item.done":
-                        item = event.get("item")
-                        if isinstance(item, dict):
-                            pending_calls.append(item)
+                        """
+                            {
+                            "type": "response.output_item.done",
+                            "output_index": 0,
+                            "item": {
+                                "id": "msg_123",
+                                "status": "completed",
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "In a shimmering forest under a sky full of stars, a lonely unicorn named Lila discovered a hidden pond that glowed with moonlight. Every night, she would leave sparkling, magical flowers by the water's edge, hoping to share her beauty with others. One enchanting evening, she woke to find a group of friendly animals gathered around, eager to be friends and share in her magic.",
+                                    "annotations": []
+                                }
+                                ]
+                            },
+                            "sequence_number": 1
+                            }
+                        """
+                        print("Tool call done:", event.get("item", {}))
+
+                        continue
+                        #if type = message, then set final
+
 
                     # Emit other info: annotations, reasoning, etc.
                     # (You already have this logic in a previous response)
@@ -311,6 +359,64 @@ class Pipe:
             break  # for now, we only handle one loop iteration
             if not pending_calls:
                 break
+
+        # print formated pending_calls
+        self.log.debug(
+            "Pending tool calls after loop %d: %s",
+            loop_count,
+            json.dumps(pending_calls, indent=2, ensure_ascii=False),
+        )
+               # ────────────────────────────────────────────────────────────────────────────────
+
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "chat:completion",
+                    "data": {
+                        "done": True,
+                        "content": final_output.getvalue(),
+                        "title": "test",
+                    },
+                }
+            )
+
+        call_id = uuid.uuid4()        # serialisable!
+        add_openai_response_items_to_chat_by_id_and_message_id(
+            chat_id     = chat_id,
+            message_id  = message_id,
+            items=[
+                {
+                    "type":      "function_call",
+                    "call_id":   str(call_id),
+                    "name":      "weather.lookup",
+                    "arguments": json.dumps({"city": "Berlin"}),
+                },
+                {
+                    "type":   "function_call_output",
+                    "call_id": str(call_id),
+                    "output":  json.dumps({"temp_c": 22.1, "condition": "Cloudy"}),
+                },
+            ],
+        )
+
+
+        
+        if __metadata__.get("task") is None:
+            # -------------------------------------------------------------------------
+            # 2. Skip Open WebUI’s “background” helpers (title, tags, emoji, …)
+            #    The helpers are called *inline* inside middleware.py, not as separate
+            #    asyncio.Tasks.  We therefore:
+            #
+            #    Current bug.
+            #       • `asyncio.current_task().cancel()` skips the helpers but bubbles a
+            #         CancelledError to middleware → middleware logs a warning *and*
+            #         performs its own upsert that overwrites our content.
+            #
+            # -------------------------------------------------------------------------
+            asyncio.current_task().cancel()
+            await asyncio.sleep(0)
+            #raise self.SelfTerminate("Stop this pipeline immediately and silently.")
+            #raise StopAsyncIteration  # silent coroutine exit
 
     # --------------------------------------------------
     #  4. Helpers (Streaming, Non-streaming, Logging, etc.)
@@ -571,101 +677,221 @@ class Pipe:
         if valves.IMAGE_COMPRESSION:
             tool["output_compression"] = valves.IMAGE_COMPRESSION
         return tool
-    
-    async def _build_chat_history_for_responses_api(
-        self,
-        chat_id: str | None = None,
-    ) -> list[dict]:
-        """Return chat history formatted for the Responses API."""
-        from_history = bool(chat_id)
-        if chat_id:
-            self.log.debug("Retrieving message history for chat_id=%s", chat_id)
-            chat_model = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
-            if not chat_model:
-                messages = []
-            else:
-                chat = chat_model.chat
-                msg_lookup = chat.get("history", {}).get("messages", {})
-                current_id = chat.get("history", {}).get("currentId")
-                messages = get_message_list(msg_lookup, current_id) or []
-        else:
-            messages = []
 
-        history: list[dict] = []
-        for m in messages:
-            role = m.get("role")
-            if role == "system":
-                continue
-            from_assistant = role == "assistant"
+# ---------------------------------------------------------------------
+#  Public helpers ─ mirror Chats.* naming style
+# ---------------------------------------------------------------------
+"""
+Helpers to persist OpenAI responses safely in Open WebUI DB without impacting other
+chat data. This allows us to store function call traces, tool outputs, and other
+special items related to messages in a structured way, enabling easy retrieval
+and reconstruction of conversations with additional context.
 
-            if from_history and from_assistant:
-                for src in m.get("sources", []):
-                    for fc in src.get("_fc", []):
-                        cid = fc.get("call_id") or fc.get("id")
-                        if not cid:
-                            continue
-                        history.append(
-                            {
-                                "type": "function_call",
-                                "call_id": cid,
-                                "name": fc.get("name") or fc.get("n"),
-                                "arguments": fc.get("arguments") or fc.get("a"),
-                            }
-                        )
-                        history.append(
-                            {
-                                "type": "function_call_output",
-                                "call_id": cid,
-                                "output": fc.get("output") or fc.get("o"),
-                            }
-                        )
+Schema Overview
+---------------
+Inside each chat document (`chat_model.chat`), we store an `openai_responses_pipe` structure:
 
-            blocks: list[dict] = []
-            raw_blocks = m.get("content", []) or []
-            if not isinstance(raw_blocks, list):
-                raw_blocks = [raw_blocks]
-            for b in raw_blocks:
-                if not b:
-                    continue
-                if isinstance(b, dict) and b.get("type") in ("image", "image_url"):
-                    url = b.get("url") or b.get("image_url", {}).get("url")
-                    if url:
-                        blocks.append(
-                            {
-                                "type": (
-                                    "input_image" if role == "user" else "output_image"
-                                ),
-                                "image_url": url,
-                            }
-                        )
+    {
+      "openai_responses_pipe": {
+        "__v": 1,                           # version
+        "messages": {
+          "<message_id>": [
+            {
+              "type": "<str>",              # e.g. "function_call"
+              ...                           # any JSON-serializable fields
+            },
+            ...
+          ],
+          ...
+        }
+      }
+    }
+
+When users or the system perform a function call (or any special action)
+related to a message, we append these "response items" to
+`openai_responses_pipe.messages[<message_id>]`. Later, when reconstructing
+the conversation, these items can be inserted above the respective message
+that triggered them. This allows for easy referencing of function calls,
+their outputs, or any other extra JSON data in the final conversation flow.
+"""
+
+def add_openai_response_items_to_chat_by_id_and_message_id(
+    chat_id: str,
+    message_id: str,
+    items: List[Dict[str, Any]],
+) -> Optional[ChatModel]:
+    """
+    Append JSON-serializable items under chat.openai_responses_pipe.messages[message_id].
+    Returns the updated ChatModel or None if the chat is not found.
+    """
+    if not items:
+        return Chats.get_chat_by_id(chat_id)  # nothing to add
+
+    chat_model = Chats.get_chat_by_id(chat_id)
+    if not chat_model:
+        return None
+
+    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 1})
+    messages_dict = pipe_root.setdefault("messages", {})
+    messages_dict.setdefault(message_id, []).extend(items)
+
+    return Chats.update_chat_by_id(chat_id, chat_model.chat)
+
+
+def get_openai_response_items_by_chat_id_and_message_id(
+    chat_id: str,
+    message_id: str,
+    *,
+    type_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Return stored items from chat.openai_responses_pipe.messages[message_id].
+    If type_filter is given, only items whose 'type' matches are returned.
+    """
+    chat_model = Chats.get_chat_by_id(chat_id)
+    if not chat_model:
+        return []
+
+    all_items = (
+        chat_model.chat
+        .get("openai_responses_pipe", {})
+        .get("messages", {})
+        .get(message_id, [])
+    )
+    if not type_filter:
+        return all_items
+    return [x for x in all_items if x.get("type") == type_filter]
+
+
+def build_responses_history_by_chat_id_and_message_id(
+    chat_id: str, 
+    message_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Reconstruct a chain of messages up to `message_id` (or the currentId) and
+    insert any items from openai_responses_pipe.messages[<id>] **before** the 
+    corresponding message. Returns an OpenAI Responses API-style "list" object:
+
+        {
+          "object": "list",
+          "data": [...],
+          "first_id": "...",
+          "last_id": "...",
+          "has_more": false
+        }
+    """
+    chat_model = Chats.get_chat_by_id(chat_id)
+    if not chat_model:
+        # Return an empty list-structure
+        return {
+            "object": "list",
+            "data": [],
+            "first_id": None,
+            "last_id": None,
+            "has_more": False
+        }
+
+    chat_data = chat_model.chat
+    if not message_id:
+        message_id = chat_data.get("history", {}).get("currentId")
+
+    # 1) Gather the chain from root -> message_id
+    hist_dict = chat_data.get("history", {}).get("messages", {})
+    chain = get_message_list(hist_dict, message_id)
+    if not chain:
+        return {
+            "object": "list",
+            "data": [],
+            "first_id": None,
+            "last_id": None,
+            "has_more": False
+        }
+
+    # 2) Shortcut to any stored "extras"
+    pipe_messages = (
+        chat_data
+        .get("openai_responses_pipe", {})
+        .get("messages", {})
+    )
+
+    # ───────────────────────────────────────────────────────── helpers
+    def transform_chat_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert a single user/assistant message from the WebUI structure
+        into a "message" item recognized by the OpenAI Responses API.
+        """
+        role = msg.get("role", "assistant")
+        content_raw = msg.get("content", "")
+
+        # Make content always a list
+        if isinstance(content_raw, str):
+            content_raw = [content_raw]
+
+        # Convert each piece into either input_text or output_text
+        blocks = []
+        for part in content_raw:
+            # If you store dicts for images or other content, parse them here
+            if isinstance(part, str):
+                text = part.strip()
+                if text:
+                    blocks.append({
+                        "type": "input_text" if role == "user" else "output_text",
+                        "text": text
+                    })
+            elif isinstance(part, dict):
+                # e.g. if you have {"type": "image", "url": "..."}
+                if part.get("type") in ("image", "input_image"):
+                    blocks.append({
+                        "type": "input_image" if role == "user" else "output_image",
+                        "image_url": part.get("url", "")
+                    })
                 else:
-                    text = b.get("text") if isinstance(b, dict) else str(b)
-                    if from_history and from_assistant and not text.strip():
-                        continue
-                    if text.strip():
-                        blocks.append(
-                            {
-                                "type": (
-                                    "input_text" if role == "user" else "output_text"
-                                ),
-                                "text": text,
-                            }
-                        )
+                    # fallback: treat as text
+                    text_str = part.get("text", "") or part.get("content", "")
+                    if text_str.strip():
+                        blocks.append({
+                            "type": "input_text" if role == "user" else "output_text",
+                            "text": text_str.strip()
+                        })
+            # else: skip unknown formats
 
-            if from_history:
-                for f in m.get("files", []):
-                    if f and f.get("type") in ("image", "image_url"):
-                        blocks.append(
-                            {
-                                "type": (
-                                    "input_image" if role == "user" else "output_image"
-                                ),
-                                "image_url": f.get("url")
-                                or f.get("image_url", {}).get("url"),
-                            }
-                        )
+        return {
+            "id": msg["id"],
+            "type": "message",
+            "role": role,
+            "content": blocks
+        }
 
-            if blocks:
-                history.append({"role": role, "content": blocks})
+    def transform_pipe_item(item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert a 'tool call' or other stored item into a valid OpenAI Responses object.
+        Minimally ensure 'id' is set. Otherwise pass through as-is.
+        E.g.  {"type": "function_call", "call_id": "..."} -> { "id": "xyz", "type": "function_call", ...}
+        """
+        if not item.get("id"):
+            item["id"] = f"pipe_{uuid.uuid4()}"
+        return item
 
-        return history
+    # ───────────────────────────────────────────────────────── main build
+    data_list = []
+
+    for msg in chain:
+        msg_id = msg["id"]
+        # 1) Insert all pipe items (function_call, function_call_output, etc.)
+        for pipe_item in pipe_messages.get(msg_id, []):
+            data_list.append(transform_pipe_item(pipe_item))
+
+        # 2) Insert the actual message
+        data_list.append(transform_chat_message(msg))
+
+    # 3) Format per the OpenAI "list" schema
+    first_id = data_list[0]["id"] if data_list else None
+    last_id  = data_list[-1]["id"] if data_list else None
+
+    return {
+        "object": "list",
+        "data": data_list,
+        "first_id": first_id,
+        "last_id": last_id,
+        "has_more": False
+    }
