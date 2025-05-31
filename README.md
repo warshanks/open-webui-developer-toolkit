@@ -21,7 +21,7 @@ This repo uses three long‑lived branches:
 
 Feature work typically happens in short‑lived branches, merged into `development` via pull requests.
 
-Changes are prompted from `dev` → `alpha-preview` → and finally `main` after testing.
+Changes flow from `dev` → `alpha-preview` → and finally `main` after testing.
 
 ## Installing Toolkit Locally (for developers)
 ```bash
