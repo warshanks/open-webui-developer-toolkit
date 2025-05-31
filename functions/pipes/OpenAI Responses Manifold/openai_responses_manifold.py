@@ -1,6 +1,6 @@
 """
-title: OpenAI Responses API Pipeline Test
-id: openai_responses_test
+title: OpenAI Responses API Pipeline
+id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
@@ -125,9 +125,9 @@ class Pipe:
             default=False,
             description="Whether to store the generated model response (on OpenAI's side) for later debugging. Defaults to False.",
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-store
-        CUSTOM_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
-            description="Select logging level.",
+            description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
         INJECT_CURRENT_DATE: bool = Field(
             default=False,
@@ -144,7 +144,7 @@ class Pipe:
 
     class UserValves(BaseModel):
         """Per-user valve overrides."""
-        CUSTOM_LOG_LEVEL: Literal[
+        LOG_LEVEL: Literal[
             "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"
         ] = Field(
             default="INHERIT",
@@ -237,7 +237,7 @@ class Pipe:
 
         # Update per-message log level via ContextVar
         log_token = current_log_level.set(
-            getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO)
+            getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
         )
 
         try:
@@ -381,7 +381,7 @@ class Pipe:
 
 
                 # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
-                if valves.CUSTOM_LOG_LEVEL == "DEBUG" or user_valves.CUSTOM_LOG_LEVEL != "INHERIT":
+                if valves.LOG_LEVEL == "DEBUG" or user_valves.LOG_LEVEL != "INHERIT":
                     self.log.debug("Debug log citation: %s", logs_by_msg_id)
                     if __event_emitter__:
                         logs = logs_by_msg_id.get(message_id, [])
@@ -389,7 +389,7 @@ class Pipe:
                             await self._emit_citation(
                                 __event_emitter__,
                                 "\n".join(logs),
-                                valves.CUSTOM_LOG_LEVEL.capitalize() + " Logs",
+                                valves.LOG_LEVEL.capitalize() + " Logs",
                             )
 
                 break  # for now, we only handle one loop iteration
