@@ -2,7 +2,7 @@ name: Deploy Plugins
 
 on:
   push:
-    branches: [dev, beta, main]
+    branches: [development, beta, main]
   workflow_dispatch:
 
 permissions:
