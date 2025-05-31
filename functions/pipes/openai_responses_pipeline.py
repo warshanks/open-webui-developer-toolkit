@@ -224,12 +224,16 @@ class Pipe:
         message_id = __metadata__.get("message_id", None)
         token = current_message_id.set(message_id)
 
+        # Merge user valve overrides (thread‑safe via ContextVar)
+        user_valves = self.UserValves.model_validate(__user__.get("valves", {}))
+        valves = self._merge_valves(self.valves, user_valves)
+
+        # update log level
+        # TODO Right now, this effective all users logs.  Need to find a way to set per-user log level.
+        self.log.setLevel(getattr(logging, valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO))
+
         try:
             self.log.info("In pipe, get() returns: %s", extra={"message_id": message_id})
-
-            # Merge user valve overrides (thread‑safe via ContextVar)
-            user_valves = self.UserValves.model_validate(__user__.get("valves", {}))
-            valves = self._merge_valves(self.valves, user_valves)
 
             # Initialize aiohttp session (if not already done)
             self.session = await self._get_or_create_aiohttp_session()
