@@ -50,14 +50,9 @@ current_message_id = ContextVar("current_message_id", default=None)
 # In-memory logs keyed by message ID
 logs_by_msg_id = defaultdict(list)
 
-def debug_filter(record):
+def log_filter(record):
     message_id = record.__dict__.get("message_id", current_message_id.get())
     setattr(record, "message_id", message_id)
-    print("DEBUG FILTER:", {
-        "record_message_id": message_id,
-        "contextvar": current_message_id.get(),
-        "record_dict": record.__dict__,
-    })
     return True
 
 class Pipe:
@@ -172,11 +167,15 @@ class Pipe:
         self.log.propagate = False
         self.log.setLevel(logging.DEBUG)
 
-        # Clear handlers to avoid duplicates when multiple Pipe instances are created
-        self.log.handlers.clear()
-
         # Attach the debug filter to the logger so every handler sees the contextual message ID
-        self.log.addFilter(debug_filter)
+        inline_filter = lambda record: (
+            setattr(
+                record,
+                "message_id",
+                getattr(record, "message_id", None) or current_message_id.get()
+            ) or True
+        )
+        self.log.addFilter(inline_filter)
 
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(
@@ -197,7 +196,6 @@ class Pipe:
         mem_handler.emit = mem_emit
         self.log.addHandler(mem_handler)
     
-
     def pipes(self):
         # Update logging level (handy trick since valve values are accessible here)
         self.log.setLevel(getattr(logging, self.valves.CUSTOM_LOG_LEVEL.upper(), logging.INFO))
@@ -392,7 +390,7 @@ class Pipe:
             logs_by_msg_id.pop(message_id, None)
 
             if __metadata__.get("task") is None:
-                asyncio.current_task().cancel() # Workaround to kill current task to skip Open WebUI’s “background” helpers (title, tags, …). Note: middleware catches this, logs and warns, and performs its own upsert.
+                asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
                 await asyncio.sleep(0)
 
     # --------------------------------------------------
