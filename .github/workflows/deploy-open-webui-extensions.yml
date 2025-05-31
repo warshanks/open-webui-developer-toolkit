@@ -1,33 +1,68 @@
-name: OpenWebUI Extension Deployment
+name: Deploy Plugins
 
 on:
   push:
-    branches: [ dev, main ]
-    paths:
-      - 'functions/**/*.py'
-      - 'tools/**/*.py'
-      - '.scripts/publish_to_webui.py'
+    branches: [dev, beta, main]
+  # Also allow manual triggers for demonstration
   workflow_dispatch:
 
+permissions:
+  contents: read
+  # If you need to pull environment info via the GitHub CLI, you may also need additional permissions.
+
 jobs:
-  # ───────────────────────────────────────────
-  # Deploy to GLC when committing to dev
-  # ───────────────────────────────────────────
-  deploy-glc:
-    if: github.ref == 'refs/heads/dev'
+  # 1) Gather the list of environment names in this repo
+  gather-environments:
     runs-on: ubuntu-latest
-    environment: staging-glc
+    outputs:
+      environment_list: ${{ steps.collect.outputs.environment_list }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Collect environment names
+        id: collect
+        run: |
+          # Use GitHub CLI to list your repo's environments.
+          # e.g., "client-foo" "client-bar" "production" etc.
+          # The --jq option prints each environment name on a separate line.
+          env_list=$(gh api repos/${{ github.repository }}/environments --jq '.environments[].name')
+
+          # Now convert those lines into a JSON array for the matrix:
+          # e.g. ["client-foo","client-bar","production"]
+          json_list=$(echo "$env_list" | jq -R . | jq -s .)
+
+          echo "environment_list=$json_list" >> "$GITHUB_OUTPUT"
+
+  # 2) Deploy to each environment in parallel via matrix
+  deploy-plugins:
+    needs: gather-environments
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        environment_name: ${{ fromJson(needs.gather-environments.outputs.environment_list) }}
+      fail-fast: false
+
+    # This sets which environment's secrets we use in this matrix iteration
+    environment: ${{ matrix.environment_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ➊ get list of changed plugin files in JSON format
+      - name: Install jq
+        # 'ubuntu-latest' typically has jq pre-installed, but just in case:
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Get changed plugin files
         id: changed
         uses: tj-actions/changed-files@v43
@@ -38,17 +73,24 @@ jobs:
             tools/**/*.py
           json: true
 
-      # ➋ publish each changed file using `jq` to handle spaces
-      - name: Publish to GLC
-        if: steps.changed.outputs.any_changed == 'true'
+      - name: Load environment secrets (TARGET_BRANCH, etc.)
+        id: load-env
+        # We rely on 'environment: ${{ matrix.environment_name }}' to get secrets
+        # This step writes TARGET_BRANCH to an env var so we can compare easily
+        run: echo "TARGET_BRANCH=${{ secrets.TARGET_BRANCH }}" >> $GITHUB_ENV
+
+      - name: Deploy
+        if: startsWith(github.ref, 'refs/heads/') && (replace(github.ref, 'refs/heads/', '') == env.TARGET_BRANCH) && steps.changed.outputs.any_changed == 'true'
         env:
-          WEBUI_URL: ${{ vars.WEBUI_URL }}
+          WEBUI_URL: ${{ secrets.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
           echo "${{ steps.changed.outputs.all_changed_files }}" \
             | jq -r '.[]' \
             | while IFS= read -r file; do
-                echo "Publishing $file to GLC …"
+                echo "Deploying $file to '${{ matrix.environment_name }}' environment..."
+
+                # Determine plugin type from path
                 if [[ "$file" == functions/pipes/* ]]; then
                   type=pipe
                 elif [[ "$file" == functions/filters/* ]]; then
@@ -59,57 +101,10 @@ jobs:
                   type=pipe
                 fi
 
+                # Now call your publish script, using environment secrets
                 python .scripts/publish_to_webui.py "$file" --type "$type"
               done
 
-  # ───────────────────────────────────────────
-  # Deploy to CLAC when committing to main
-  # ───────────────────────────────────────────
-  deploy-clac:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production-clac
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      # ➊ get list of changed plugin files in JSON format
-      - name: Get changed plugin files
-        id: changed
-        uses: tj-actions/changed-files@v43
-        with:
-          files: |
-            functions/pipes/**/*.py
-            functions/filters/**/*.py
-            tools/**/*.py
-          json: true
-
-      # ➋ publish each changed file using `jq` to handle spaces
-      - name: Publish to CLAC
-        if: steps.changed.outputs.any_changed == 'true'
-        env:
-          WEBUI_URL: ${{ vars.WEBUI_URL }}
-          WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
-        run: |
-          echo "${{ steps.changed.outputs.all_changed_files }}" \
-            | jq -r '.[]' \
-            | while IFS= read -r file; do
-                echo "Publishing $file to CLAC …"
-                if [[ "$file" == functions/pipes/* ]]; then
-                  type=pipe
-                elif [[ "$file" == functions/filters/* ]]; then
-                  type=filter
-                elif [[ "$file" == tools/* ]]; then
-                  type=tool
-                else
-                  type=pipe
-                fi
-
-                python .scripts/publish_to_webui.py "$file" --type "$type"
-              done
+      - name: Skip Deploy (Not matching branch)
+        if: startsWith(github.ref, 'refs/heads/') && (replace(github.ref, 'refs/heads/', '') != env.TARGET_BRANCH)
+        run: echo "Skipping deploy for environment '${{ matrix.environment_name }}', because it's pinned to '${{ env.TARGET_BRANCH }}'."
