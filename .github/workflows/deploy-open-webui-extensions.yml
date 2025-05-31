@@ -4,28 +4,30 @@ on:
   push:
     branches: [ dev, main ]
     paths:
-      - 'functions/**.py'
-      - 'tools/**.py'
+      - 'functions/**/*.py'
+      - 'tools/**/*.py'
       - '.scripts/publish_to_webui.py'
   workflow_dispatch:
 
 jobs:
-# ───────────────────────────────────────────
-# Deploy to GLC when committing to dev
-# ───────────────────────────────────────────
+  # ───────────────────────────────────────────
+  # Deploy to GLC when committing to dev
+  # ───────────────────────────────────────────
   deploy-glc:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment: staging-glc
 
     steps:
-      - uses: actions/checkout@v4          # pull two commits so diff works
-        with: { fetch-depth: 2 }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
 
-      # ➊ get list of changed plugin files (works for merges)
+      # ➊ get list of changed plugin files in JSON format
       - name: Get changed plugin files
         id: changed
         uses: tj-actions/changed-files@v43
@@ -34,31 +36,35 @@ jobs:
             functions/pipes/**/*.py
             functions/filters/**/*.py
             tools/**/*.py
+          json: true
 
-      # ➋ publish each changed file
+      # ➋ publish each changed file using `jq` to handle spaces
       - name: Publish to GLC
         if: steps.changed.outputs.any_changed == 'true'
         env:
           WEBUI_URL: ${{ vars.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          for file in ${{ steps.changed.outputs.all_changed_files }}; do
-            echo "Publishing $file to GLC …"
-            if [[ "$file" == functions/pipes/* ]]; then
-              type=pipe
-            elif [[ "$file" == functions/filters/* ]]; then
-              type=filter
-            elif [[ "$file" == tools/* ]]; then
-              type=tool
-            else
-              type=pipe
-            fi
-            python .scripts/publish_to_webui.py "$file" --type "$type"
-          done
+          echo "${{ steps.changed.outputs.all_changed_files }}" \
+            | jq -r '.[]' \
+            | while IFS= read -r file; do
+                echo "Publishing $file to GLC …"
+                if [[ "$file" == functions/pipes/* ]]; then
+                  type=pipe
+                elif [[ "$file" == functions/filters/* ]]; then
+                  type=filter
+                elif [[ "$file" == tools/* ]]; then
+                  type=tool
+                else
+                  type=pipe
+                fi
 
-# ───────────────────────────────────────────
-# Deploy to CLAC when committing to main
-# ───────────────────────────────────────────
+                python .scripts/publish_to_webui.py "$file" --type "$type"
+              done
+
+  # ───────────────────────────────────────────
+  # Deploy to CLAC when committing to main
+  # ───────────────────────────────────────────
   deploy-clac:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -66,11 +72,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 2 }
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
 
+      # ➊ get list of changed plugin files in JSON format
       - name: Get changed plugin files
         id: changed
         uses: tj-actions/changed-files@v43
@@ -79,23 +88,28 @@ jobs:
             functions/pipes/**/*.py
             functions/filters/**/*.py
             tools/**/*.py
+          json: true
 
+      # ➋ publish each changed file using `jq` to handle spaces
       - name: Publish to CLAC
         if: steps.changed.outputs.any_changed == 'true'
         env:
           WEBUI_URL: ${{ vars.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
-          for file in ${{ steps.changed.outputs.all_changed_files }}; do
-            echo "Publishing $file to CLAC …"
-            if [[ "$file" == functions/pipes/* ]]; then
-              type=pipe
-            elif [[ "$file" == functions/filters/* ]]; then
-              type=filter
-            elif [[ "$file" == tools/* ]]; then
-              type=tool
-            else
-              type=pipe
-            fi
-            python .scripts/publish_to_webui.py "$file" --type "$type"
-          done
+          echo "${{ steps.changed.outputs.all_changed_files }}" \
+            | jq -r '.[]' \
+            | while IFS= read -r file; do
+                echo "Publishing $file to CLAC …"
+                if [[ "$file" == functions/pipes/* ]]; then
+                  type=pipe
+                elif [[ "$file" == functions/filters/* ]]; then
+                  type=filter
+                elif [[ "$file" == tools/* ]]; then
+                  type=tool
+                else
+                  type=pipe
+                fi
+
+                python .scripts/publish_to_webui.py "$file" --type "$type"
+              done
