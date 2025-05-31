@@ -11,7 +11,12 @@ class Chats:
     def get_chat_by_id(chat_id):
         return None
 
+class ChatModel:
+    def __init__(self, chat=None):
+        self.chat = chat or {}
+
 chats_mod.Chats = Chats
+chats_mod.ChatModel = ChatModel
 
 models_models_mod = types.ModuleType("open_webui.models.models")
 class Models:

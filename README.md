@@ -18,8 +18,8 @@ out `open_webui` so the suite can run without the external project.
 
 ## Examples
 
-Example extensions live under `functions/` and `tools/`.
-The repository currently includes `pipes/openai_responses_api_pipeline.py` as a working sample.
+Example extensions live under `functions/` and `tools/`. Each pipe now sits in its own folder with a README.
+The repository currently includes `functions/pipes/OpenAI Responses Manifold/openai_responses_manifold.py` as a working sample.
 Additional examples will be added over time.
 
 ## Open WebUI Architecture
