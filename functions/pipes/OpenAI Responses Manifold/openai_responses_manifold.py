@@ -36,6 +36,7 @@ from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import Models, ModelForm, ModelParams
 from open_webui.utils.misc import get_message_list
 
+
 FEATURE_SUPPORT = {
     "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}, # OpenAI's built-in web search tool.
     "image_gen_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
