@@ -6,47 +6,31 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read  # needed to read environments and changed files, etc.
+  contents: read  # Needed to read repo data, etc.
 
 jobs:
-  # 1) Gather the list of environment names in this repo
   gather-environments:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # So 'gh' can authenticate
     outputs:
       environment_list: ${{ steps.collect.outputs.environment_list }}
-
-    # Provide GH_TOKEN so 'gh' can authenticate
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Collect environment names
+      - name: Fetch environment names
         id: collect
         run: |
-          # Use GitHub CLI to list your repo's environments.
-          # The --jq option prints each environment name on a separate line.
-          env_list=$(gh api "repos/${{ github.repository }}/environments" --jq '.environments[].name')
-
-          # Now convert those lines into a JSON array:
-          # e.g. ["client-foo","client-bar","production"]
+          full_json=$(gh api "repos/${{ github.repository }}/environments")
+          env_list=$(echo "$full_json" | jq -r '.environments[].name')
           json_list=$(echo "$env_list" | jq -R . | jq -s .)
-
           echo "environment_list=$json_list" >> "$GITHUB_OUTPUT"
 
-  # 2) Deploy to each environment in parallel via matrix
   deploy-plugins:
     needs: gather-environments
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         environment_name: ${{ fromJson(needs.gather-environments.outputs.environment_list) }}
       fail-fast: false
-
-    # This sets which environment's secrets we use in this matrix iteration
     environment: ${{ matrix.environment_name }}
 
     steps:
@@ -55,16 +39,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install jq
-        # 'ubuntu-latest' typically has jq pre-installed, but just in case:
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Get changed plugin files
+      - name: Identify changed files
         id: changed
         uses: tj-actions/changed-files@v43
         with:
@@ -74,24 +49,22 @@ jobs:
             tools/**/*.py
           json: true
 
-      - name: Load environment secrets (TARGET_BRANCH, etc.)
+      - name: Load environment variables
         id: load-env
-        # We rely on 'environment: ${{ matrix.environment_name }}' to get secrets
-        # This step writes TARGET_BRANCH to an env var so we can compare easily
-        run: echo "TARGET_BRANCH=${{ secrets.TARGET_BRANCH }}" >> $GITHUB_ENV
+        run: |
+          echo "TARGET_BRANCH=${{ env.TARGET_BRANCH }}" >> $GITHUB_ENV
+          echo "WEBUI_URL=${{ env.WEBUI_URL }}" >> $GITHUB_ENV
 
       - name: Deploy
-        # Compare the branch name directly to env.TARGET_BRANCH
         if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name == env.TARGET_BRANCH }}
         env:
-          WEBUI_URL: ${{ secrets.WEBUI_URL }}
+          WEBUI_URL: ${{ env.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}
         run: |
           echo "${{ steps.changed.outputs.all_changed_files }}" \
             | jq -r '.[]' \
             | while IFS= read -r file; do
-                echo "Deploying $file to '${{ matrix.environment_name }}' environment..."
-
+                echo "Publishing $file to '${{ matrix.environment_name }}'..."
                 if [[ "$file" == functions/pipes/* ]]; then
                   type=pipe
                 elif [[ "$file" == functions/filters/* ]]; then
@@ -101,10 +74,9 @@ jobs:
                 else
                   type=pipe
                 fi
-
                 python .scripts/publish_to_webui.py "$file" --type "$type"
               done
 
-      - name: Skip Deploy
+      - name: Skip
         if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name != env.TARGET_BRANCH }}
-        run: echo "Skipping deploy for '${{ matrix.environment_name }}' because it targets '${{ env.TARGET_BRANCH }}' but we're on '${{ github.ref_name }}' branch."
+        run: echo "Skipping '${{ matrix.environment_name }}' (branch mismatch)"
