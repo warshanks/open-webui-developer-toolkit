@@ -19,7 +19,7 @@ This repo uses three long‑lived branches:
 2. **`beta`** – next release candidate. More stable than `development`.
 3. **`main`** – production‑ready code pulled from `beta`.
 
-Feature work typically happens in short‑lived branches, merged into `dev` via pull requests. Promote changes from `dev` → `beta` → `main` only after testing.
+Feature work typically happens in short‑lived branches, merged into `dev` via pull requests. Changes are prompted from `dev` → `beta` → and finally `main` after testing.
 
 ## Finding Documentation
 
