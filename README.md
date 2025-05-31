@@ -25,8 +25,8 @@ Each subdirectory has a small README explaining its contents.
 
 This repo uses three long‑lived branches:
 
-1. **`dev`** – active development and experiments; may break.
-2. **`beta`** – next release candidate. More stable than `dev`.
+1. **`development`** – active development and experiments; may break.
+2. **`beta`** – next release candidate. More stable than `development`.
 3. **`main`** – production‑ready code pulled from `beta`.
 
 Feature work typically happens in short‑lived branches, merged into `dev` via pull requests. Promote changes from `dev` → `beta` → `main` only after testing.
