@@ -79,7 +79,7 @@ class Pipe:
         )
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini). Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  Note this adds the tool to each call which may slow down responses. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -282,7 +282,7 @@ class Pipe:
                             # Conditionally include web_search
                             *(
                                 [self.web_search_tool(valves)]
-                                if (model_id in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH)
+                                if (model_id in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH ))
                                 else []
                             ),
 
@@ -338,7 +338,7 @@ class Pipe:
                     else {}
                 ),
             }
-            
+
             # TODO THIS DOESN"T WORK YET.  NEED TO DEBUG WHY.
             if (
                 valves.ENABLE_NATIVE_TOOL_CALLING
@@ -374,7 +374,11 @@ class Pipe:
 
                         # ─── when a tool STARTS ──────────────────────────────────────────────
                         if event_type == "response.output_item.added":
-                            item_type = event.get("item", {}).get("type", "")
+                            item = event.get("item", {})
+                            item_type = item.get("type", "")
+
+                            #write item to log for debugging
+                            self.log.debug("Tool call started: %s", item)
 
                             if __event_emitter__:
                                 started = {
@@ -383,10 +387,10 @@ class Pipe:
                                         "🔍 One sec—looking that up…",
                                         "🔍 Just a moment, searching the web…",
                                     ],
-                                    "function_call": [
-                                        "🛠️ Let me run a quick tool…",
-                                        "🛠️ Hang on, checking this with a helper…",
-                                        "🛠️ Alright, calling a function now…",
+                                    "function_call": [                       # {fn} will be replaced
+                                        "🛠️ Running the {fn} tool…",
+                                        "🛠️ Let me try {fn}…",
+                                        "🛠️ Calling {fn} real quick…",
                                     ],
                                     "file_search_call": [
                                         "📂 Let me skim those files…",
@@ -403,16 +407,23 @@ class Pipe:
                                         "💻 Hold on, executing locally…",
                                         "💻 Firing up that shell command…",
                                     ],
+                                    "reasoning": [
+                                        "🧠 Thinking through this carefully...",
+                                        "🧠 Analyzing the problem step by step...",
+                                        "🧠 Let me work through this logically...",
+                                    ]
                                 }
-                                if item_type in started:
-                                    await __event_emitter__({
-                                        "type": "chat:status",
-                                        "data": {"message": random.choice(started[item_type])}
-                                    })
+                                if item_type in started and __event_emitter__:
+                                    template = random.choice(started[item_type])
+                                    msg = template.format(fn=item.get("name", "a tool"))
+                                    await self._emit_status(__event_emitter__, msg, done=False, hidden=False)
+
+                            continue  # continue to next event
 
                         # ─── when a tool FINISHES ──────────────────────────────────────────────
                         elif event_type == "response.output_item.done":
-                            item_type = event.get("item", {}).get("type", "")
+                            item = event.get("item", {})
+                            item_type = item.get("type", "")
                             
                             if __event_emitter__:
                                 finished = {
@@ -424,7 +435,6 @@ class Pipe:
                                     "function_call": [
                                         "🛠️ Done—the tool finished!",
                                         "🛠️ Got the results for you!",
-                                        "🛠️ Finished running that helper!",
                                     ],
                                     "file_search_call": [
                                         "📂 Done checking files!",
@@ -441,12 +451,18 @@ class Pipe:
                                         "💻 Finished running that!",
                                         "💻 Shell task done!",
                                     ],
+                                    "reasoning": [
+                                        "🧠 I've wrapped up my analysis!",
+                                        "🧠 Completed the logical analysis!",
+                                        "🧠 Done! Here's what I've reasoned out.",
+                                    ]
                                 }
-                                if item_type in finished:
-                                    await __event_emitter__({
-                                        "type": "chat:status",
-                                        "data": {"message": random.choice(finished[item_type])}
-                                    })
+                                if item_type in finished and __event_emitter__:
+                                    template = random.choice(finished[item_type])
+                                    msg = template.format(fn=item.get("name", "Tool"))
+                                    await self._emit_status(__event_emitter__, msg, done=True, hidden=False)
+
+                            continue  # continue to next event
 
                         # Capture tools from final output
                         if event_type == "response.completed":
@@ -581,7 +597,7 @@ class Pipe:
                     __event_emitter__,
                     {
                         "done": True,
-                        # "content": final_output.getvalue(), # I don't think we need to include content.
+                        "content": final_output.getvalue(), # I don't think we need to include content.
                         **({"usage": total_usage} if total_usage else {}),
                     },
                 )
@@ -590,9 +606,8 @@ class Pipe:
             current_session_id.reset(token)
             current_log_level.reset(log_token)
 
-
             if __metadata__.get("task") is None:
-                return # TODO: Remove this after we have implemented our own custom background helpers.
+                #return # TODO: Remove this after we have implemented our own custom background helpers.
                 asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
                 await asyncio.sleep(0)
 
@@ -1133,34 +1148,4 @@ def build_responses_history_by_chat_id_and_message_id(
         })
 
     return final
-
-def combine_usage(usage_total, usage_increment):
-    for key, value in usage_increment.items():
-        if isinstance(value, dict):
-            usage_total[key] = combine_usage(usage_total.get(key, {}), value)
-        elif isinstance(value, (int, float)):
-            usage_total[key] = usage_total.get(key, 0) + value
-        else:
-            usage_total[key] = value
-    return usage_total
                   
-"""
-call_id = uuid.uuid4()        # serialisable!
-add_openai_response_items_to_chat_by_id_and_message_id(
-    chat_id     = chat_id,
-    message_id  = message_id,
-    items=[
-        {
-            "type":      "function_call",
-            "call_id":   str(call_id),
-            "name":      "weather.lookup",
-            "arguments": json.dumps({"city": "Berlin"}),
-        },
-        {
-            "type":   "function_call_output",
-            "call_id": str(call_id),
-            "output":  json.dumps({"temp_c": 22.1, "condition": "Cloudy"}),
-        },
-    ],
-)
-"""
