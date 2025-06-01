@@ -716,6 +716,40 @@ class Pipe:
 
         await event_emitter({"type": "chat:completion", "data": data, "done": done})
 
+    async def _emit_status(
+        self,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        description: str,
+        *,
+        done: bool = False,
+        hidden: bool = False,
+    ) -> None:
+        """Emit a status event to the UI if possible."""
+        if event_emitter is None:
+            return
+
+        await event_emitter(
+            {
+                "type": "status",
+                "data": {"description": description, "done": done, "hidden": hidden},
+            }
+        )
+
+    async def _emit_notification(
+        self,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        content: str,
+        *,
+        level: Literal["info", "success", "warning", "error"] = "info",
+    ) -> None:
+        """Emit a toast notification event to the UI if possible."""
+        if event_emitter is None:
+            return
+
+        await event_emitter(
+            {"type": "notification", "data": {"type": level, "content": content}}
+        )
+
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """
         Merge user-level valves into default.
