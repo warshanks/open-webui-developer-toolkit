@@ -15,6 +15,7 @@ from collections import defaultdict
 import datetime
 import inspect
 import json
+import random
 import sys
 import os
 import aiohttp
@@ -83,6 +84,10 @@ class Pipe:
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
             description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH=True.",
+        )
+        SEARCH_USER_LOCATION: str = Field(
+            default='{"type": "approximate", "country": "CA", "city": "Langley", "region": "BC"}',
+            description="User location for web search. Defaults to approximate London, UK. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses#user-location",
         )
         ENABLE_IMAGE_GENERATION: bool = Field(
             default=False,
@@ -358,7 +363,7 @@ class Pipe:
                         event_type = event.get("type")
                         self.log.debug("Received SSE event: %s", event_type)
 
-                        # Yield partial text
+                        # Yield LLM response text as it arrives
                         if event_type == "response.output_text.delta":
                             delta = event.get("delta", "")
                             if delta:
@@ -367,8 +372,81 @@ class Pipe:
                             
                             continue # continue to next event
 
-                        # Update status in UI to show progress
-                        
+                        # ─── when a tool STARTS ──────────────────────────────────────────────
+                        if event_type == "response.output_item.added":
+                            item_type = event.get("item", {}).get("type", "")
+
+                            if __event_emitter__:
+                                started = {
+                                    "web_search_call": [
+                                        "🔍 Hmm, let me quickly check online…",
+                                        "🔍 One sec—looking that up…",
+                                        "🔍 Just a moment, searching the web…",
+                                    ],
+                                    "function_call": [
+                                        "🛠️ Let me run a quick tool…",
+                                        "🛠️ Hang on, checking this with a helper…",
+                                        "🛠️ Alright, calling a function now…",
+                                    ],
+                                    "file_search_call": [
+                                        "📂 Let me skim those files…",
+                                        "📂 One sec, scanning the documents…",
+                                        "📂 Checking the files right now…",
+                                    ],
+                                    "image_generation_call": [
+                                        "🎨 Let me create that image…",
+                                        "🎨 Give me a moment to sketch…",
+                                        "🎨 Working on your picture…",
+                                    ],
+                                    "local_shell_call": [
+                                        "💻 Let me run that command…",
+                                        "💻 Hold on, executing locally…",
+                                        "💻 Firing up that shell command…",
+                                    ],
+                                }
+                                if item_type in started:
+                                    await __event_emitter__({
+                                        "type": "chat:status",
+                                        "data": {"message": random.choice(started[item_type])}
+                                    })
+
+                        # ─── when a tool FINISHES ──────────────────────────────────────────────
+                        elif event_type == "response.output_item.done":
+                            item_type = event.get("item", {}).get("type", "")
+                            
+                            if __event_emitter__:
+                                finished = {
+                                    "web_search_call": [
+                                        "🔎 Got it—here's what I found!",
+                                        "🔎 All set—found that info!",
+                                        "🔎 Okay, done searching!",
+                                    ],
+                                    "function_call": [
+                                        "🛠️ Done—the tool finished!",
+                                        "🛠️ Got the results for you!",
+                                        "🛠️ Finished running that helper!",
+                                    ],
+                                    "file_search_call": [
+                                        "📂 Done checking files!",
+                                        "📂 Found what I needed!",
+                                        "📂 Got the documents ready!",
+                                    ],
+                                    "image_generation_call": [
+                                        "🎨 Your image is ready!",
+                                        "🎨 Picture's finished!",
+                                        "🎨 All done—image created!",
+                                    ],
+                                    "local_shell_call": [
+                                        "💻 Command complete!",
+                                        "💻 Finished running that!",
+                                        "💻 Shell task done!",
+                                    ],
+                                }
+                                if item_type in finished:
+                                    await __event_emitter__({
+                                        "type": "chat:status",
+                                        "data": {"message": random.choice(finished[item_type])}
+                                    })
 
                         # Capture tools from final output
                         if event_type == "response.completed":
@@ -514,6 +592,7 @@ class Pipe:
 
 
             if __metadata__.get("task") is None:
+                return # TODO: Remove this after we have implemented our own custom background helpers.
                 asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
                 await asyncio.sleep(0)
 
