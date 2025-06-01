@@ -13,7 +13,9 @@ requirements: orjson
 import asyncio
 from collections import defaultdict
 import datetime
+import inspect
 import json
+import random
 import sys
 import os
 import aiohttp
@@ -45,7 +47,7 @@ FEATURE_SUPPORT = {
 }
 
 # A global context var storing the current message ID
-current_message_id = ContextVar("current_message_id", default=None)
+current_session_id = ContextVar("current_session_id", default=None)
 
 # Log level ContextVar (defaults to INFO)
 current_log_level = ContextVar("current_log_level", default=logging.INFO)
@@ -77,11 +79,15 @@ class Pipe:
         )
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini). Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  Note this adds the tool to each call which may slow down responses. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
             description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH=True.",
+        )
+        SEARCH_USER_LOCATION: str = Field(
+            default='{"type": "approximate", "country": "CA", "city": "Langley", "region": "BC"}',
+            description="User location for web search. Defaults to approximate London, UK. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses#user-location",
         )
         ENABLE_IMAGE_GENERATION: bool = Field(
             default=False,
@@ -125,10 +131,6 @@ class Pipe:
             default=False,
             description="Whether to store the generated model response (on OpenAI's side) for later debugging. Defaults to False.",
         )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-store
-        LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-            default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
-            description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
-        )
         INJECT_CURRENT_DATE: bool = Field(
             default=False,
             description="Append today's date to the system prompt. Example: `Today's date: Thursday, May 21, 2025`.",
@@ -137,9 +139,9 @@ class Pipe:
             default=False,
             description="Append the user's name and email. Example: `user_info: Jane Doe <jane@example.com>`.",
         )
-        INJECT_BROWSER_INFO: bool = Field(
-            default=False,
-            description="Append browser details. Example: `browser_info: Desktop | Windows | Browser: Edge 136`.",
+        LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+            default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
+            description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
 
     class UserValves(BaseModel):
@@ -166,13 +168,13 @@ class Pipe:
         # Set to DEBUG so per-message filtering controls output
         self.log.setLevel(logging.DEBUG)
 
-        # Add an inline "filter" that injects `message_id` into each record
+        # Add an inline "filter" that injects `session_id` into each record
         self.log.addFilter(
             lambda record: (
                 setattr(
                     record,
-                    "message_id",
-                    getattr(record, "message_id", None) or current_message_id.get(),
+                    "session_id",
+                    getattr(record, "session_id", None) or current_session_id.get(),
                 )
                 or True
             )
@@ -186,7 +188,7 @@ class Pipe:
 
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(
-            "%(levelname)s [mid=%(message_id)s] %(message)s"
+            "%(levelname)s [mid=%(session_id)s] %(message)s"
         ))
         self.log.addHandler(console)
 
@@ -197,10 +199,10 @@ class Pipe:
 
         # Inline emit function:
         mem_handler.emit = lambda record: (
-            # Only proceed if record has a message_id
-            logs_by_msg_id.setdefault(getattr(record, "message_id", None), [])
+            # Only proceed if record has a session_id
+            logs_by_msg_id.setdefault(getattr(record, "session_id", None), [])
                         .append(mem_handler.format(record))
-            if getattr(record, "message_id", None)
+            if getattr(record, "session_id", None)
             else None
         )
 
@@ -228,8 +230,9 @@ class Pipe:
         """
         # Get the current message ID from contextvars
         chat_id = __metadata__.get("chat_id", None)
+        session_id = __metadata__.get("session_id", None)
         message_id = __metadata__.get("message_id", None)
-        token = current_message_id.set(message_id)
+        token = current_session_id.set(session_id)
 
         # Merge user valve overrides (thread‑safe via ContextVar)
         user_valves = self.UserValves.model_validate(__user__.get("valves", {}))
@@ -240,9 +243,10 @@ class Pipe:
             getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
         )
 
-        try:
-            self.log.info("In pipe, get() returns: %s", extra={"message_id": message_id})
+        final_output = StringIO()
+        loop_count = -1
 
+        try:
             # Initialize aiohttp session (if not already done)
             self.session = await self._get_or_create_aiohttp_session()
 
@@ -253,7 +257,7 @@ class Pipe:
                 body["reasoning_effort"] = "high"  # Force high reasoning effort
 
             # log body to log
-            self.log.debug("Received request body: %s", json.dumps(body, indent=2, ensure_ascii=False))
+            # self.log.debug("Received request body: %s", json.dumps(body, indent=2, ensure_ascii=False))
 
             transformed_body = {
                 "model": model_id,
@@ -261,29 +265,28 @@ class Pipe:
                 "input": build_responses_history_by_chat_id_and_message_id(chat_id, message_id),
                 "stream": body.get("stream", False),
                 "user": __user__.get("email", "unknown_user"),
-                "store": True,
+                "store": valves.STORE_RESPONSE,
 
                 # Inline conditionals for optional parameters
                 **({"temperature": body["temperature"]} if "temperature" in body else {}),
                 **({"top_p": body["top_p"]} if "top_p" in body else {}),
                 **({"max_tokens": body["max_tokens"]} if "max_tokens" in body else {}),
-                
-                # Inline conditional for tools:
-                # Only include "tools" key if function calling is supported + enabled
+                **({"parallel_tool_calls": valves.PARALLEL_TOOL_CALLS} if valves.PARALLEL_TOOL_CALLS else {}),
+
+                # Conditionally add tools only if function calling is supported and enabled
                 **(
                     {
                         "tools": [
-                            # Always include transformed user-provided tools
                             *self.transform_tools_for_responses_api(__tools__),
 
-                            # Optionally add web_search tool
+                            # Conditionally include web_search
                             *(
                                 [self.web_search_tool(valves)]
-                                if (model_id in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH)
+                                if (model_id in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH ))
                                 else []
                             ),
 
-                            # Optionally add image_generation tool
+                            # Conditionally include image_generation
                             *(
                                 [self.image_generation_tool(valves)]
                                 if (model_id in FEATURE_SUPPORT["image_gen_tool"] and valves.ENABLE_IMAGE_GENERATION)
@@ -291,19 +294,24 @@ class Pipe:
                             ),
                         ]
                     }
-                    if (model_id in FEATURE_SUPPORT["function_calling"] and valves.ENABLE_NATIVE_TOOL_CALLING)
+                    if (
+                        model_id in FEATURE_SUPPORT["function_calling"] 
+                        and valves.ENABLE_NATIVE_TOOL_CALLING
+                    )
                     else {}
                 ),
 
-                # Reasoning: only add if the model supports reasoning AND (effort or summary) was specified
+                # Conditionally add reasoning dict if the model supports reasoning AND (effort or summary) was specified
                 **(
                     {
                         "reasoning": {
                             **({"effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}),
                             **(
                                 {"summary": valves.ENABLE_REASON_SUMMARY}
-                                if valves.ENABLE_REASON_SUMMARY
-                                and model_id in FEATURE_SUPPORT["reasoning_summary"]
+                                if (
+                                    valves.ENABLE_REASON_SUMMARY
+                                    and model_id in FEATURE_SUPPORT["reasoning_summary"]
+                                )
                                 else {}
                             ),
                         }
@@ -320,10 +328,17 @@ class Pipe:
                     )
                     else {}
                 ),
+
+                # Only include "include" if it's a reasoning model. Included encrypted reasoning tokens (important for multi-turn loops).
+                **(
+                    {
+                        "include": ["reasoning.encrypted_content"]
+                    }
+                    if model_id in FEATURE_SUPPORT["reasoning"]
+                    else {}
+                ),
             }
-            
-            # If native tool calling is enabled, metadata is NOT native, and model supports native function calling
-            # Body.tools is only populated if native function calling is enabled so tool calls will never be enabled the first iteration.  Determine if better method.
+
             # TODO THIS DOESN"T WORK YET.  NEED TO DEBUG WHY.
             if (
                 valves.ENABLE_NATIVE_TOOL_CALLING
@@ -332,44 +347,171 @@ class Pipe:
             ):
                 await self._enable_native_function_support(transformed_body["model"], __metadata__)
 
-            # write formated response to log
-            self.log.debug(
-                "OpenAI request payload: %s",
-                json.dumps(transformed_body, indent=2, ensure_ascii=False)
-            )
-
-            final_output = StringIO()
+            # Store everything except user messages in a single list
+            collected_items: list[dict[str, Any]] = []
+            calls_to_execute: list[dict[str, Any]] = []
+            total_usage = {}
 
             # Loop until there are no remaining tool calls or we hit the max loop count
             for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
-                if transformed_body["stream"]:
-                    # Streaming mode: yield partial responses to UI as they arrive
-                    async for event in self._stream_sse_events(
-                        transformed_body,
-                        valves.API_KEY,
-                        valves.BASE_URL,
-                    ):
-                        et = event.get("type")
+                # Output input history to log
+                self.log.debug("OpenAI Input payload: %s", json.dumps(transformed_body["input"], indent=2, ensure_ascii=False))
 
-                        # Yield partial text
-                        if et == "response.output_text.delta":
+                # Streaming mode: yield partial responses to UI as they arrive
+                if transformed_body["stream"]:
+                    async for event in self._stream_sse_events(transformed_body, valves.API_KEY, valves.BASE_URL):
+                        event_type = event.get("type")
+                        self.log.debug("Received SSE event: %s", event_type)
+
+                        # Yield LLM response text as it arrives
+                        if event_type == "response.output_text.delta":
                             delta = event.get("delta", "")
                             if delta:
                                 final_output.write(delta) # Append to final output. TBD If we use this.
                                 yield delta  # Yielding partial text to Open WebUI
                             
-                            continue # for speed
+                            continue # continue to next event
 
-                        # Capture tool calls
-                        if et == "response.output_item.done":
-                            print("Tool call done:", event.get("item", {}))
-                            continue
+                        # ─── when a tool STARTS ──────────────────────────────────────────────
+                        if event_type == "response.output_item.added":
+                            item = event.get("item", {})
+                            item_type = item.get("type", "")
+
+                            #write item to log for debugging
+                            self.log.debug("Tool call started: %s", item)
+
+                            if __event_emitter__:
+                                started = {
+                                    "web_search_call": [
+                                        "🔍 Hmm, let me quickly check online…",
+                                        "🔍 One sec—looking that up…",
+                                        "🔍 Just a moment, searching the web…",
+                                    ],
+                                    "function_call": [                       # {fn} will be replaced
+                                        "🛠️ Running the {fn} tool…",
+                                        "🛠️ Let me try {fn}…",
+                                        "🛠️ Calling {fn} real quick…",
+                                    ],
+                                    "file_search_call": [
+                                        "📂 Let me skim those files…",
+                                        "📂 One sec, scanning the documents…",
+                                        "📂 Checking the files right now…",
+                                    ],
+                                    "image_generation_call": [
+                                        "🎨 Let me create that image…",
+                                        "🎨 Give me a moment to sketch…",
+                                        "🎨 Working on your picture…",
+                                    ],
+                                    "local_shell_call": [
+                                        "💻 Let me run that command…",
+                                        "💻 Hold on, executing locally…",
+                                        "💻 Firing up that shell command…",
+                                    ],
+                                    "reasoning": [
+                                        "🧠 Thinking through this carefully...",
+                                        "🧠 Analyzing the problem step by step...",
+                                        "🧠 Let me work through this logically...",
+                                    ]
+                                }
+                                if item_type in started and __event_emitter__:
+                                    template = random.choice(started[item_type])
+                                    msg = template.format(fn=item.get("name", "a tool"))
+                                    await self._emit_status(__event_emitter__, msg, done=False, hidden=False)
+
+                            continue  # continue to next event
+
+                        # ─── when a tool FINISHES ──────────────────────────────────────────────
+                        elif event_type == "response.output_item.done":
+                            item = event.get("item", {})
+                            item_type = item.get("type", "")
+                            
+                            if __event_emitter__:
+                                finished = {
+                                    "web_search_call": [
+                                        "🔎 Got it—here's what I found!",
+                                        "🔎 All set—found that info!",
+                                        "🔎 Okay, done searching!",
+                                    ],
+                                    "function_call": [
+                                        "🛠️ Done—the tool finished!",
+                                        "🛠️ Got the results for you!",
+                                    ],
+                                    "file_search_call": [
+                                        "📂 Done checking files!",
+                                        "📂 Found what I needed!",
+                                        "📂 Got the documents ready!",
+                                    ],
+                                    "image_generation_call": [
+                                        "🎨 Your image is ready!",
+                                        "🎨 Picture's finished!",
+                                        "🎨 All done—image created!",
+                                    ],
+                                    "local_shell_call": [
+                                        "💻 Command complete!",
+                                        "💻 Finished running that!",
+                                        "💻 Shell task done!",
+                                    ],
+                                    "reasoning": [
+                                        "🧠 I've wrapped up my analysis!",
+                                        "🧠 Completed the logical analysis!",
+                                        "🧠 Done! Here's what I've reasoned out.",
+                                    ]
+                                }
+                                if item_type in finished and __event_emitter__:
+                                    template = random.choice(finished[item_type])
+                                    msg = template.format(fn=item.get("name", "Tool"))
+                                    await self._emit_status(__event_emitter__, msg, done=True, hidden=False)
+
+                            continue  # continue to next event
+
+                        # Capture tools from final output
+                        if event_type == "response.completed":
+                            self.log.debug("Response completed event received. Processing final output in current loop turn.")
+                            # 1) Parse the final response data
+                            response_data = event.get("response", {})
+                            output_items = response_data.get("output", [])
+
+                            # 2) Add them to the next iteration's input
+                            transformed_body["input"].extend(output_items)
+
+                            # 3) Accumulate for final DB save
+                            collected_items.extend(output_items)
+
+                            # 4) Filter out function calls that need executing
+                            calls_to_execute = [
+                                i for i in output_items if i.get("type") == "function_call"
+                            ]
+
+                            # 5) Merge usage, update total_usage, etc..
+                            response_usage = response_data.get("usage", {})
+                            for k, v in response_usage.items():
+                                if isinstance(v, dict):
+                                    total_usage.setdefault(k, {})
+                                    for sk, sv in v.items():
+                                        if isinstance(sv, (int, float)):
+                                            total_usage[k][sk] = total_usage[k].get(sk, 0) + sv
+                                        else:
+                                            total_usage[k][sk] = sv  # fallback for non-numeric
+                                elif isinstance(v, (int, float)):
+                                    total_usage[k] = total_usage.get(k, 0) + v
+                                else:
+                                    total_usage[k] = v  # fallback for non-numeric
+
+
+                            # Track additional stats
+                            total_usage["turn_count"] = total_usage.get("turn_count", 0) + 1
+                            total_usage["function_call_count"] = total_usage.get("function_call_count", 0) + len([
+                                item for item in output_items if item.get("type") == "function_call"
+                            ])
+
+                            continue # continue to next event
 
                     self.log.debug("Streaming complete. Finalizing response. Chat ID: %s, Message ID: %s",
                         __metadata__.get("chat_id", "unknown_chat"),
                         __metadata__.get("message_id", "unknown_message"),
                     )
 
+                # Non-streaming mode: generate a synchronous response
                 else:
                     self.log.info("Non-streaming mode. Generating a synchronous response.")
                     response_text = await self._non_streaming_response(
@@ -379,20 +521,69 @@ class Pipe:
                     )
                     yield response_text
 
+                # Process any pending function calls; append their results to input history and continue the loop
+                if calls_to_execute:
+                    self.log.debug(
+                        "Processing %d pending function calls", len(calls_to_execute)
+                    )
+                    # 1) Create tasks
+                    tasks = [
+                        (
+                            asyncio.sleep(0, result="Tool not found")  # If tool doesn't exist
+                            if not (tool := __tools__.get(call["name"]))
+                            else tool["callable"](**orjson.loads(call["arguments"]))  # Async tool
+                            if inspect.iscoroutinefunction(tool["callable"])
+                            else asyncio.to_thread(tool["callable"], **orjson.loads(call["arguments"]))  # Sync tool
+                        )
+                        for call in calls_to_execute
+                    ]
 
-                # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
-                if valves.LOG_LEVEL == "DEBUG" or user_valves.LOG_LEVEL != "INHERIT":
-                    self.log.debug("Debug log citation: %s", logs_by_msg_id)
-                    if __event_emitter__:
-                        logs = logs_by_msg_id.get(message_id, [])
-                        if logs:
-                            await self._emit_citation(
-                                __event_emitter__,
-                                "\n".join(logs),
-                                valves.LOG_LEVEL.capitalize() + " Logs",
-                            )
+                    # 2) Run tasks concurrently
+                    results = await asyncio.gather(*tasks)
 
-                break  # for now, we only handle one loop iteration
+                    # Build function_call_output items
+                    fc_outputs = [
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_obj["call_id"],
+                            "output": str(result),
+                        }
+                        for call_obj, result in zip(calls_to_execute, results)
+                    ]
+
+                    # Add these new outputs to the conversation input (so LLM sees them next iteration)
+                    transformed_body["input"].extend(fc_outputs)
+
+                    # Accumulate them in our single list for final DB storage
+                    collected_items.extend(fc_outputs)
+
+                    # 4) Clear pending function calls for the next loop iteration
+                    calls_to_execute.clear()
+
+                else:
+                    self.log.debug("No pending function calls. Exiting loop.")
+                    break # LLM response is complete, no further tool calls
+
+            # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
+            if collected_items:
+                db_items = [item for item in collected_items if item.get("type") != "message"]
+                if db_items:
+                    add_openai_response_items_to_chat_by_id_and_message_id(
+                        chat_id,
+                        message_id,
+                        db_items
+                    )
+
+            # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
+            if valves.LOG_LEVEL == "DEBUG" or user_valves.LOG_LEVEL != "INHERIT":
+                if __event_emitter__:
+                    logs = logs_by_msg_id.get(session_id, [])
+                    if logs:
+                        await self._emit_citation(
+                            __event_emitter__,
+                            "\n".join(logs),
+                            valves.LOG_LEVEL.capitalize() + " Logs",
+                        )
 
         except Exception as caught_exception:
             await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
@@ -400,28 +591,29 @@ class Pipe:
         finally:
             self.log.debug("Cleaning up resources after loop iteration %d", loop_count)
 
+            # Emit final completion event with the full output
             if __event_emitter__:
                 await self._emit_completion(
                     __event_emitter__,
                     {
                         "done": True,
-                        "content": final_output.getvalue(),
-                        "title": "test",
+                        "content": final_output.getvalue(), # I don't think we need to include content.
+                        **({"usage": total_usage} if total_usage else {}),
                     },
                 )
 
-            current_message_id.reset(token)
+            logs_by_msg_id.pop(session_id, None)
+            current_session_id.reset(token)
             current_log_level.reset(log_token)
-            logs_by_msg_id.pop(message_id, None)
 
             if __metadata__.get("task") is None:
+                #return # TODO: Remove this after we have implemented our own custom background helpers.
                 asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
                 await asyncio.sleep(0)
 
-    # --------------------------------------------------
-    #  4. Helpers (Streaming, Non-streaming, Logging, etc.)
-    # --------------------------------------------------
-
+    # ----------------------------------------------------------------------------------------------------
+    #  Helpers (Streaming, Non-streaming, Logging, etc.)
+    # ----------------------------------------------------------------------------------------------------
     async def _stream_sse_events(
         self,
         request_params: dict[str, Any],
@@ -547,7 +739,7 @@ class Pipe:
     ) -> None:
         """
         Logs the error and optionally emits data to the front-end UI.
-        If 'citation' is True, also emits the debug logs for the current message_id.
+        If 'citation' is True, also emits the debug logs for the current session_id.
         """
         error_message = str(error_obj)  # If it's an exception, convert to string
         self.log.error("Error: %s", error_message)
@@ -561,7 +753,7 @@ class Pipe:
 
             # 2) Optionally emit the citation with logs
             if show_error_log_citation:
-                msg_id = current_message_id.get()
+                msg_id = current_session_id.get()
                 logs = logs_by_msg_id.get(msg_id, [])
                 if logs:
                     await self._emit_citation(
@@ -571,7 +763,7 @@ class Pipe:
                     )
                 else:
                     self.log.warning(
-                        "No debug logs found for message_id %s", msg_id
+                        "No debug logs found for session_id %s", msg_id
                     )
 
     async def _emit_citation(
@@ -617,6 +809,40 @@ class Pipe:
             return
 
         await event_emitter({"type": "chat:completion", "data": data, "done": done})
+
+    async def _emit_status(
+        self,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        description: str,
+        *,
+        done: bool = False,
+        hidden: bool = False,
+    ) -> None:
+        """Emit a status event to the UI if possible."""
+        if event_emitter is None:
+            return
+
+        await event_emitter(
+            {
+                "type": "status",
+                "data": {"description": description, "done": done, "hidden": hidden},
+            }
+        )
+
+    async def _emit_notification(
+        self,
+        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        content: str,
+        *,
+        level: Literal["info", "success", "warning", "error"] = "info",
+    ) -> None:
+        """Emit a toast notification event to the UI if possible."""
+        if event_emitter is None:
+            return
+
+        await event_emitter(
+            {"type": "notification", "data": {"type": level, "content": content}}
+        )
 
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """
@@ -722,7 +948,7 @@ class Pipe:
                 "name": spec.get("name", name),
                 "description": spec.get("description", ""),
                 "parameters": spec.get("parameters", {}),
-                "strict": True
+                "strict": False # Revisit in future if I can get strict working (or if I should at all)
             })
         return items
 
@@ -745,9 +971,9 @@ class Pipe:
             tool["output_compression"] = valves.IMAGE_COMPRESSION
         return tool
 
-# ---------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 #  Public helpers ─ mirror Chats.* naming style
-# ---------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 """
 Helpers to persist OpenAI responses safely in Open WebUI DB without impacting other
 chat data. This allows us to store function call traces, tool outputs, and other
@@ -922,26 +1148,4 @@ def build_responses_history_by_chat_id_and_message_id(
         })
 
     return final
-
-
                   
-"""
-call_id = uuid.uuid4()        # serialisable!
-add_openai_response_items_to_chat_by_id_and_message_id(
-    chat_id     = chat_id,
-    message_id  = message_id,
-    items=[
-        {
-            "type":      "function_call",
-            "call_id":   str(call_id),
-            "name":      "weather.lookup",
-            "arguments": json.dumps({"city": "Berlin"}),
-        },
-        {
-            "type":   "function_call_output",
-            "call_id": str(call_id),
-            "output":  json.dumps({"temp_c": 22.1, "condition": "Cloudy"}),
-        },
-    ],
-)
-"""

@@ -7,7 +7,7 @@ A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](
 - `functions/pipes/` – self‑contained pipes
 - `functions/filters/` – reusable filters
 - `tools/` – standalone tools
-- `docs/` – notes about WebUI internals (useful for thoses creating their own filters / pipes / tools).
+- `docs/` – notes about WebUI internals (useful for those creating their own filters, pipes or tools).
 
 Each subdirectory has a small README explaining its contents.
 
@@ -17,9 +17,11 @@ This repo uses three long‑lived branches:
 
 1. **`development`** – active development and experiments; may break.
 2. **`alpha-preview`** – next release candidate. More stable than `development`.
-3. **`main`** – production‑ready code pulled from `beta`.
+3. **`main`** – production‑ready code pulled from `alpha-preview`.
 
-Feature work typically happens in short‑lived branches, merged into `development` via pull requests. Changes are prompted from `dev` → `alpha-preview` → and finally `main` after testing.
+Feature work typically happens in short‑lived branches, merged into `development` via pull requests.
+
+Changes flow from `development` → `alpha-preview` → `main` after testing.
 
 ## Installing Toolkit Locally (for developers)
 ```bash
