@@ -16,8 +16,10 @@ import datetime
 import inspect
 import json
 import random
+import re
 import sys
 import os
+import time
 import aiohttp
 import logging
 import orjson
@@ -43,7 +45,7 @@ FEATURE_SUPPORT = {
     "image_gen_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
     "function_calling": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini"}, # OpenAI's native function calling support.
     "reasoning": {"o3", "o4-mini", "o3-mini"}, # OpenAI's reasoning models.
-    "reasoning_summary": {"o3", "o4-mini", "o3-mini"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high" }, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 }
 
 # A global context var storing the current message ID
@@ -69,7 +71,7 @@ class Pipe:
             default="gpt-4.1, gpt-4o",
             description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
         )
-        ENABLE_REASON_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
+        ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
             description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
@@ -307,26 +309,16 @@ class Pipe:
                         "reasoning": {
                             **({"effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}),
                             **(
-                                {"summary": valves.ENABLE_REASON_SUMMARY}
+                                {"summary": valves.ENABLE_REASONING_SUMMARY}
                                 if (
-                                    valves.ENABLE_REASON_SUMMARY
+                                    valves.ENABLE_REASONING_SUMMARY
                                     and model_id in FEATURE_SUPPORT["reasoning_summary"]
                                 )
                                 else {}
                             ),
                         }
                     }
-                    if (
-                        model_id in FEATURE_SUPPORT["reasoning"]
-                        and (
-                            "reasoning_effort" in body
-                            or (
-                                valves.ENABLE_REASON_SUMMARY
-                                and model_id in FEATURE_SUPPORT["reasoning_summary"]
-                            )
-                        )
-                    )
-                    else {}
+                    if (model_id in FEATURE_SUPPORT["reasoning"]) else {}
                 ),
 
                 # Only include "include" if it's a reasoning model. Included encrypted reasoning tokens (important for multi-turn loops).
@@ -338,6 +330,9 @@ class Pipe:
                     else {}
                 ),
             }
+
+            # Log transformed_body
+            self.log.debug("Transformed OpenAI request body: %s", json.dumps(transformed_body, indent=2, ensure_ascii=False))
 
             # TODO THIS DOESN"T WORK YET.  NEED TO DEBUG WHY.
             if (
@@ -351,6 +346,7 @@ class Pipe:
             collected_items: list[dict[str, Any]] = []
             calls_to_execute: list[dict[str, Any]] = []
             total_usage = {}
+            reasoning_map = {}  # Stores reasoning text per summary_index
 
             # Loop until there are no remaining tool calls or we hit the max loop count
             for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
@@ -372,13 +368,53 @@ class Pipe:
                             
                             continue # continue to next event
 
+                        if event_type == "response.reasoning_summary_text.delta":
+                            """
+                            {
+                                "type": "response.reasoning_summary_text.delta",
+                                "sequence_number": 4,
+                                "item_id": "rs_683cb68e9c288191834748f19371ec6d054ca102265734cd",
+                                "output_index": 0,
+                                "summary_index": 0,
+                                "delta": "**Evalu"
+                            }
+                            """
+                            idx = event.get("summary_index", 0)
+                            delta = event.get("delta", "")
+                            if delta:
+                                # 1) Accumulate for this summary_index
+                                reasoning_map[idx] = reasoning_map.get(idx, "") + delta
+
+                                # 2) Merge all blocks (sorted), separated by ---
+                                all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
+
+                                # 3) Extract latest title, else fallback to 'Thinking...'
+                                matches = re.findall(r"\*\*(.+?)\*\*", all_text, flags=re.DOTALL)
+                                latest_title = matches[-1].strip() if matches else "Thinking..."
+
+                                # 4) Build a minimal snippet (omit type="reasoning")
+                                snippet = (
+                                    "<details done=\"false\">\n"
+                                    f"<summary>🧠{latest_title}</summary>\n"
+                                    f"{all_text}\n"
+                                    "</details>"
+                                )
+
+                                # 5) Emit to the front end
+                                await __event_emitter__({
+                                    "type": "chat:completion",
+                                    "data": {"content": snippet},
+                                })
+
+                            continue
+
                         # ─── when a tool STARTS ──────────────────────────────────────────────
                         if event_type == "response.output_item.added":
                             item = event.get("item", {})
                             item_type = item.get("type", "")
 
                             #write item to log for debugging
-                            self.log.debug("Tool call started: %s", item)
+                            self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
 
                             if __event_emitter__:
                                 started = {
@@ -406,11 +442,6 @@ class Pipe:
                                         "💻 Let me run that command…",
                                         "💻 Hold on, executing locally…",
                                         "💻 Firing up that shell command…",
-                                    ],
-                                    "reasoning": [
-                                        "🧠 Thinking through this carefully...",
-                                        "🧠 Analyzing the problem step by step...",
-                                        "🧠 Let me work through this logically...",
                                     ]
                                 }
                                 if item_type in started and __event_emitter__:
@@ -450,17 +481,31 @@ class Pipe:
                                         "💻 Command complete!",
                                         "💻 Finished running that!",
                                         "💻 Shell task done!",
-                                    ],
-                                    "reasoning": [
-                                        "🧠 I've wrapped up my analysis!",
-                                        "🧠 Completed the logical analysis!",
-                                        "🧠 Done! Here's what I've reasoned out.",
                                     ]
                                 }
                                 if item_type in finished and __event_emitter__:
                                     template = random.choice(finished[item_type])
                                     msg = template.format(fn=item.get("name", "Tool"))
                                     await self._emit_status(__event_emitter__, msg, done=True, hidden=False)
+
+                            if item_type == "reasoning":
+                                # Merge all partial reasoning so far
+                                all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
+
+                                if all_text:
+                                    final_snippet = (
+                                        '<details done="true">\n'
+                                        f"<summary>Done thinking!</summary>\n"
+                                        f"{all_text}\n"
+                                        "</details>"
+                                    )
+
+                                    # append to final_output
+                                    final_output.write(final_snippet + "\n")
+
+                                    yield final_snippet
+                                else:
+                                    await self._emit_status(__event_emitter__, "Done thinking!", done=True, hidden=False)
 
                             continue  # continue to next event
 
@@ -607,7 +652,7 @@ class Pipe:
             current_log_level.reset(log_token)
 
             if __metadata__.get("task") is None:
-                #return # TODO: Remove this after we have implemented our own custom background helpers.
+                return # TODO: Remove this after we have implemented our own custom background helpers.
                 asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
                 await asyncio.sleep(0)
 
@@ -821,7 +866,7 @@ class Pipe:
         """Emit a status event to the UI if possible."""
         if event_emitter is None:
             return
-
+        
         await event_emitter(
             {
                 "type": "status",
