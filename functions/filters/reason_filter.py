@@ -22,5 +22,5 @@ class Filter:
         return body
 
     async def outlet(self, body: dict) -> dict:
-        body["selected_model_id"] = self.valves.MODEL
+        # TODO: Figure out how to update the UI / model in DB so user can see that it used a different model.
         return body
