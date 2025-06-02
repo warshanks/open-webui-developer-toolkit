@@ -1,7 +1,7 @@
 """
-title: Search the web
+title: Search
 id: web_search_toggle_filter
-description: Enable GPT-4o Search Preview when the Web Search toggle is active.
+description: Search the web
 """
 
 from __future__ import annotations
