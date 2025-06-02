@@ -57,3 +57,26 @@ schema looks like this:
 
 Items are stored verbatim as produced by the Responses API to ensure forward
 compatibility with new fields and event types.
+
+## Core Concepts
+
+- **Responses Endpoint** – Uses OpenAI's `responses` API instead of the classic
+  completions backend. This unlocks features such as native tool calling,
+  reasoning traces and image generation.
+- **Valves** – Each configuration option is exposed as a valve so behaviour can
+  be tweaked without editing the code. See the source file for defaults.
+- **History Reconstruction** – Stored items are replayed when building new
+  requests so tools continue exactly where they left off.
+- **Tool Result Persistence** – Outputs from tools are kept alongside messages
+  which allows them to be shown again later in the UI.
+- **Encrypted Reasoning Tokens** – Reasoning models may return an
+  `encrypted_content` token which is stored for faster follow‑up queries.
+
+## Changelog
+
+| Version | Highlights |
+| ------- | ---------- |
+| **1.7.0** | Bind response items to the originating model and improve reasoning token handling. |
+| **1.6.0** | Added detailed tag filtering and the ability to remove reasoning blocks from history. |
+| **1.5.0** | Introduced model tagging for stored items and expanded test coverage. |
+| **1.4.0** | Initial release of the OpenAI Responses Manifold pipeline. |
