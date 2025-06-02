@@ -7,10 +7,14 @@ A pipeline that integrates the OpenAI Responses API into Open WebUI. It exposes 
 | Feature | Status |
 | ------- | ------ |
 | Web search tool | ✅ Supported |
-| Image generation tool | ✅ Supported |
+| Image generation tool | ⚠️ In development |
 | Native function calling | ✅ Supported |
 | Reasoning models | ✅ Supported |
-| Reasoning summary | ⚠️ In development |
+| Store encrypted reasoning tokens | ✅ Supported |
+| Reasoning summaries | ✅ Supported |
+| File upload | ⚠️ In development |
+| Image input | ⚠️ In development |
+| Optimized for token caching | ✅ Supported |
 
 ## Installation
 
