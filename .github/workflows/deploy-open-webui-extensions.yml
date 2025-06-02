@@ -90,10 +90,9 @@ jobs:
           WEBUI_URL: ${{ env.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}   # secret stored per-environment
         run: |
-          echo "${{ steps.changed.outputs.all_changed_files }}" \
-            | jq -r '.[]' \
+          jq -r '.[]' <<< "${{ steps.changed.outputs.all_changed_files }}" \
             | while IFS= read -r file; do
-                echo "Publishing $file to '${{ matrix.environment_name }}'…"
+              echo "Publishing $file to '${{ matrix.environment_name }}'…"
                 # Determine plugin type from path
                 if [[ "$file" == functions/pipes/* ]]; then
                   type=pipe
