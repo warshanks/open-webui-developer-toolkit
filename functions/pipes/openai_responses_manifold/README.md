@@ -31,3 +31,29 @@ The pipe exposes multiple valves to tweak behaviour. The most common ones are:
 - `LOG_LEVEL` – Control per‑message logging level.
 
 See the source file for the full list of valves and defaults.
+
+## Stored Response Schema
+
+When a message triggers function calls or other events, the resulting items are
+stored in the chat document under `openai_responses_pipe`. Version `2` of the
+schema looks like this:
+
+```json
+{
+  "openai_responses_pipe": {
+    "__v": 2,
+    "messages": {
+      "<message_id>": {
+        "model": "o4-mini",
+        "created_at": 1719922512,
+        "items": [
+          {"type": "function_call", ...}
+        ]
+      }
+    }
+  }
+}
+```
+
+Items are stored verbatim as produced by the Responses API to ensure forward
+compatibility with new fields and event types.
