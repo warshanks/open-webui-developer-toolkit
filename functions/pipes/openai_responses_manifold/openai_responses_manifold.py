@@ -266,7 +266,11 @@ class Pipe:
             transformed_body = {
                 "model": model_id,
                 "instructions": next((msg["content"] for msg in reversed(body.get("messages", [])) if msg.get("role") == "system"), ""),
-                "input": build_responses_history_by_chat_id_and_message_id(chat_id, message_id),
+                "input": build_responses_history_by_chat_id_and_message_id(
+                    chat_id,
+                    message_id,
+                    model_id=model_id,
+                ),
                 "stream": body.get("stream", False),
                 "user": __user__.get("email", "unknown_user"),
                 "store": valves.STORE_RESPONSE,
@@ -613,12 +617,17 @@ class Pipe:
 
             # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
             if collected_items:
-                db_items = [item for item in collected_items if item.get("type") != "message"]
+                db_items = [
+                    item
+                    for item in collected_items
+                    if item.get("type") != "message"
+                ]
                 if db_items:
                     add_openai_response_items_to_chat_by_id_and_message_id(
                         chat_id,
                         message_id,
-                        db_items
+                        db_items,
+                        model_id=model_id,
                     )
 
             # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
@@ -1059,13 +1068,20 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     chat_id: str,
     message_id: str,
     items: List[Dict[str, Any]],
+    *,
+    model_id: str | None = None,
 ) -> Optional[ChatModel]:
     """
     Append JSON-serializable items under chat.openai_responses_pipe.messages[message_id].
-    Returns the updated ChatModel or None if the chat is not found.
+    If ``model_id`` is given, each item will be tagged with that model unless
+    a ``model`` field already exists. Returns the updated ChatModel or ``None``
+    if the chat is not found.
     """
     if not items:
         return Chats.get_chat_by_id(chat_id)  # nothing to add
+
+    if model_id is not None:
+        items = [{**i, "model": i.get("model", model_id)} for i in items]
 
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
@@ -1116,13 +1132,18 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
 def build_responses_history_by_chat_id_and_message_id(
-    chat_id: str, 
-    message_id: Optional[str] = None
+    chat_id: str,
+    message_id: Optional[str] = None,
+    *,
+    model_id: str | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Reconstructs a chain of messages up to `message_id` (or the currentId)
     and inserts any items from `openai_responses_pipe.messages[<msg-id>]`
-    before the corresponding message.
+    before the corresponding message. If `model_id` is given, any stored items
+    with a differing `model` field are skipped. This allows switching models
+    without feeding incompatible tokens (e.g. reasoning output) back to a
+    model that doesn't support them.
 
     Returns a list of items the OpenAI Responses API expects:
       [
@@ -1160,6 +1181,8 @@ def build_responses_history_by_chat_id_and_message_id(
 
         # 1) Pipe items (function_call, function_call_output, etc.) go first
         extras = pipe_messages.get(msg_id, [])
+        if model_id is not None:
+            extras = [x for x in extras if x.get("model") in (None, model_id)]
         if extras:
             final.extend(extras)
 
