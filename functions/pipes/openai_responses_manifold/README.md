@@ -31,10 +31,3 @@ The pipe exposes multiple valves to tweak behaviour. The most common ones are:
 - `LOG_LEVEL` – Control per‑message logging level.
 
 See the source file for the full list of valves and defaults.
-
-### Stored response items
-
-When the pipe persists tool calls or reasoning output it writes them under
-`chat.openai_responses_pipe.messages[<message_id>]`. Each stored item now also
-records the model that produced it so history reconstruction can skip
-incompatible data when switching models.
