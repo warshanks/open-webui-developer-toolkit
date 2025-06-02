@@ -19,7 +19,6 @@ import random
 import re
 import sys
 import os
-import time
 import aiohttp
 import logging
 import orjson
@@ -56,6 +55,9 @@ current_log_level = ContextVar("current_log_level", default=logging.INFO)
 
 # In-memory logs keyed by message ID
 logs_by_msg_id = defaultdict(list)
+
+# Precompiled regex for stripping <details> blocks from assistant text
+DETAILS_RE = re.compile(r"<details\b[^>]*>.*?<\/details>", flags=re.S | re.I)
 
 class Pipe:
     class Valves(BaseModel):
@@ -1162,6 +1164,8 @@ def build_responses_history_by_chat_id_and_message_id(
             # If it's a simple string, treat it as text
             if isinstance(part, str):
                 text = part.strip()
+                if role == "assistant":
+                    text = DETAILS_RE.sub("", text).strip()
                 if text:
                     content_blocks.append({
                         "type": "input_text" if role == "user" else "output_text",
@@ -1179,6 +1183,8 @@ def build_responses_history_by_chat_id_and_message_id(
                     # fallback to text
                     text_str = part.get("text") or part.get("content", "")
                     text_str = text_str.strip()
+                    if role == "assistant":
+                        text_str = DETAILS_RE.sub("", text_str).strip()
                     if text_str:
                         content_blocks.append({
                             "type": "input_text" if role == "user" else "output_text",
