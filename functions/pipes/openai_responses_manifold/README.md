@@ -2,6 +2,8 @@
 
 Integrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
 
+**Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
+
 ## Table of Contents
 - [Installation](#installation)
 - [Features](#features)
