@@ -266,7 +266,11 @@ class Pipe:
             transformed_body = {
                 "model": model_id,
                 "instructions": next((msg["content"] for msg in reversed(body.get("messages", [])) if msg.get("role") == "system"), ""),
-                "input": build_responses_history_by_chat_id_and_message_id(chat_id, message_id),
+                "input": build_responses_history_by_chat_id_and_message_id(
+                    chat_id,
+                    message_id,
+                    model_id=model_id,
+                ),
                 "stream": body.get("stream", False),
                 "user": __user__.get("email", "unknown_user"),
                 "store": valves.STORE_RESPONSE,
@@ -495,6 +499,8 @@ class Pipe:
                                 all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
 
                                 if all_text:
+                                    all_text += "\n\n --- \n\n"
+                                    
                                     final_snippet = (
                                         f'<details type=\"{__name__}.reasoning\" done="true">\n'
                                         f"<summary>Done thinking!</summary>\n"
@@ -618,7 +624,8 @@ class Pipe:
                     add_openai_response_items_to_chat_by_id_and_message_id(
                         chat_id,
                         message_id,
-                        db_items
+                        db_items,
+                        model_id,
                     )
 
             # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
@@ -1033,17 +1040,16 @@ Inside each chat document (`chat_model.chat`), we store an `openai_responses_pip
 
     {
       "openai_responses_pipe": {
-        "__v": 1,                           # version
+        "__v": 2,                           # version
+
         "messages": {
-          "<message_id>": [
-            {
-              "type": "<str>",              # e.g. "function_call"
-              ...                           # any JSON-serializable fields
-            },
-            ...
-          ],
-          ...
-        }
+          "<message_id>": {
+            "model": "o4-mini",          # stamped once – avoids per-item duplication
+            "created_at": 1719922512,    # unix-seconds the root message arrived
+
+            "items": [ /* raw output items in arrival order */ ]
+          }
+        },
       }
     }
 
@@ -1059,6 +1065,7 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     chat_id: str,
     message_id: str,
     items: List[Dict[str, Any]],
+    model_id: str,
 ) -> Optional[ChatModel]:
     """
     Append JSON-serializable items under chat.openai_responses_pipe.messages[message_id].
@@ -1071,9 +1078,21 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     if not chat_model:
         return None
 
-    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 1})
+    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 2})
     messages_dict = pipe_root.setdefault("messages", {})
-    messages_dict.setdefault(message_id, []).extend(items)
+
+    bucket = messages_dict.setdefault(
+        message_id,
+        {
+            "model": model_id,
+            "created_at": int(datetime.datetime.utcnow().timestamp()),
+            "items": [],
+        },
+    )
+    bucket.setdefault("model", model_id)
+    bucket.setdefault("created_at", int(datetime.datetime.utcnow().timestamp()))
+    bucket.setdefault("items", [])
+    bucket["items"].extend(items)
 
     return Chats.update_chat_by_id(chat_id, chat_model.chat)
 
@@ -1083,6 +1102,7 @@ def get_openai_response_items_by_chat_id_and_message_id(
     message_id: str,
     *,
     type_filter: Optional[str] = None,
+    model_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Return stored items from chat.openai_responses_pipe.messages[message_id].
@@ -1092,12 +1112,17 @@ def get_openai_response_items_by_chat_id_and_message_id(
     if not chat_model:
         return []
 
-    all_items = (
+    bucket = (
         chat_model.chat
         .get("openai_responses_pipe", {})
         .get("messages", {})
-        .get(message_id, [])
+        .get(message_id, {})
     )
+
+    if model_id and bucket.get("model") != model_id:
+        return []
+
+    all_items = bucket.get("items", [])
     if not type_filter:
         return all_items
     return [x for x in all_items if x.get("type") == type_filter]
@@ -1116,8 +1141,10 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
 def build_responses_history_by_chat_id_and_message_id(
-    chat_id: str, 
-    message_id: Optional[str] = None
+    chat_id: str,
+    message_id: Optional[str] = None,
+    *,
+    model_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Reconstructs a chain of messages up to `message_id` (or the currentId)
@@ -1159,7 +1186,10 @@ def build_responses_history_by_chat_id_and_message_id(
         msg_id = msg["id"]
 
         # 1) Pipe items (function_call, function_call_output, etc.) go first
-        extras = pipe_messages.get(msg_id, [])
+        bucket = pipe_messages.get(msg_id, {})
+        extras = []
+        if bucket and (not model_id or bucket.get("model") == model_id):
+            extras = bucket.get("items", [])
         if extras:
             final.extend(extras)
 

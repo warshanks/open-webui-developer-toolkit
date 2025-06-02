@@ -6,3 +6,4 @@ This folder stores internal notes and planning documents for extensions. Files h
 - `chat_title.md` – *(coming soon)* how chat titles are generated and updated.
 - `events.md` – how to emit live UI events using `__event_emitter__` and `__event_call__`.
 - `file_storage.md` – where uploaded files and generated images are kept and how to attach them to chats.
+- `responses_manifold.md` – front-end overview of the OpenAI Responses manifold and why it persists data.

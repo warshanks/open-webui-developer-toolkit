@@ -1,6 +1,6 @@
 """
 title: Create an Image
-id: create_image_filter
+id: create_image_toggle_filter
 description: Injects the image_generation tool with configurable size and quality.
 """
 
