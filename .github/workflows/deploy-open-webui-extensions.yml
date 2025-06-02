@@ -80,9 +80,9 @@ jobs:
       - name: Load environment variables
         id: load-env
         run: |
-          # These variables are defined per-environment via GitHub "vars"
-          echo "TARGET_BRANCH=${{ vars.TARGET_BRANCH }}" >> $GITHUB_ENV
-          echo "WEBUI_URL=${{ vars.WEBUI_URL }}" >> $GITHUB_ENV
+          # This environment variable is stored in each environment's config
+          echo "TARGET_BRANCH=${{ env.TARGET_BRANCH }}" >> $GITHUB_ENV
+          echo "WEBUI_URL=${{ env.WEBUI_URL }}" >> $GITHUB_ENV
 
       - name: Deploy
         if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name == env.TARGET_BRANCH }}
