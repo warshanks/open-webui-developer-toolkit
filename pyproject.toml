@@ -6,17 +6,17 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "httpx",
+  "httpx-aiohttp",
   "fastapi",
-  "pydantic",
-  "requests"
+  "pydantic>=2",
 ]
 
 [project.optional-dependencies]
 dev = [
   "ruff",
   "pytest",
+  "pytest-asyncio",
   "pytest-cov",
-  "pre-commit",
   "nox"
 ]
 
@@ -27,7 +27,12 @@ build-backend = "setuptools.build_meta"
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["functions", "tools", ".tests", ".scripts"]
+select = ["ALL"]
+ignore = ["D203", "D212"]
+fix = true
+show-fixes = true
+src = ["functions", "tools"]
+extend-exclude = ["external", "open-webui"]
 
 [tool.setuptools.packages.find]
 exclude = [
@@ -37,6 +42,15 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-# Only collect tests from our local ``tests`` directory
 testpaths = [".tests"]
-addopts = "-ra --import-mode=importlib --cov=openwebui_devtoolkit --cov-report=term-missing"
+pythonpath = [
+  "external/open-webui/backend"
+]
+addopts = """
+-ra
+--import-mode=importlib
+--cov=functions
+--cov=tools
+--cov-report=term-missing
+--asyncio-mode=auto
+"""

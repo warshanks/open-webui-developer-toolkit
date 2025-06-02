@@ -1,78 +1,57 @@
-import types
 import sys
-from importlib.util import spec_from_file_location, module_from_spec
-from pathlib import Path
-from unittest.mock import patch
+import types
 
-import pytest
+# Create stubs for open_webui modules used by the pipeline
+open_webui = types.ModuleType("open_webui")
+models_mod = types.ModuleType("open_webui.models")
+chats_mod = types.ModuleType("open_webui.models.chats")
 
+class Chats:
+    @staticmethod
+    def get_chat_by_id(chat_id):
+        return None
 
-@pytest.fixture
-def dummy_chat(monkeypatch):
-    """Provide a dummy chat object and patch ``open_webui`` imports."""
-    chat = {"history": {"currentId": None, "messages": {}}}
+class ChatModel:
+    def __init__(self, chat=None):
+        self.chat = chat or {}
 
-    def get_chat_by_id(_):
-        return types.SimpleNamespace(chat=chat)
+chats_mod.Chats = Chats
+chats_mod.ChatModel = ChatModel
 
-    def get_message_by_id_and_message_id(_, message_id):
-        return chat["history"].get("messages", {}).get(message_id, {})
+models_models_mod = types.ModuleType("open_webui.models.models")
+class Models:
+    @staticmethod
+    def get_model_by_id(model_id):
+        return None
 
-    def upsert_message_to_chat_by_id_and_message_id(_, message_id, message):
-        history = chat.setdefault("history", {"messages": {}, "currentId": None})
-        msgs = history.setdefault("messages", {})
-        msgs[message_id] = {**msgs.get(message_id, {}), **message}
-        history["currentId"] = message_id
+    @staticmethod
+    def update_model_by_id(model_id, model_form):
+        return False
 
-    chats_mod = types.ModuleType("open_webui.models.chats")
-    chats_mod.Chats = types.SimpleNamespace(
-        get_chat_by_id=get_chat_by_id,
-        get_message_by_id_and_message_id=get_message_by_id_and_message_id,
-        upsert_message_to_chat_by_id_and_message_id=upsert_message_to_chat_by_id_and_message_id,
-    )
+class ModelForm:
+    def __init__(self, **kwargs):
+        pass
 
-    modules = {
-        "open_webui": types.ModuleType("open_webui"),
-        "open_webui.models": types.ModuleType("open_webui.models"),
-        "open_webui.models.chats": chats_mod,
-        "open_webui.utils": types.ModuleType("open_webui.utils"),
-        "open_webui.utils.misc": types.ModuleType("open_webui.utils.misc"),
-        "httpx": types.ModuleType("httpx"),
-    }
+class ModelParams:
+    def __init__(self, **kwargs):
+        pass
 
-    models_mod = types.ModuleType("open_webui.models.models")
+models_models_mod.Models = Models
+models_models_mod.ModelForm = ModelForm
+models_models_mod.ModelParams = ModelParams
 
-    class ModelForm:
-        def __init__(self, **data):
-            for k, v in data.items():
-                setattr(self, k, v)
+utils_mod = types.ModuleType("open_webui.utils")
+misc_mod = types.ModuleType("open_webui.utils.misc")
 
-    models_mod.ModelForm = ModelForm
-    models_mod.ModelParams = ModelForm
-    models_mod.Models = types.SimpleNamespace(
-        get_model_by_id=lambda _id: None,
-        update_model_by_id=lambda _id, form: None,
-    )
+def get_message_list(*args, **kwargs):
+    return []
 
-    modules["open_webui.models.models"] = models_mod
+misc_mod.get_message_list = get_message_list
+utils_mod.misc = misc_mod
 
-    modules["open_webui.utils.misc"].deep_update = lambda d, u: {**d, **u}
-    def _get_msg_list(msgs, mid):
-        out = []
-        curr = msgs.get(mid)
-        while curr:
-            out.insert(0, curr)
-            mid = curr.get("parentId")
-            curr = msgs.get(mid) if mid else None
-        return out
-
-    modules["open_webui.utils.misc"].get_message_list = _get_msg_list
-
-    with patch.dict(sys.modules, modules):
-        path = Path(__file__).resolve().parents[1] / "functions" / "pipes" / "openai_responses_api_pipeline.py"
-        spec = spec_from_file_location("openai_responses_api_pipeline", path)
-        pipeline = module_from_spec(spec)
-        sys.modules[spec.name] = pipeline
-        spec.loader.exec_module(pipeline)
-        monkeypatch.setattr(pipeline, "Chats", chats_mod.Chats, raising=False)
-        yield chat
+sys.modules.setdefault("open_webui", open_webui)
+sys.modules.setdefault("open_webui.models", models_mod)
+sys.modules.setdefault("open_webui.models.chats", chats_mod)
+sys.modules.setdefault("open_webui.models.models", models_models_mod)
+sys.modules.setdefault("open_webui.utils", utils_mod)
+sys.modules.setdefault("open_webui.utils.misc", misc_mod)
