@@ -652,7 +652,7 @@ class Pipe:
             current_log_level.reset(log_token)
 
             if __metadata__.get("task") is None:
-                #return # TODO: Remove this after we have implemented our own custom background helpers.
+                return # TODO: Remove this after we have implemented our own custom background helpers.
                 asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
                 await asyncio.sleep(0)
 
