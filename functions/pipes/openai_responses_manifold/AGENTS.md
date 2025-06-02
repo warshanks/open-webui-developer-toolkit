@@ -18,3 +18,13 @@ following the rules above **and** add an entry to `CHANGELOG.md` under a new
 heading `## [x.y.z] - YYYY-MM-DD` describing the change.
 
 Documentation-only edits do not require a version bump.
+
+## Code Style and Testing
+
+Run `pre-commit` before committing changes. This executes **ruff** and the
+pipeline's unit tests to ensure style and importability remain intact.
+
+## README
+
+If you add new valves or features, update the table in `README.md` so that the
+documentation stays in sync with the source file.
