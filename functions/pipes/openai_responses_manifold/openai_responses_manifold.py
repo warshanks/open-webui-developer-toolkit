@@ -499,6 +499,8 @@ class Pipe:
                                 all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
 
                                 if all_text:
+                                    all_text += "\n\n --- \n\n"
+                                    
                                     final_snippet = (
                                         f'<details type=\"{__name__}.reasoning\" done="true">\n'
                                         f"<summary>Done thinking!</summary>\n"
