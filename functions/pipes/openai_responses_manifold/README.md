@@ -1,86 +1,167 @@
 # OpenAI Responses Manifold
 
-A pipeline that integrates the OpenAI Responses API into Open WebUI. It exposes various OpenAI features such as native tool calling, image generation and web search while keeping compatibility with the WebUI event system.
-
-## Features
-
-| Feature | Status |
-| ------- | ------ |
-| Web search tool | ✅ Supported |
-| Image generation tool | ⚠️ In development |
-| Native function calling | ✅ Supported |
-| Reasoning models | ✅ Supported |
-| Store encrypted reasoning tokens | ✅ Supported |
-| Reasoning summaries | ✅ Supported |
-| File upload | ⚠️ In development |
-| Image input | ⚠️ In development |
-| Optimized for token caching | ✅ Supported |
+A pipeline integrating OpenAI's Responses API into Open WebUI, exposing various advanced OpenAI features like web search tool, visible reasoning summaries, etc... that are ONLY available via the Responses API.
 
 ## Installation
 
-1. Copy `openai_responses_manifold.py` into your Open WebUI instance under **Admin ▸ Pipelines**.
-2. Activate the pipe and configure valves as needed.
+1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin ▸ Pipelines**.
+2. Activate and configure valves as needed.
+
+---
+
+### Features
+
+| **Feature**                 | **Status** | **Notes**                                                                                                     |
+| --------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| Native function calling     | ✅ GA       | Enable with `ENABLE_NATIVE_TOOL_CALLING`.                                                                     |
+| Visible reasoning summaries | ✅ GA       | Insight into *o-series* model thinking (Responses API only).                                                  |
+| Encrypted reasoning tokens  | ✅ GA       | Persists reasoning context across turns (Responses API only).                                                 |
+| Optimized token caching     | ✅ GA       | Saves ≈ 50 – 75 % tokens on tuned models.                                                                     |
+| Web search tool             | ✅ GA       | Exposed as a tool so the model chooses when to search, or toggle manually with `web_search_toggle_filter.py`. |
+| Image generation            | ⚠️ Planned | Coming soon.                                                                                                  |
+| Image input (vision)        | ⚠️ Planned | Vision support slated for a future release.                                                                   |
+| File upload                 | ⚠️ Planned | Upload & parse files in the pipeline roadmap.                                                                 |
+
+### Other Quality of Life Improvements
+
+* **Pseudo-models**:
+
+  * `o3-mini-high`: Alias for `o3-mini` with enforced high reasoning effort.
+  * `o4-mini-high`: Alias for `o4-mini` with enforced high reasoning effort.
+
+* **Debug Logging**:
+
+  * When `LOG_LEVEL` is set to `debug`, detailed logs are emitted as in‑message citations.
+  * Set globally at pipe level or per user via user valve (`user` valve overrides global setting).
+
+### Tested Models
+
+All models that support the responses API should work.  Below are the models that have been tested:
+
+| Model ID          | Status | Notes                                              |
+| ----------------- | ------ | -------------------------------------------------- |
+| chatgpt-4o-latest | ✅      | Fully compatible.                                  |
+| codex-mini-latest | ✅      | Fully compatible.                                  |
+| gpt-4.1           | ✅      | Fully compatible.                                  |
+| gpt-4o            | ✅      | Fully compatible.                                  |
+| o3                | ✅      | Fully compatible.                                  |
+---
+
+# Documentation
 
 ## Valves
 
-The pipe exposes multiple valves to tweak behaviour. The most common ones are:
+Adjust pipeline behavior using the following common valves:
 
-- `BASE_URL` – OpenAI API base URL.
-- `API_KEY` – API key used for requests.
-- `MODEL_ID` – Comma separated model identifiers.
-- `ENABLE_WEB_SEARCH` – Turn on the built‑in web search tool.
-- `ENABLE_IMAGE_GENERATION` – Enable image generation.
-- `ENABLE_NATIVE_TOOL_CALLING` – Use OpenAI's native function calling.
-- `ENABLE_REASON_SUMMARY` – Return short reasoning summaries from o-series models.
-- `LOG_LEVEL` – Control per‑message logging level.
+| Valve                        | Description                                                |
+| ---------------------------- | ---------------------------------------------------------- |
+| `API_KEY`                    | Your OpenAI API key.                                       |
+| `BASE_URL`                   | OpenAI API base URL.                                       |
+| `MODEL_ID`                   | Comma-separated list of model identifiers.                 |
+| `ENABLE_WEB_SEARCH`          | Toggle the built-in web search tool.                       |
+| `ENABLE_IMAGE_GENERATION`    | Enable experimental image generation.                      |
+| `ENABLE_NATIVE_TOOL_CALLING` | Activate OpenAI's native function calling.                 |
+| `ENABLE_REASON_SUMMARY`      | Provide concise summaries of model reasoning.              |
+| `LOG_LEVEL`                  | Control log verbosity per message (`debug`, `info`, etc.). |
 
-See the source file for the full list of valves and defaults.
-
-## Stored Response Schema
-
-When a message triggers function calls or other events, the resulting items are
-stored in the chat document under `openai_responses_pipe`. Version `2` of the
-schema looks like this:
-
-```json
-{
-  "openai_responses_pipe": {
-    "__v": 2,
-    "messages": {
-      "<message_id>": {
-        "model": "o4-mini",
-        "created_at": 1719922512,
-        "items": [
-          {"type": "function_call", ...}
-        ]
-      }
-    }
-  }
-}
-```
-
-Items are stored verbatim as produced by the Responses API to ensure forward
-compatibility with new fields and event types.
+> For additional valves and default configurations, refer to the source file.
 
 ## Core Concepts
 
-- **Responses Endpoint** – Uses OpenAI's `responses` API instead of the classic
-  completions backend. This unlocks features such as native tool calling,
-  reasoning traces and image generation.
-- **Valves** – Each configuration option is exposed as a valve so behaviour can
-  be tweaked without editing the code. See the source file for defaults.
-- **History Reconstruction** – Stored items are replayed when building new
-  requests so tools continue exactly where they left off.
-- **Tool Result Persistence** – Outputs from tools are kept alongside messages
-  which allows them to be shown again later in the UI.
-- **Encrypted Reasoning Tokens** – Reasoning models may return an
-  `encrypted_content` token which is stored for faster follow‑up queries.
+* **Responses API Endpoint** – Uses OpenAI's advanced Responses API (instead of the classic completions API), enabling richer features such as native tool calling and reasoning traces.
+* **Valves Configuration** – Each setting is exposed through valves, allowing seamless adjustments without code changes.
+* **History Reconstruction** – Previous tool responses are replayed when creating new requests, ensuring continuity.
+* **Persistent Tool Results** – Tool outputs are preserved alongside messages, making them readily available in subsequent interactions.
+* **Encrypted Reasoning Tokens** – Specialized reasoning tokens (`encrypted_content`) are stored to optimize future queries and follow-ups.
 
-## Changelog
+---
 
-| Version | Highlights |
-| ------- | ---------- |
-| **1.7.0** | Bind response items to the originating model and improve reasoning token handling. |
-| **1.6.0** | Added detailed tag filtering and the ability to remove reasoning blocks from history. |
-| **1.5.0** | Introduced model tagging for stored items and expanded test coverage. |
-| **1.4.0** | Initial release of the OpenAI Responses Manifold pipeline. |
+## Persist OpenAI Response Items
+
+Non-message items returned from the Responses API (e.g., function calls, encrypted reasoning tokens, etc..) are stored in the chat record under a custom `openai_responses_pipe` property. This enables the pipe to accurately reconstruct the full context history, including tool outputs and reasoning data.
+
+This design is important for two key reasons:
+
+1. **Improved caching and cost efficiency**: By precisely reconstructing the original message context, we maximize cache hits and can take advantage of OpenAI's cache-based pricing (up to 75% discount!).
+2. **Better performance and faster responses**: Including elements like encrypted reasoning tokens prevents the model from having to start from scratch and re-reason previous steps, resulting in faster and more efficient responses.
+
+You can inspect this data structure by opening **Developer Tools** in Edge or Chrome and navigating to **Network**. Look for the POST request to the specific chat endpoint (e.g., `https://localhost:8080/api/v1/chats/<chat_id>`) and check the **Preview** tab.
+
+Full Chat JSON Structure Example:
+
+```json
+{
+  "id": "<chat_id>",
+  "user_id": "<user_id>",
+  "title": "<chat_title>",
+  "chat": {
+    "id": "<chat_internal_id>",
+    "title": "<chat_title>",
+    "models": ["<model_id>"],
+    "params": {},
+    "history": {
+      "messages": {
+        "<message_id>": {
+          "id": "<message_id>",
+          "parentId": "<parent_message_id_or_null>",
+          "childrenIds": ["<child_message_id>", "..."],
+          "role": "user|assistant|function",
+          "content": "<message_text_or_null>",
+          "model": "<model_id>",
+          "modelName": "<model_display_name>",
+          "modelIdx": <index>,
+          "timestamp": <unix_ms>,
+          "usage": {},
+          "done": true
+        }
+      },
+      "currentId": "<current_message_id>"
+    },
+    "messages": [
+      {
+        // Flattened version of messages (similar shape as above)
+      }
+    ],
+    "tags": ["<optional_tag>", "..."],
+    "timestamp": <unix_ms>,
+    "files": [
+      // Any attached files
+    ],
+
+    // ─── Custom Extension: Added by openai_responses_pipe ───────────────
+    "openai_responses_pipe": {
+      "__v": 2,
+      "messages": {
+        "<message_id>": {
+          "model": "<model_that_generated_nonmessage_items>",
+          "created_at": <unix_timestamp>,
+          "items": [
+            {
+              "type": "function_call|function_call_result|reasoning|...",
+              "...": "..."
+            }
+          ]
+        }
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────
+  },
+  "updated_at": <unix_timestamp>,
+  "created_at": <unix_timestamp>,
+  "share_id": null,
+  "archived": false,
+  "pinned": false,
+  "meta": {},
+  "folder_id": null
+}
+
+```
+
+Each item is tied to a specific `message_id` and the `model` that generated it. This ensures:
+
+1. **Accurate Context Reconstruction**
+   During replay or follow-up turns, the pipe can precisely rebuild the state of the conversation, including tools or reasoning results not visible in plain messages.
+2. **Model-Specific Binding**
+   Some items (especially \*\*encrypted reasoning tokens!) \*\*can only be used with the exact model that produced them. Injecting these into a different model’s context may result in **errors** or degraded performance. Binding items to the generating model avoids this.
+
+By storing raw `items` exactly as received from the API, the system remains forward-compatible with future changes to the Responses API structure.
