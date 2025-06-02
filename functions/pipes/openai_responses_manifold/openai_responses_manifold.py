@@ -396,7 +396,7 @@ class Pipe:
 
                                 # 4) Build a minimal snippet (omit type="reasoning")
                                 snippet = (
-                                    "<details done=\"false\">\n"
+                                    f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
                                     f"<summary>🧠{latest_title}</summary>\n"
                                     f"{all_text}\n"
                                     "</details>"
@@ -496,7 +496,7 @@ class Pipe:
 
                                 if all_text:
                                     final_snippet = (
-                                        '<details done="true">\n'
+                                        f'<details type=\"{__name__}.reasoning\" done="true">\n'
                                         f"<summary>Done thinking!</summary>\n"
                                         f"{all_text}\n"
                                         "</details>"
@@ -1102,6 +1102,18 @@ def get_openai_response_items_by_chat_id_and_message_id(
         return all_items
     return [x for x in all_items if x.get("type") == type_filter]
 
+def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
+    """
+    Removes any <details> tag whose type attribute is in `removal_types`.
+    Example:
+      remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
+      => "Hello "
+    """
+    # Safely escape the types in case they have special regex chars
+    pattern_types = "|".join(map(re.escape, removal_types))
+    # Example pattern: <details type="reasoning">...</details>
+    pattern = rf'<details\b[^>]*\btype=["\'](?:{pattern_types})["\'][^>]*>.*?</details>'
+    return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
 def build_responses_history_by_chat_id_and_message_id(
     chat_id: str, 
@@ -1184,7 +1196,7 @@ def build_responses_history_by_chat_id_and_message_id(
                     text_str = part.get("text") or part.get("content", "")
                     text_str = text_str.strip()
                     if role == "assistant":
-                        text_str = DETAILS_RE.sub("", text_str).strip()
+                        text_str = remove_details_tags_by_type(text_str, ["reasoning","{__name__}.reasoning"]) # Open WebUI uses reasoning. This function appends the function name to differentiate it.
                     if text_str:
                         content_blocks.append({
                             "type": "input_text" if role == "user" else "output_text",
