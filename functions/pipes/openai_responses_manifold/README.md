@@ -17,12 +17,12 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 | Optimized token caching | ✅ GA | Saves ~50–75 % tokens on tuned models. |
 | Web search tool | ✅ GA | Automatically invoked or toggled manually. |
 | Task model support | 🔄 In-progress | Roadmap item. |
-| Image input (vision) | 🔄 In-progress | Pending future release. Need to solve how to store images as files rather than base64 strings (crashes Open WebUI if large image) |
-| Image generation tool | 🕒 Backlog | Coming soon.  Including multi-turn image editing (i.e., upload picture and ask it to change it; only possible via Responses API) |
+| Image input (vision) | 🔄 In-progress | Pending future release. |
+| Image generation tool | 🕒 Backlog | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
 | File upload / file search tool integration	 | ⏳ Backlog | Roadmap item. |
 | Code interpreter tool | 📋 Backlog | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
 | Computer use tool | 📋 Backlog | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice via talk feature | 📋 Backlog | TBD.  Requires patching backend code (technically possible via pipe however need to think through best approach) |
+| Live conversational voice via talk feature | 📋 Backlog | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
 | Dynamic chat titles | 📋 Backlog | TBD.  Leverage title to show progress of long running tasks. |
 
 ### Quality of life improvements
