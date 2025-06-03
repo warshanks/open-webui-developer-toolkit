@@ -20,10 +20,10 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 | Image input (vision) | ⚠️ Planned | Pending future release. Need to solve how to store images as files rather than base64 strings (crashes Open WebUI if large image) |
 | Image generation tool | ⚠️ Planned | Coming soon.  Including multi-turn image editing (i.e., upload picture and ask it to change it; only possible via Responses API) |
 | File upload / file search tool integration	 | ⚠️ Planned | Roadmap item. |
-| Code interpreter tool | 🔍 Considering | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
-| Computer use tool | 🔍 Considering | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice via talk feature | 🔍 Considering | TBD.  Requires patching backend code (technically possible via pipe however need to think through best approach) |
-| Dynamic chat titles | 🔍 Considering | TBD.  Leverage title to show progress of long running tasks. |
+| Code interpreter tool | 📋 Backlog | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
+| Computer use tool | 📋 Backlog | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
+| Live conversational voice via talk feature | 📋 Backlog | TBD.  Requires patching backend code (technically possible via pipe however need to think through best approach) |
+| Dynamic chat titles | 📋 Backlog | TBD.  Leverage title to show progress of long running tasks. |
 
 ### Quality of life improvements
 - **Pseudo-models**
