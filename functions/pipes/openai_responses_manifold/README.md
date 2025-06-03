@@ -4,15 +4,6 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 
 **Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
 
-## Table of Contents
-- [Installation](#installation)
-- [Features](#features)
-- [Quality of life improvements](#quality-of-life-improvements)
-- [Tested models](#tested-models)
-- [Valves](#valves)
-- [Core concepts](#core-concepts)
-- [Persist OpenAI response items](#persist-openai-response-items)
-
 ## Installation
 1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin ▸ Pipelines**.
 2. Activate the pipe and configure the valves for your environment.
@@ -29,14 +20,14 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 | Image input (vision) | ⚠️ Planned | Slated for a future release. |
 | File upload | ⚠️ Planned | Roadmap item. |
 
-## Quality of life improvements
+### Quality of life improvements
 - **Pseudo-models**
   - `o3-mini-high` – alias for `o3-mini` with high reasoning effort.
   - `o4-mini-high` – alias for `o4-mini` with high reasoning effort.
 - **Debug logging**
   - Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
 
-## Tested models
+### Tested models
 All Responses API models should work. Confirmed with:
 | Model ID | Status |
 | --- | --- |
@@ -46,20 +37,7 @@ All Responses API models should work. Confirmed with:
 | gpt-4o | ✅ |
 | o3 | ✅ |
 
-## Valves
-Common valves used by the pipe:
-| Valve | Description |
-| --- | --- |
-| `API_KEY` | Your OpenAI API key. |
-| `BASE_URL` | OpenAI API base URL. |
-| `MODEL_ID` | Comma-separated list of model identifiers. |
-| `ENABLE_WEB_SEARCH` | Toggle the built-in web search tool. |
-| `ENABLE_IMAGE_GENERATION` | Enable experimental image generation. |
-| `ENABLE_NATIVE_TOOL_CALLING` | Activate OpenAI's native function calling. |
-| `ENABLE_REASON_SUMMARY` | Provide concise summaries of model reasoning. |
-| `LOG_LEVEL` | Control log verbosity per message. |
-
-_For additional valves and defaults see the source file._
+# How it Works / Design Architecture
 ## Core concepts
 - **Responses API endpoint** – uses the advanced Responses API rather than completions, enabling features like native tool calling and reasoning traces.
 - **Valves configuration** – each setting is exposed through valves, so you can tweak behavior without touching code.
