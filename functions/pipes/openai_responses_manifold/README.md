@@ -2,7 +2,7 @@
 
 Integrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
 
-⚠️**Version 0.7.0 – Pre‑production preview.**⚠️ The pipeline is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
 1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin ▸ Pipelines**.
@@ -16,10 +16,10 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 | Encrypted reasoning tokens | ✅ GA | Persists reasoning context across turns. |
 | Optimized token caching | ✅ GA | Saves ~50–75 % tokens on tuned models. |
 | Web search tool | ✅ GA | Automatically invoked or toggled manually. |
-| Task model support | ⚠️ Planned | Roadmap item. |
-| Image input (vision) | ⚠️ Planned | Pending future release. Need to solve how to store images as files rather than base64 strings (crashes Open WebUI if large image) |
-| Image generation tool | ⚠️ Planned | Coming soon.  Including multi-turn image editing (i.e., upload picture and ask it to change it; only possible via Responses API) |
-| File upload / file search tool integration	 | ⚠️ Planned | Roadmap item. |
+| Task model support | 🔄 In-progress | Roadmap item. |
+| Image input (vision) | 🔄 In-progress | Pending future release. Need to solve how to store images as files rather than base64 strings (crashes Open WebUI if large image) |
+| Image generation tool | 🕒 Backlog | Coming soon.  Including multi-turn image editing (i.e., upload picture and ask it to change it; only possible via Responses API) |
+| File upload / file search tool integration	 | ⏳ Backlog | Roadmap item. |
 | Code interpreter tool | 📋 Backlog | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
 | Computer use tool | 📋 Backlog | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
 | Live conversational voice via talk feature | 📋 Backlog | TBD.  Requires patching backend code (technically possible via pipe however need to think through best approach) |
