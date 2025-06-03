@@ -18,11 +18,11 @@
 | Task model support | 🔄 In-progress | 2025-06-03 | Roadmap item. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
-| File upload / file search tool integration | ⏳ Backlog | 2025-06-03 | Roadmap item. |
-| Code interpreter tool | 📋 Backlog | 2025-06-03 | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
-| Computer use tool | 📋 Backlog | 2025-06-03 | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice via talk feature | 📋 Backlog | 2025-06-03 | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
-| Dynamic chat titles | 📋 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
+| File upload / file search tool integration | 🕒 Backlog | 2025-06-03 | Roadmap item. |
+| Code interpreter tool | 🕒 Backlog | 2025-06-03 | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
+| Computer use tool | 🕒 Backlog | 2025-06-03 | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
+| Live conversational voice via talk feature | 🕒 Backlog | 2025-06-03 | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
+| Dynamic chat titles | 🕒 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
 
 ### Quality of life improvements
 - **Pseudo-models**
@@ -32,7 +32,7 @@
   - Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
 
 ### Tested models
-All Responses API models should work. Confirmed with:
+The manifold should work with any model that supports the responses API. Confirmed with:
 | Model ID | Status |
 | --- | --- |
 | chatgpt-4o-latest | ✅ |
