@@ -1,6 +1,5 @@
 # OpenAI Responses Manifold
-
-Integrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
+| Visible reasoning summariesIntegrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
 
 ⚠️ **Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
 
@@ -9,21 +8,21 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 2. Activate the pipe and configure the valves for your environment.
 
 ## Features
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Native function calling | ✅ GA | Toggle via `ENABLE_NATIVE_TOOL_CALLING`. |
-| Visible reasoning summaries | ✅ GA | Available for o‑series models only. |
-| Encrypted reasoning tokens | ✅ GA | Persists reasoning context across turns. |
-| Optimized token caching | ✅ GA | Saves ~50–75 % tokens on tuned models. |
-| Web search tool | ✅ GA | Automatically invoked or toggled manually. |
-| Task model support | 🔄 In-progress | Roadmap item. |
-| Image input (vision) | 🔄 In-progress | Pending future release. |
-| Image generation tool | 🕒 Backlog | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
-| File upload / file search tool integration	 | ⏳ Backlog | Roadmap item. |
-| Code interpreter tool | 📋 Backlog | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
-| Computer use tool | 📋 Backlog | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice via talk feature | 📋 Backlog | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
-| Dynamic chat titles | 📋 Backlog | TBD.  Leverage title to show progress of long running tasks. |
+| Feature | Status | Last updated | Notes |
+| --- | --- | --- | --- |
+| Native function calling | ✅ GA | 2025-06-03 | Toggle via `ENABLE_NATIVE_TOOL_CALLING`. |
+| Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
+| Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
+| Optimized token caching | ✅ GA | 2025-06-03 | Saves ~50–75 % tokens on tuned models. |
+| Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
+| Task model support | 🔄 In-progress | 2025-06-03 | Roadmap item. |
+| Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
+| Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
+| File upload / file search tool integration | ⏳ Backlog | 2025-06-03 | Roadmap item. |
+| Code interpreter tool | 📋 Backlog | 2025-06-03 | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
+| Computer use tool | 📋 Backlog | 2025-06-03 | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
+| Live conversational voice via talk feature | 📋 Backlog | 2025-06-03 | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
+| Dynamic chat titles | 📋 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
 
 ### Quality of life improvements
 - **Pseudo-models**
