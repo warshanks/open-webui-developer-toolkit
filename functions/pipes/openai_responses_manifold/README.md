@@ -10,7 +10,7 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 
 ## Features
 | Feature | Status | Notes |
-| --- | --- | --- |
+| --- | -------------- | --- |
 | Native function calling | ✅ GA | Toggle via `ENABLE_NATIVE_TOOL_CALLING`. |
 | Visible reasoning summaries | ✅ GA | Available for o‑series models only. |
 | Encrypted reasoning tokens | ✅ GA | Persists reasoning context across turns. |
