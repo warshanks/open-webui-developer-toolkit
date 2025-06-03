@@ -2,7 +2,7 @@
 
 Integrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
 
-**Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
+⚠️**Version 0.7.0 – Pre‑production preview.**⚠️ The pipeline is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
 1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin ▸ Pipelines**.
