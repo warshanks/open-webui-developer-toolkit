@@ -16,9 +16,14 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 | Encrypted reasoning tokens | ✅ GA | Persists reasoning context across turns. |
 | Optimized token caching | ✅ GA | Saves ~50–75 % tokens on tuned models. |
 | Web search tool | ✅ GA | Automatically invoked or toggled manually. |
-| Image generation | ⚠️ Planned | Coming soon. |
-| Image input (vision) | ⚠️ Planned | Slated for a future release. |
-| File upload | ⚠️ Planned | Roadmap item. |
+| Task model support | ⚠️ Planned | Roadmap item. |
+| Image input (vision) | ⚠️ Planned | Pending future release. Need to solve how to store images as files rather than base64 strings (crashes Open WebUI if large image) |
+| Image generation tool | ⚠️ Planned | Coming soon.  Including multi-turn image editing (i.e., upload picture and ask it to change it; only possible via Responses API) |
+| File upload / file search tool integration	 | ⚠️ Planned | Roadmap item. |
+| Code interpreter tool | 🔍 Considering | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
+| Computer use tool | 🔍 Considering | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
+| Live conversational voice via talk feature | 🔍 Considering | TBD.  Requires patching backend code (technically possible via pipe however need to think through best approach) |
+| Dynamic chat titles | 🔍 Considering | TBD.  Leverage title to show progress of long running tasks. |
 
 ### Quality of life improvements
 - **Pseudo-models**
@@ -39,7 +44,7 @@ All Responses API models should work. Confirmed with:
 
 # How it Works / Design Architecture
 ## Core concepts
-- **Responses API endpoint** – uses the advanced Responses API rather than completions, enabling features like native tool calling and reasoning traces.
+- **Responses API endpoint** – uses the OpenAI Responses API endpoint than completions, enabling features like visible reasoning summaries and built-in tools (web search, etc..).
 - **Valves configuration** – each setting is exposed through valves, so you can tweak behavior without touching code.
 - **History reconstruction** – previous tool calls are replayed when creating new requests, ensuring continuity.
 - **Persistent tool results** – tool outputs are stored alongside messages, making them available on later turns.
