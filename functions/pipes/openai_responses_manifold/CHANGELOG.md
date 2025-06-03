@@ -6,3 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [0.7.0] - 2025-06-02
 - Downgraded major version to `0` to indicate pre-production early testing stage.
+- Fixed finalization logic so streamed responses always close correctly.
+- Stripped `<details>` reasoning blocks from stored history to keep context clean.
+- Added type-based removal helper for reasoning details to address caching issues.
+- Tagged persisted items with their originating model and filtered history by model
+  to avoid feeding incompatible data when switching models.
