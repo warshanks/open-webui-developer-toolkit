@@ -117,9 +117,10 @@ Steps performed:
 5. Pass the payload through `process_pipeline_inlet_filter` so extensions can modify it.
 6. Resolve filter functions from the model settings and execute them via `process_filter_functions`.
 7. When tools are present and the model cannot handle function calling, `chat_completion_tools_handler` is invoked.
-8. If files or web search are requested, call `chat_completion_files_handler` and `chat_web_search_handler` accordingly.
-9. Construct RAG context and insert it into the system message using `rag_template` and `add_or_update_system_message`.
-10. Return the final form data, metadata and any accumulated events.
+8. Apply feature handlers in order: memory retrieval, web search, image generation and code interpreter prompts.
+9. Collect context from uploaded files or search results via `chat_completion_files_handler`.
+10. Construct RAG context and insert it into the system message using `rag_template` and `add_or_update_system_message`.
+11. Return the final form data, metadata and any accumulated events.
 
 ### `process_chat_response`
 Wraps the model response and streams it back to the client.
@@ -333,6 +334,7 @@ with ThreadPoolExecutor() as executor:
             reranking_function=request.app.state.rf,
             k_reranker=request.app.state.config.TOP_K_RERANKER,
             r=request.app.state.config.RELEVANCE_THRESHOLD,
+            hybrid_bm25_weight=request.app.state.config.HYBRID_BM25_WEIGHT,
             hybrid_search=request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
             full_context=request.app.state.config.RAG_FULL_CONTEXT,
         ),
@@ -491,9 +493,9 @@ The handler also removes `metadata['files']` when a tool reports it handled uplo
 Steps performed:
 1. Send an initial `status` event marking that a search query is being generated.
 2. Use `generate_queries` to craft search terms from the latest user message. The JSON response is parsed or the raw text is used as a fallback.
-3. If no queries are produced a completion event is sent and the handler returns early.
+3. If query generation fails the user's message becomes the sole query. When the resulting list is empty a completion event is sent and the handler returns.
 4. When queries exist, `process_web_search` is called which downloads pages and stores them in the retrieval system.
-5. Each returned collection or document is appended to `form_data['files']` so RAG can read them later. A summary event reports the visited URLs.
+5. Each returned collection or document is appended to `form_data['files']` with the originating `queries` list so RAG can read them later. A summary event reports the visited URLs.
 6. Errors are caught and reported back to the client via `status` events.
 
 Below is the core logic showing how queries are built and search results attached:
