@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.7.0
+version: 0.8.0
 license: MIT
 requirements: orjson
 """
@@ -77,10 +77,6 @@ class Pipe:
         ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
             description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
-        )
-        ENABLE_NATIVE_TOOL_CALLING: bool = Field(
-            default=True,
-            description="Enable native tool calling for supported models. Highly recommended to leave enabled. If disabled, will fall back to OpenAI tool calling.",
         )
         ENABLE_WEB_SEARCH: bool = Field(
             default=False,
@@ -304,10 +300,7 @@ class Pipe:
                             ),
                         ]
                     }
-                    if (
-                        model_id in FEATURE_SUPPORT["function_calling"] 
-                        and valves.ENABLE_NATIVE_TOOL_CALLING
-                    )
+                    if model_id in FEATURE_SUPPORT["function_calling"]
                     else {}
                 ),
 
@@ -344,11 +337,12 @@ class Pipe:
 
             # TODO THIS DOESN"T WORK YET.  NEED TO DEBUG WHY.
             if (
-                valves.ENABLE_NATIVE_TOOL_CALLING
-                and __metadata__.get("function_calling") != "native"
+                __metadata__.get("function_calling") != "native"
                 and transformed_body["model"] in FEATURE_SUPPORT["function_calling"]
             ):
-                await self._enable_native_function_support(transformed_body["model"], __metadata__)
+                await self._enable_native_function_support(
+                    transformed_body["model"], __metadata__
+                )
 
             ############################## MAIN LOOP STARTS HERE ##############################
             # 1. If stream, we will yield partial responses to the UI as they arrive.
@@ -955,32 +949,28 @@ class Pipe:
         self, model_id: str, metadata: dict[str, Any]
     ) -> None:
         """Enable native function calling for the given model, if supported."""
-        if metadata.get("function_calling") == "native":
+        if metadata.get("function_calling") == "native" or model_id not in FEATURE_SUPPORT["function_calling"]:
             return
-
-        if model_id not in FEATURE_SUPPORT["function_calling"]:
-            self.log.debug("Model %s does not support native tool calling", model_id)
-            return
-
-        self.log.debug("Enabling native function calling for %s", model_id)
 
         model_info = await asyncio.to_thread(Models.get_model_by_id, model_id)
         if not model_info:
-            self.log.warning("⚠️ Model info not found for id %s", model_id)
             return
 
-        model_data = model_info.model_dump()
-        model_data["params"]["function_calling"] = "native"
-        model_data["params"] = ModelParams(**model_data["params"])
+        params = model_info.params.model_copy()
+        if params.get("function_calling") != "native":
+            params["function_calling"] = "native"
+            form = ModelForm(
+                id=model_info.id,
+                base_model_id=model_info.base_model_id,
+                name=model_info.name,
+                meta=model_info.meta,
+                params=ModelParams(**params),
+                access_control=model_info.access_control,
+                is_active=model_info.is_active,
+            )
+            await asyncio.to_thread(Models.update_model_by_id, model_info.id, form)
 
-        updated = await asyncio.to_thread(
-            Models.update_model_by_id, model_info.id, ModelForm(**model_data)
-        )
-        if updated:
-            self.log.info("✅ Set model %s to native function calling", model_info.id)
-            metadata["function_calling"] = "native"  # ✅ CRITICAL
-        else:
-            self.log.error("❌ Failed to update model %s", model_info.id)
+        metadata["function_calling"] = "native"
 
     @staticmethod
     def transform_tools_for_responses_api(tools_dict: dict[str, dict]) -> list[dict]:
