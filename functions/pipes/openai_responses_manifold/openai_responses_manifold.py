@@ -20,6 +20,7 @@ import random
 import re
 import sys
 import os
+import time
 import aiohttp
 import logging
 import orjson
@@ -37,8 +38,10 @@ from typing import AsyncGenerator, Awaitable, Callable, Literal
 from open_webui.models.chats import Chats, ChatModel
 # from open_webui.models.files import Files
 # from open_webui.storage.provider import Storage
-from open_webui.models.models import Models, ModelForm, ModelParams
+from open_webui.models.models import Model, ModelMeta, Models, ModelForm, ModelParams
 from open_webui.utils.misc import get_message_list
+from open_webui.tasks import list_task_ids_by_chat_id, stop_task
+from open_webui.internal.db import Base, JSONField, get_db
 
 FEATURE_SUPPORT = {
     "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}, # OpenAI's built-in web search tool.
@@ -210,9 +213,13 @@ class Pipe:
         self.log.addHandler(mem_handler)
     
     def pipes(self):
-        # return list of models to expose in Open WebUI
         models = [m.strip() for m in self.valves.MODEL_ID.split(",") if m.strip()]
-        return [{"id": model, "name": f"OpenAI: {model}", "direct": True} for model in models]
+
+        # Then return the model info for Open WebUI
+        return [
+            {"id": model_id, "name": f"OpenAI: {model_id}", "direct": True}
+            for model_id in models
+        ]
 
     # --------------------------------------------------
     #  3. Handling Inference/Generation (Main Method)
@@ -244,11 +251,17 @@ class Pipe:
             getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
         )
 
+        # TODO: I need some logic that detects if the pipe call is a direct call (e.g., from a background task) or an interactive chat request and behave differently.  need to reverse engineer how it works in middleware.py
+        # I believe there might be a __metadata__.get("task") to see if it's a background task, but I need to figure out how to handle that properly.  I also need to verify that __metadata__.get("task") actually exists as it's not in my documentation yet.
+        # I know there is also a __metadata__.get("direct") which is True if the pipe is called directly (e.g., from a background task) and False if it's an interactive chat request.
+
         # Init variables before entering the main loop
         final_output = StringIO()
         loop_count = -1
         collected_items: list[dict[str, Any]] = []
         calls_to_execute: list[dict[str, Any]] = []
+        final_response_data = None
+        output_items = []
         total_usage = {}
         reasoning_map = {}  # Stores reasoning text per summary_index
 
@@ -256,10 +269,15 @@ class Pipe:
             self.session = await self._get_or_create_aiohttp_session() # aiohttp is used for performance (vs. httpx).
 
             # Build the OpenAI Responses API request body
-            model_id = str(body["model"]).split(".", 1)[-1]
+            openwebui_model_id = str(body.get("model")) # e.g., openai_responses.o4-mini-high
+            model_id = openwebui_model_id.split(".", 1)[-1] # e.g., o4-mini-high
+
+            # Apply model ID transformations to pseudo models
             if model_id in {"o3-mini-high", "o4-mini-high"}:
-                model_id = model_id.replace("-high", "")  # Remove "-high" suffix
-                body["reasoning_effort"] = "high"  # Force high reasoning effort
+                model_id = model_id.replace("-high", "")
+                body["reasoning_effort"] = "high"
+
+            self.log.debug("Using OpenAI model ID: %s", model_id)
 
             transformed_body = {
                 "model": model_id,
@@ -335,13 +353,16 @@ class Pipe:
             # Log transformed_body
             self.log.debug("Transformed OpenAI request body: %s", json.dumps(transformed_body, indent=2, ensure_ascii=False))
 
-            # TODO THIS DOESN"T WORK YET.  NEED TO DEBUG WHY.
+            # If the model supports function calling, set it to native if not already
             if (
                 __metadata__.get("function_calling") != "native"
-                and transformed_body["model"] in FEATURE_SUPPORT["function_calling"]
+                and model_id in FEATURE_SUPPORT["function_calling"]
             ):
-                await self._enable_native_function_support(
-                    transformed_body["model"], __metadata__
+                self.set_function_calling_to_native(openwebui_model_id) # Note: The very first time the model is used, OpenWebUI will create a background task for build-in tool calling instead of using the native function calling. Ideally we would enable native function calling during model creation.
+                await self._emit_notification(
+                    __event_emitter__,
+                    "Native function calling enabled",
+                    level="info"
                 )
 
             ############################## MAIN LOOP STARTS HERE ##############################
@@ -352,13 +373,13 @@ class Pipe:
             for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
                 self.log.debug("OpenAI Input payload: %s", json.dumps(transformed_body["input"], indent=2, ensure_ascii=False))
 
-                # Streaming mode: yield partial responses to UI as they arrive
+                # STREAMING MODE: Call OpenAI's /responses endpoint with SSE
                 if transformed_body["stream"]:
                     async for event in self._stream_sse_events(transformed_body, valves.API_KEY, valves.BASE_URL):
                         event_type = event.get("type")
                         self.log.debug("Received SSE event: %s", event_type)
 
-                        # Yield LLM response text as it arrives
+                        # ─── when a partial LLM response is received ─────────────────────────────
                         if event_type == "response.output_text.delta":
                             delta = event.get("delta", "")
                             if delta:
@@ -367,17 +388,8 @@ class Pipe:
                             
                             continue # continue to next event
 
+                        # ─── when a partial reasoning response is received ───────────────────────
                         if event_type == "response.reasoning_summary_text.delta":
-                            """
-                            {
-                                "type": "response.reasoning_summary_text.delta",
-                                "sequence_number": 4,
-                                "item_id": "rs_683cb68e9c288191834748f19371ec6d054ca102265734cd",
-                                "output_index": 0,
-                                "summary_index": 0,
-                                "delta": "**Evalu"
-                            }
-                            """
                             idx = event.get("summary_index", 0)
                             delta = event.get("delta", "")
                             if delta:
@@ -510,62 +522,63 @@ class Pipe:
 
                             continue  # continue to next event
 
-                        # Capture tools from final output
+                        # ─── when a response is complete ──────────────────────────────────────────────
                         if event_type == "response.completed":
-                            self.log.debug("Response completed event received. Processing final output in current loop turn.")
-                            # 1) Parse the final response data
-                            response_data = event.get("response", {})
-                            output_items = response_data.get("output", [])
+                            self.log.debug("Response completed event received.")
+                            final_response_data = event.get("response", {})
+                            break # Exit the streaming loop to process the final response
 
-                            # 2) Add them to the next iteration's input
-                            transformed_body["input"].extend(output_items)
-
-                            # 3) Accumulate for final DB save
-                            collected_items.extend(output_items)
-
-                            # 4) Filter out function calls that need executing
-                            calls_to_execute = [
-                                i for i in output_items if i.get("type") == "function_call"
-                            ]
-
-                            # 5) Merge usage, update total_usage, etc..
-                            response_usage = response_data.get("usage", {})
-                            for k, v in response_usage.items():
-                                if isinstance(v, dict):
-                                    total_usage.setdefault(k, {})
-                                    for sk, sv in v.items():
-                                        if isinstance(sv, (int, float)):
-                                            total_usage[k][sk] = total_usage[k].get(sk, 0) + sv
-                                        else:
-                                            total_usage[k][sk] = sv  # fallback for non-numeric
-                                elif isinstance(v, (int, float)):
-                                    total_usage[k] = total_usage.get(k, 0) + v
-                                else:
-                                    total_usage[k] = v  # fallback for non-numeric
-
-
-                            # Track additional stats
-                            total_usage["turn_count"] = total_usage.get("turn_count", 0) + 1
-                            total_usage["function_call_count"] = total_usage.get("function_call_count", 0) + len([
-                                item for item in output_items if item.get("type") == "function_call"
-                            ])
-
-                            continue # continue to next event
-
-                    self.log.debug("Streaming complete. Finalizing response. Chat ID: %s, Message ID: %s",
-                        __metadata__.get("chat_id", "unknown_chat"),
-                        __metadata__.get("message_id", "unknown_message"),
-                    )
-
-                # Non-streaming mode: generate a synchronous response
+                # NON-STREAMING MODE: Call OpenAI's /responses endpoint via standard API call
                 else:
                     self.log.info("Non-streaming mode. Generating a synchronous response.")
-                    response_text = await self._non_streaming_response(
+                    self._emit_status(__event_emitter__, "Generating response...", done=False, hidden=False)
+                    final_response_data = await self._non_streaming_api_call(
                         payload=transformed_body,
                         api_key=valves.API_KEY,
                         base_url=valves.BASE_URL,
                     )
-                    yield response_text
+                    self._emit_status(__event_emitter__, "", done=True, hidden=True)
+                    # yield the output_text
+                    output_items = final_response_data.get("output", [])
+                    if output_items:
+                        for item in output_items:
+                            if item.get("type") == "message":
+                                for content in item.get("content", []):
+                                    if content.get("type") == "output_text":
+                                        text = content.get("text", "")
+                                        final_output.write(text)
+                                        yield text
+
+                
+                # 3a) Extract usage and merge into total_usage
+                response_usage = final_response_data.get("usage", {})
+                for k, v in response_usage.items():
+                    if isinstance(v, dict):
+                        total_usage.setdefault(k, {})
+                        for sk, sv in v.items():
+                            if isinstance(sv, (int, float)):
+                                total_usage[k][sk] = total_usage[k].get(sk, 0) + sv
+                            else:
+                                total_usage[k][sk] = sv  # fallback for non-numeric
+                    elif isinstance(v, (int, float)):
+                        total_usage[k] = total_usage.get(k, 0) + v
+                    else:
+                        total_usage[k] = v  # fallback for non-numeric
+
+                # Track additional stats
+                total_usage["turn_count"] = total_usage.get("turn_count", 0) + 1
+                total_usage["function_call_count"] = total_usage.get("function_call_count", 0) + len([
+                    item for item in output_items if item.get("type") == "function_call"
+                ])
+                self.log.debug("Total usage after this loop: %s", total_usage)
+
+                # 3b) Extract output items + append them to `transformed_body["input"]`
+                output_items = final_response_data.get("output", [])
+                transformed_body["input"].extend(output_items) # Append to next iteration's input
+                collected_items.extend(output_items) # Accumulate for final DB save
+
+                # 3c) Identify function calls
+                calls_to_execute = [ i for i in output_items if i.get("type") == "function_call" ]
 
                 # Process any pending function calls; append their results to input history and continue the loop
                 if calls_to_execute:
@@ -712,70 +725,45 @@ class Pipe:
                 if start_idx > 0:
                     del buf[:start_idx]
 
-    async def _non_streaming_response(
+    async def _non_streaming_api_call(
         self, payload: dict[str, Any], api_key: str, base_url: str
-    ) -> str:
+    ) -> dict:
         """
-        Single-shot call to the OpenAI Responses endpoint.
-        Returns the assistant text (concatenated if multiple parts).
+        Calls /responses once, returns the full JSON result (not just the text).
         Raises on HTTP or schema errors.
         """
-
-        payload.pop("stream", None)  # Ensure not set
+        # Remove 'stream' key to be safe
+        payload.pop("stream", None)
 
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-
         url = base_url.rstrip("/") + "/responses"
         self.log.debug("POST %s with payload: %s", url, payload)
 
+        # Make the request
         try:
             async with self.session.post(url, json=payload, headers=headers) as resp:
                 if resp.status >= 400:
                     error_text = await resp.text()
-                    self.log.error(
-                        "OpenAI /responses failed [%s]: %s", resp.status, error_text
-                    )
-                    raise RuntimeError(
-                        f"OpenAI /responses error {resp.status}: {error_text}"
-                    )
+                    self.log.error("OpenAI /responses failed [%s]: %s", resp.status, error_text)
+                    raise RuntimeError(f"OpenAI /responses error {resp.status}: {error_text}")
 
+                # Parse JSON body
                 raw_bytes = await resp.read()
-                try:
-                    data = orjson.loads(raw_bytes)
-                except orjson.JSONDecodeError as e:
-                    self.log.error("JSON decode error from /responses: %s", e)
-                    self.log.debug(
-                        "Raw response: %s", raw_bytes.decode(errors="replace")
-                    )
-                    raise
+                data = orjson.loads(raw_bytes)
 
         except aiohttp.ClientError as e:
             self.log.error("Network error calling /responses: %s", e)
             raise RuntimeError(f"Network error calling /responses: {e}") from e
 
-        try:
-            text_chunks: list[str] = []
-            for item in data.get("output", []):
-                if item.get("type") != "message":
-                    continue  # Skip non-messages
+        if "output" not in data:
+            self.log.error("Unexpected /responses schema (no 'output' key). Full data: %s", data)
+            raise KeyError("Missing 'output' in non-streaming response")
 
-                for part in item.get("content", []):
-                    if part.get("type") == "output_text":
-                        text_chunks.append(part.get("text", ""))
-
-            if not text_chunks:
-                raise KeyError("assistant text not found in response")
-
-            return "".join(text_chunks)
-
-        except (KeyError, TypeError) as exc:
-            self.log.error("Unexpected /responses schema: %s", exc)
-            self.log.debug("Full response data: %s", data)
-            raise
+        return data
 
     async def _emit_error(
         self,
@@ -945,32 +933,33 @@ class Pipe:
 
         return session
     
-    async def _enable_native_function_support(
-        self, model_id: str, metadata: dict[str, Any]
-    ) -> None:
-        """Enable native function calling for the given model, if supported."""
-        if metadata.get("function_calling") == "native" or model_id not in FEATURE_SUPPORT["function_calling"]:
-            return
+    @staticmethod
+    def set_function_calling_to_native(model_id: str) -> None:
+        """
+        Updates only the 'function_calling' field in params, setting it to 'native'.
+        Also updates 'updated_at'.
+        """
+        with get_db() as db:
+            row = db.query(Model).filter(Model.id == model_id).one_or_none()
+            if not row:
+                return  # Model doesn't exist
 
-        model_info = await asyncio.to_thread(Models.get_model_by_id, model_id)
-        if not model_info:
-            return
+            # Make sure params is a dict
+            row.params = row.params or {}
 
-        params = model_info.params.model_copy()
-        if params.get("function_calling") != "native":
-            params["function_calling"] = "native"
-            form = ModelForm(
-                id=model_info.id,
-                base_model_id=model_info.base_model_id,
-                name=model_info.name,
-                meta=model_info.meta,
-                params=ModelParams(**params),
-                access_control=model_info.access_control,
-                is_active=model_info.is_active,
-            )
-            await asyncio.to_thread(Models.update_model_by_id, model_info.id, form)
+            # If it's already 'native', nothing else to do
+            if row.params.get("function_calling") == "native":
+                return
 
-        metadata["function_calling"] = "native"
+            # Update just this one field
+            row.params["function_calling"] = "native"
+
+            # Bump the updated_at timestamp
+            row.updated_at = int(time.time())
+
+            db.commit()   # Write changes
+            db.refresh(row)  # optional, if you need the updated row
+
 
     @staticmethod
     def transform_tools_for_responses_api(tools_dict: dict[str, dict]) -> list[dict]:
@@ -1138,33 +1127,32 @@ def build_responses_history_by_chat_id_and_message_id(
     model_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Reconstructs a chain of messages up to `message_id` (or the currentId)
-    and inserts any items from `openai_responses_pipe.messages[<msg-id>]`
-    before the corresponding message.
-
-    Returns a list of items the OpenAI Responses API expects:
-      [
-        {"type": "function_call", ...},
-        {"type": "message", "role": "assistant", "content": [...]},
-        ...
-      ]
+    Return a list of messages + any stored pipe items, up to `message_id`.
+    Minimal version:
+      - If chat_id doesn't exist, return empty.
+      - Build chain from root to message_id.
+      - Insert any "pipe" items before the corresponding message.
+      - Wrap each message's content as a single text block.
     """
 
+    # 1. Fetch the chat, exit if not found
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
         return []
 
     chat_data = chat_model.chat
+
+    # 2. Determine message_id (default: currentId from history)
     if not message_id:
         message_id = chat_data.get("history", {}).get("currentId")
 
-    # Gather chain of messages from root → message_id
+    # 3. Gather message chain (root → message_id)
     hist_dict = chat_data.get("history", {}).get("messages", {})
     chain = get_message_list(hist_dict, message_id)
     if not chain:
         return []
 
-    # Shortcut to any stored extras
+    # 4. Retrieve any pipe messages
     pipe_messages = (
         chat_data
         .get("openai_responses_pipe", {})
@@ -1173,63 +1161,40 @@ def build_responses_history_by_chat_id_and_message_id(
 
     final: List[Dict[str, Any]] = []
 
+    # 5. For each message in the chain
     for msg in chain:
         msg_id = msg["id"]
 
-        # 1) Pipe items (function_call, function_call_output, etc.) go first
+        # 5a. Insert openai_responses_pipe items (function calls, etc.) first if they exist
         bucket = pipe_messages.get(msg_id, {})
-        extras = []
         if bucket and (not model_id or bucket.get("model") == model_id):
             extras = bucket.get("items", [])
-        if extras:
             final.extend(extras)
 
-        # 2) Then the main message as type=message
+        # 5b. Add the main message
         role = msg.get("role", "assistant")
-        raw_content = msg.get("content", "")  # could be str or list
+        text_content = msg.get("content", "")
 
-        # Normalize to a list
-        if isinstance(raw_content, str):
-            raw_content = [raw_content]
-
-        content_blocks = []
-        for part in raw_content:
-            # If it's a simple string, treat it as text
-            if isinstance(part, str):
-                text = part.strip()
-                if role == "assistant":
-                    text = DETAILS_RE.sub("", text).strip()
-                if text:
-                    content_blocks.append({
-                        "type": "input_text" if role == "user" else "output_text",
-                        "text": text
-                    })
-            # If it's a dict, you can detect e.g. images/files/etc.
-            elif isinstance(part, dict):
-                # Example: handle images
-                if part.get("type") in ("image", "input_image"):
-                    content_blocks.append({
-                        "type": "input_image" if role == "user" else "output_image",
-                        "image_url": part.get("url", "")
-                    })
-                else:
-                    # fallback to text
-                    text_str = part.get("text") or part.get("content", "")
-                    text_str = text_str.strip()
-                    if role == "assistant":
-                        text_str = remove_details_tags_by_type(text_str, ["reasoning","{__name__}.reasoning"]) # Open WebUI uses reasoning. This function appends the function name to differentiate it.
-                    if text_str:
-                        content_blocks.append({
-                            "type": "input_text" if role == "user" else "output_text",
-                            "text": text_str
-                        })
-            # else: skip unknown parts
-
+        # Build the final message structure
         final.append({
             "type": "message",
             "role": role,
-            "content": content_blocks
+            "content": [
+                {
+                    "type": "input_text" if role == "user" else "output_text",
+                    "text": text_content.strip()
+                }
+            ]
         })
 
     return final
+
+async def cancel_all_tasks_for_chat(chat_id: str):
+    task_ids = list_task_ids_by_chat_id(chat_id)
+    for t_id in task_ids:
+        try:
+            result = await stop_task(t_id)
+            print(f"Stopped task {t_id}: {result}")
+        except ValueError as e:
+            print(f"Could not stop task {t_id}: {e}")
                   
