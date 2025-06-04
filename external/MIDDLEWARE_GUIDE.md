@@ -103,6 +103,12 @@ print(form_data)
 # }
 ```
 
+Any keys reserved for Open WebUI itself (`stream_response`, `function_calling`,
+`system`) are stripped from the `params` dict before the rest of the values are
+merged.  Additional options may be supplied under a nested `custom_params`
+object; string values there are parsed as JSON when possible and combined with
+the other parameters.
+
 Any `logit_bias` value is normalized through
 `convert_logit_bias_input_to_json` so callers may provide shorthand strings.
 
