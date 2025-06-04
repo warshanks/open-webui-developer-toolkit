@@ -10,7 +10,7 @@
 ## Features
 | Feature | Status | Last updated | Notes |
 | --- | --- | --- | --- |
-| Native function calling | ✅ GA | 2025-06-03 | Toggle via `ENABLE_NATIVE_TOOL_CALLING`. |
+| Native function calling | ✅ GA | 2025-06-04 | Automatically enabled for supported models. |
 | Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
 | Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
 | Optimized token caching | ✅ GA | 2025-06-03 | Saves ~50–75 % tokens on tuned models. |
