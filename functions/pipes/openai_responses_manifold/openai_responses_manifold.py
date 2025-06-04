@@ -248,21 +248,22 @@ class Pipe:
             getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
         )
 
+        # Init variables before entering the main loop
         final_output = StringIO()
         loop_count = -1
+        collected_items: list[dict[str, Any]] = []
+        calls_to_execute: list[dict[str, Any]] = []
+        total_usage = {}
+        reasoning_map = {}  # Stores reasoning text per summary_index
 
         try:
-            # Initialize aiohttp session (if not already done)
-            self.session = await self._get_or_create_aiohttp_session()
+            self.session = await self._get_or_create_aiohttp_session() # aiohttp is used for performance (vs. httpx).
 
-            # 2. Construct request payload for the OpenAI API
+            # Build the OpenAI Responses API request body
             model_id = str(body["model"]).split(".", 1)[-1]
             if model_id in {"o3-mini-high", "o4-mini-high"}:
-                model_id = model_id.replace("-high", "")  # Remove "-high" suffix for these models
+                model_id = model_id.replace("-high", "")  # Remove "-high" suffix
                 body["reasoning_effort"] = "high"  # Force high reasoning effort
-
-            # log body to log
-            # self.log.debug("Received request body: %s", json.dumps(body, indent=2, ensure_ascii=False))
 
             transformed_body = {
                 "model": model_id,
@@ -349,15 +350,12 @@ class Pipe:
             ):
                 await self._enable_native_function_support(transformed_body["model"], __metadata__)
 
-            # Store everything except user messages in a single list
-            collected_items: list[dict[str, Any]] = []
-            calls_to_execute: list[dict[str, Any]] = []
-            total_usage = {}
-            reasoning_map = {}  # Stores reasoning text per summary_index
-
-            # Loop until there are no remaining tool calls or we hit the max loop count
+            ############################## MAIN LOOP STARTS HERE ##############################
+            # 1. If stream, we will yield partial responses to the UI as they arrive.
+            # 2. If not streaming, we will generate a single response and return it.
+            # 3. If tool calls are pending, we will execute them and continue the loop until no more tool calls are made.
+            # 4. Loop until we either run out of tool calls or hit the max loop count
             for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
-                # Output input history to log
                 self.log.debug("OpenAI Input payload: %s", json.dumps(transformed_body["input"], indent=2, ensure_ascii=False))
 
                 # Streaming mode: yield partial responses to UI as they arrive
@@ -617,6 +615,8 @@ class Pipe:
                 else:
                     self.log.debug("No pending function calls. Exiting loop.")
                     break # LLM response is complete, no further tool calls
+
+            ############################## MAIN LOOP ENDS HERE ##############################
 
             # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
             if collected_items:
