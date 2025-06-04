@@ -141,6 +141,9 @@ Additional identifiers and settings for the conversation. Useful keys:
 * `features` – toggles such as `image_generation` or `web_search`
 * `variables` – placeholders like `{{CURRENT_DATE}}`
 * `model` – detailed model configuration
+* `direct` – `true` when the pipe is invoked outside the chat UI
+* `task` – name of the background task if applicable
+* `task_body` – original request payload when `task` is set
 
 Example:
 
@@ -235,6 +238,8 @@ Example:
     ]
   },
   "direct": false,
+  "task": "title_generation", // only present when spawned by a task
+  "task_body": {"model": "gpt-4o", "...": "..."},
   "function_calling": "native"
 }
 ```
