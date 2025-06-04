@@ -2,6 +2,16 @@
 
 `backend/open_webui/utils/middleware.py` defines the heart of Open WebUI's chat pipeline.  It wires the chat REST endpoints to a collection of helpers that augment a request, invoke the model and then stream results back to the browser.  The code is long but can be decomposed into a handful of cooperating routines.
 
+## Core concepts
+
+The middleware coordinates several building blocks:
+
+- **Tasks** – discrete actions such as title generation or code execution that may run in the background using a dedicated task model.
+- **Features** – optional capabilities requested per chat like `web_search`, `image_generation` or `code_interpreter`.
+- **Pipelines & Filters** – inlet and outlet filters let extensions mutate requests or streaming responses.
+- **Tools & function calls** – tools can be triggered natively via the model's function calling API or by parsing JSON and invoking Python functions directly.
+- **Memory & retrieval** – conversation history, uploaded files and web search results can be merged into the prompt as retrieval‑augmented context.
+
 ## Request lifecycle
 
 1. **Incoming chat request** arrives with model id, message list and optional files or tool specs.
