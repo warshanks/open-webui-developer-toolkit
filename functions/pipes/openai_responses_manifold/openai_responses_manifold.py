@@ -10,38 +10,54 @@ license: MIT
 requirements: orjson
 """
 
+from __future__ import annotations
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard lib & third-party imports
+# ─────────────────────────────────────────────────────────────────────────────
 import asyncio
-from collections import defaultdict
 import datetime
 import inspect
 import json
+import logging
+import os
 import random
 import re
 import sys
-import os
 import time
-import aiohttp
-import logging
-import orjson
-from typing import Optional, Dict, Any, List
-
+from collections import defaultdict
 from contextvars import ContextVar
-from fastapi import Request
 from io import StringIO
 
-# Pydantic for config classes
+# Third-party imports
+import aiohttp
+import orjson
+from fastapi import Request
 from pydantic import BaseModel, Field
-from typing import AsyncGenerator, Awaitable, Callable, Literal
 
-# Open WebUI Core imports
+# Typing imports
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Open WebUI internals
+# ─────────────────────────────────────────────────────────────────────────────
 from open_webui.models.chats import Chats, ChatModel
-# from open_webui.models.files import Files
-# from open_webui.storage.provider import Storage
-from open_webui.models.models import Model, ModelMeta, Models, ModelForm, ModelParams
-from open_webui.utils.misc import get_message_list
+from open_webui.models.models import Model
+from open_webui.internal.db import get_db
 from open_webui.tasks import list_task_ids_by_chat_id, stop_task
-from open_webui.internal.db import Base, JSONField, get_db
+from open_webui.utils.misc import get_message_list
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 FEATURE_SUPPORT = {
     "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}, # OpenAI's built-in web search tool.
@@ -51,17 +67,12 @@ FEATURE_SUPPORT = {
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high" }, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 }
 
-# A global context var storing the current message ID
 current_session_id = ContextVar("current_session_id", default=None)
-
-# Log level ContextVar (defaults to INFO)
 current_log_level = ContextVar("current_log_level", default=logging.INFO)
-
-# In-memory logs keyed by message ID
 logs_by_msg_id = defaultdict(list)
 
 # Precompiled regex for stripping <details> blocks from assistant text
-DETAILS_RE = re.compile(r"<details\b[^>]*>.*?<\/details>", flags=re.S | re.I)
+DETAILS_RE = re.compile(r"<details\b[^>]*>.*?<\/details>", flags=re.IGNORECASE | re.DOTALL)
 
 class Pipe:
     class Valves(BaseModel):
@@ -89,36 +100,6 @@ class Pipe:
             default="medium",
             description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH=True.",
         )
-        SEARCH_USER_LOCATION: str = Field(
-            default='{"type": "approximate", "country": "CA", "city": "Langley", "region": "BC"}',
-            description="User location for web search. Defaults to approximate London, UK. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses#user-location",
-        )
-        ENABLE_IMAGE_GENERATION: bool = Field(
-            default=False,
-            description="Enable the built-in 'image_generation' tool when supported.",
-        )
-        IMAGE_SIZE: str = Field(
-            default="auto",
-            description="Image width x height (e.g. 1024x1024 or 'auto').",
-        )
-        IMAGE_QUALITY: Literal["low", "medium", "high", "auto"] = Field(
-            default="auto",
-            description="Image rendering quality: low | medium | high | auto.",
-        )
-        IMAGE_FORMAT: Literal["png", "jpeg", "webp"] = Field(
-            default="png",
-            description="Return format for generated images.",
-        )
-        IMAGE_COMPRESSION: int | None = Field(
-            default=None,
-            ge=0,
-            le=100,
-            description="Compression level for jpeg/webp (0-100).",
-        )
-        IMAGE_BACKGROUND: Literal["transparent", "opaque", "auto"] = Field(
-            default="auto",
-            description="Background: transparent, opaque or auto.",
-        )
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
@@ -134,14 +115,6 @@ class Pipe:
         STORE_RESPONSE: bool = Field(
             default=False,
             description="Whether to store the generated model response (on OpenAI's side) for later debugging. Defaults to False.",
-        )  # Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-store
-        INJECT_CURRENT_DATE: bool = Field(
-            default=False,
-            description="Append today's date to the system prompt. Example: `Today's date: Thursday, May 21, 2025`.",
-        )
-        INJECT_USER_INFO: bool = Field(
-            default=False,
-            description="Append the user's name and email. Example: `user_info: Jane Doe <jane@example.com>`.",
         )
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
@@ -163,53 +136,26 @@ class Pipe:
 
     def __init__(self):
         self.type = "manifold"
-
         self.valves = self.Valves()  # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
+        
         self.session: aiohttp.ClientSession | None = None
+        
         self.log = logging.getLogger(__name__)
-        # Prevent propagation to the root logger which may add its own handlers
         self.log.propagate = False
-        # Set to DEBUG so per-message filtering controls output
         self.log.setLevel(logging.DEBUG)
-
-        # Add an inline "filter" that injects `session_id` into each record
-        self.log.addFilter(
-            lambda record: (
-                setattr(
-                    record,
-                    "session_id",
-                    getattr(record, "session_id", None) or current_session_id.get(),
-                )
-                or True
-            )
-        )
-
-        # Filter logs based on the ContextVar-controlled log level
-        def _per_message_level(record, logger=self.log):
-            return record.levelno >= current_log_level.get(logger.level)
-
-        self.log.addFilter(_per_message_level)
-
+        self.log.addFilter(lambda record: (setattr(record, "session_id", getattr(record, "session_id", None) or current_session_id.get()) or True))
+        self.log.addFilter(lambda record, logger=self.log: record.levelno >= current_log_level.get(logger.level))
         console = logging.StreamHandler(sys.stdout)
-        console.setFormatter(logging.Formatter(
-            "%(levelname)s [mid=%(session_id)s] %(message)s"
-        ))
+        console.setFormatter(logging.Formatter("%(levelname)s [mid=%(session_id)s] %(message)s"))
         self.log.addHandler(console)
-
         mem_handler = logging.Handler()
-        mem_handler.setFormatter(logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(message)s"
-        ))
-
-        # Inline emit function:
+        mem_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         mem_handler.emit = lambda record: (
-            # Only proceed if record has a session_id
             logs_by_msg_id.setdefault(getattr(record, "session_id", None), [])
                         .append(mem_handler.format(record))
             if getattr(record, "session_id", None)
             else None
         )
-
         self.log.addHandler(mem_handler)
     
     def pipes(self):
@@ -221,9 +167,6 @@ class Pipe:
             for model_id in models
         ]
 
-    # --------------------------------------------------
-    #  3. Handling Inference/Generation (Main Method)
-    # --------------------------------------------------
     async def pipe(
         self,
         body: dict[str, Any],
@@ -234,69 +177,43 @@ class Pipe:
         __tools__: list[dict[str, Any]] | dict[str, Any] | None
     ) -> AsyncGenerator[str, None] | str | None:
         """
-        This method is called every time a user sends a chat request to an OpenAI model you exposed via `pipes()`.
+        Single entry point:
+        1) If body["stream"] is True, return an async generator
+        2) Otherwise, await _multi_turn_non_streaming(...) for a final string.
         """
-        # Get the current message ID from contextvars
+        # Get or create aiohttp session (aiohttp is used for performance).
+        self.session = await self._get_or_create_aiohttp_session()
+
         chat_id = __metadata__.get("chat_id", None)
-        session_id = __metadata__.get("session_id", None)
         message_id = __metadata__.get("message_id", None)
-        token = current_session_id.set(session_id)
+        valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
+        current_session_id.set(__metadata__.get("session_id", None))
+        current_log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
 
-        # Merge user valve overrides (thread‑safe via ContextVar)
-        user_valves = self.UserValves.model_validate(__user__.get("valves", {}))
-        valves = self._merge_valves(self.valves, user_valves)
+        # Extract Model ID from body["model"]
+        model_id = str(body.get("model")).strip()  # e.g., openai_responses.o4-mini-high
+        model_id = model_id.split(".", 1)[-1]  # e.g., o4-mini-high
+        if model_id in {"o3-mini-high", "o4-mini-high"}: # OpenAI pseudo models
+            model_id = model_id.replace("-high", "")
+            body["reasoning_effort"] = "high"
 
-        # Update per-message log level via ContextVar
-        log_token = current_log_level.set(
-            getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
-        )
-
-        # TODO: I need some logic that detects if the pipe call is a direct call (e.g., from a background task) or an interactive chat request and behave differently.  need to reverse engineer how it works in middleware.py
-        # I believe there might be a __metadata__.get("task") to see if it's a background task, but I need to figure out how to handle that properly.  I also need to verify that __metadata__.get("task") actually exists as it's not in my documentation yet.
-        # I know there is also a __metadata__.get("direct") which is True if the pipe is called directly (e.g., from a background task) and False if it's an interactive chat request.
-
-        # Init variables before entering the main loop
-        final_output = StringIO()
-        loop_count = -1
-        collected_items: list[dict[str, Any]] = []
-        calls_to_execute: list[dict[str, Any]] = []
-        final_response_data = None
-        output_items = []
-        total_usage = {}
-        reasoning_map = {}  # Stores reasoning text per summary_index
+        # Detect if task model (generate title, generate tags, etc.), handle it separately
+        if body.get("task"):
+            return await self._handle_task(body["task"], __user__, __request__, __event_emitter__, __metadata__, __tools__) # Placeholder for task handling logic
 
         try:
-            self.session = await self._get_or_create_aiohttp_session() # aiohttp is used for performance (vs. httpx).
-
             # Build the OpenAI Responses API request body
-            openwebui_model_id = str(body.get("model")) # e.g., openai_responses.o4-mini-high
-            model_id = openwebui_model_id.split(".", 1)[-1] # e.g., o4-mini-high
-
-            # Apply model ID transformations to pseudo models
-            if model_id in {"o3-mini-high", "o4-mini-high"}:
-                model_id = model_id.replace("-high", "")
-                body["reasoning_effort"] = "high"
-
-            self.log.debug("Using OpenAI model ID: %s", model_id)
-
             transformed_body = {
                 "model": model_id,
                 "instructions": next((msg["content"] for msg in reversed(body.get("messages", [])) if msg.get("role") == "system"), ""),
-                "input": build_responses_history_by_chat_id_and_message_id(
-                    chat_id,
-                    message_id,
-                    model_id=model_id,
-                ),
+                "input": build_responses_history_by_chat_id_and_message_id(chat_id, message_id, model_id=model_id),
                 "stream": body.get("stream", False),
                 "user": __user__.get("email", "unknown_user"),
                 "store": valves.STORE_RESPONSE,
-
-                # Inline conditionals for optional parameters
                 **({"temperature": body["temperature"]} if "temperature" in body else {}),
                 **({"top_p": body["top_p"]} if "top_p" in body else {}),
                 **({"max_tokens": body["max_tokens"]} if "max_tokens" in body else {}),
                 **({"parallel_tool_calls": valves.PARALLEL_TOOL_CALLS} if valves.PARALLEL_TOOL_CALLS else {}),
-
                 # Conditionally add tools only if function calling is supported and enabled
                 **(
                     {
@@ -308,20 +225,12 @@ class Pipe:
                                 [self.web_search_tool(valves)]
                                 if (model_id in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH ))
                                 else []
-                            ),
-
-                            # Conditionally include image_generation
-                            *(
-                                [self.image_generation_tool(valves)]
-                                if (model_id in FEATURE_SUPPORT["image_gen_tool"] and valves.ENABLE_IMAGE_GENERATION)
-                                else []
-                            ),
+                            )
                         ]
                     }
                     if model_id in FEATURE_SUPPORT["function_calling"]
                     else {}
                 ),
-
                 # Conditionally add reasoning dict if the model supports reasoning AND (effort or summary) was specified
                 **(
                     {
@@ -339,7 +248,6 @@ class Pipe:
                     }
                     if (model_id in FEATURE_SUPPORT["reasoning"]) else {}
                 ),
-
                 # Only include "include" if it's a reasoning model. Included encrypted reasoning tokens (important for multi-turn loops).
                 **(
                     {
@@ -350,333 +258,296 @@ class Pipe:
                 ),
             }
 
-            # Log transformed_body
-            self.log.debug("Transformed OpenAI request body: %s", json.dumps(transformed_body, indent=2, ensure_ascii=False))
-
-            # If the model supports function calling, set it to native if not already
-            if (
-                __metadata__.get("function_calling") != "native"
-                and model_id in FEATURE_SUPPORT["function_calling"]
-            ):
-                self.set_function_calling_to_native(openwebui_model_id) # Note: The very first time the model is used, OpenWebUI will create a background task for build-in tool calling instead of using the native function calling. Ideally we would enable native function calling during model creation.
-                await self._emit_notification(
-                    __event_emitter__,
-                    "Native function calling enabled",
-                    level="info"
-                )
-
-            ############################## MAIN LOOP STARTS HERE ##############################
-            # 1. If stream, we will yield partial responses to the UI as they arrive.
-            # 2. If not streaming, we will generate a single response and return it.
-            # 3. If tool calls are pending, we will execute them and continue the loop until no more tool calls are made.
-            # 4. Loop until we either run out of tool calls or hit the max loop count
-            for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
-                self.log.debug("OpenAI Input payload: %s", json.dumps(transformed_body["input"], indent=2, ensure_ascii=False))
-
-                # STREAMING MODE: Call OpenAI's /responses endpoint with SSE
-                if transformed_body["stream"]:
-                    async for event in self._stream_sse_events(transformed_body, valves.API_KEY, valves.BASE_URL):
-                        event_type = event.get("type")
-                        self.log.debug("Received SSE event: %s", event_type)
-
-                        # ─── when a partial LLM response is received ─────────────────────────────
-                        if event_type == "response.output_text.delta":
-                            delta = event.get("delta", "")
-                            if delta:
-                                final_output.write(delta) # Append to final output. TBD If we use this.
-                                yield delta  # Yielding partial text to Open WebUI
-                            
-                            continue # continue to next event
-
-                        # ─── when a partial reasoning response is received ───────────────────────
-                        if event_type == "response.reasoning_summary_text.delta":
-                            idx = event.get("summary_index", 0)
-                            delta = event.get("delta", "")
-                            if delta:
-                                # 1) Accumulate for this summary_index
-                                reasoning_map[idx] = reasoning_map.get(idx, "") + delta
-
-                                # 2) Merge all blocks (sorted), separated by ---
-                                all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-
-                                # 3) Extract latest title, else fallback to 'Thinking...'
-                                matches = re.findall(r"\*\*(.+?)\*\*", all_text, flags=re.DOTALL)
-                                latest_title = matches[-1].strip() if matches else "Thinking..."
-
-                                # 4) Build a minimal snippet (omit type="reasoning")
-                                snippet = (
-                                    f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
-                                    f"<summary>🧠{latest_title}</summary>\n"
-                                    f"{all_text}\n"
-                                    "</details>"
-                                )
-
-                                # 5) Emit to the front end
-                                await __event_emitter__({
-                                    "type": "chat:completion",
-                                    "data": {"content": snippet},
-                                })
-
-                            continue
-
-                        # ─── when a tool STARTS ──────────────────────────────────────────────
-                        if event_type == "response.output_item.added":
-                            item = event.get("item", {})
-                            item_type = item.get("type", "")
-
-                            #write item to log for debugging
-                            self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
-
-                            if __event_emitter__:
-                                started = {
-                                    "web_search_call": [
-                                        "🔍 Hmm, let me quickly check online…",
-                                        "🔍 One sec—looking that up…",
-                                        "🔍 Just a moment, searching the web…",
-                                    ],
-                                    "function_call": [                       # {fn} will be replaced
-                                        "🛠️ Running the {fn} tool…",
-                                        "🛠️ Let me try {fn}…",
-                                        "🛠️ Calling {fn} real quick…",
-                                    ],
-                                    "file_search_call": [
-                                        "📂 Let me skim those files…",
-                                        "📂 One sec, scanning the documents…",
-                                        "📂 Checking the files right now…",
-                                    ],
-                                    "image_generation_call": [
-                                        "🎨 Let me create that image…",
-                                        "🎨 Give me a moment to sketch…",
-                                        "🎨 Working on your picture…",
-                                    ],
-                                    "local_shell_call": [
-                                        "💻 Let me run that command…",
-                                        "💻 Hold on, executing locally…",
-                                        "💻 Firing up that shell command…",
-                                    ]
-                                }
-                                if item_type in started and __event_emitter__:
-                                    template = random.choice(started[item_type])
-                                    msg = template.format(fn=item.get("name", "a tool"))
-                                    await self._emit_status(__event_emitter__, msg, done=False, hidden=False)
-
-                            continue  # continue to next event
-
-                        # ─── when a tool FINISHES ──────────────────────────────────────────────
-                        elif event_type == "response.output_item.done":
-                            item = event.get("item", {})
-                            item_type = item.get("type", "")
-                            
-                            if __event_emitter__:
-                                finished = {
-                                    "web_search_call": [
-                                        "🔎 Got it—here's what I found!",
-                                        "🔎 All set—found that info!",
-                                        "🔎 Okay, done searching!",
-                                    ],
-                                    "function_call": [
-                                        "🛠️ Done—the tool finished!",
-                                        "🛠️ Got the results for you!",
-                                    ],
-                                    "file_search_call": [
-                                        "📂 Done checking files!",
-                                        "📂 Found what I needed!",
-                                        "📂 Got the documents ready!",
-                                    ],
-                                    "image_generation_call": [
-                                        "🎨 Your image is ready!",
-                                        "🎨 Picture's finished!",
-                                        "🎨 All done—image created!",
-                                    ],
-                                    "local_shell_call": [
-                                        "💻 Command complete!",
-                                        "💻 Finished running that!",
-                                        "💻 Shell task done!",
-                                    ]
-                                }
-                                if item_type in finished and __event_emitter__:
-                                    template = random.choice(finished[item_type])
-                                    msg = template.format(fn=item.get("name", "Tool"))
-                                    await self._emit_status(__event_emitter__, msg, done=True, hidden=False)
-
-                            if item_type == "reasoning":
-                                # Merge all partial reasoning so far
-                                all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-
-                                if all_text:
-                                    all_text += "\n\n --- \n\n"
-                                    
-                                    final_snippet = (
-                                        f'<details type=\"{__name__}.reasoning\" done="true">\n'
-                                        f"<summary>Done thinking!</summary>\n"
-                                        f"{all_text}\n"
-                                        "</details>"
-                                    )
-
-                                    # append to final_output
-                                    final_output.write(final_snippet + "\n")
-
-                                    yield final_snippet
-                                else:
-                                    await self._emit_status(__event_emitter__, "Done thinking!", done=True, hidden=False)
-
-                            continue  # continue to next event
-
-                        # ─── when a response is complete ──────────────────────────────────────────────
-                        if event_type == "response.completed":
-                            self.log.debug("Response completed event received.")
-                            final_response_data = event.get("response", {})
-                            break # Exit the streaming loop to process the final response
-
-                # NON-STREAMING MODE: Call OpenAI's /responses endpoint via standard API call
-                else:
-                    self.log.info("Non-streaming mode. Generating a synchronous response.")
-                    self._emit_status(__event_emitter__, "Generating response...", done=False, hidden=False)
-                    final_response_data = await self._non_streaming_api_call(
-                        payload=transformed_body,
-                        api_key=valves.API_KEY,
-                        base_url=valves.BASE_URL,
-                    )
-                    self._emit_status(__event_emitter__, "", done=True, hidden=True)
-                    # yield the output_text
-                    output_items = final_response_data.get("output", [])
-                    if output_items:
-                        for item in output_items:
-                            if item.get("type") == "message":
-                                for content in item.get("content", []):
-                                    if content.get("type") == "output_text":
-                                        text = content.get("text", "")
-                                        final_output.write(text)
-                                        yield text
-
-                
-                # 3a) Extract usage and merge into total_usage
-                response_usage = final_response_data.get("usage", {})
-                for k, v in response_usage.items():
-                    if isinstance(v, dict):
-                        total_usage.setdefault(k, {})
-                        for sk, sv in v.items():
-                            if isinstance(sv, (int, float)):
-                                total_usage[k][sk] = total_usage[k].get(sk, 0) + sv
-                            else:
-                                total_usage[k][sk] = sv  # fallback for non-numeric
-                    elif isinstance(v, (int, float)):
-                        total_usage[k] = total_usage.get(k, 0) + v
-                    else:
-                        total_usage[k] = v  # fallback for non-numeric
-
-                # Track additional stats
-                total_usage["turn_count"] = total_usage.get("turn_count", 0) + 1
-                total_usage["function_call_count"] = total_usage.get("function_call_count", 0) + len([
-                    item for item in output_items if item.get("type") == "function_call"
-                ])
-                self.log.debug("Total usage after this loop: %s", total_usage)
-
-                # 3b) Extract output items + append them to `transformed_body["input"]`
-                output_items = final_response_data.get("output", [])
-                transformed_body["input"].extend(output_items) # Append to next iteration's input
-                collected_items.extend(output_items) # Accumulate for final DB save
-
-                # 3c) Identify function calls
-                calls_to_execute = [ i for i in output_items if i.get("type") == "function_call" ]
-
-                # Process any pending function calls; append their results to input history and continue the loop
-                if calls_to_execute:
-                    self.log.debug(
-                        "Processing %d pending function calls", len(calls_to_execute)
-                    )
-                    # 1) Create tasks
-                    tasks = [
-                        (
-                            asyncio.sleep(0, result="Tool not found")  # If tool doesn't exist
-                            if not (tool := __tools__.get(call["name"]))
-                            else tool["callable"](**orjson.loads(call["arguments"]))  # Async tool
-                            if inspect.iscoroutinefunction(tool["callable"])
-                            else asyncio.to_thread(tool["callable"], **orjson.loads(call["arguments"]))  # Sync tool
-                        )
-                        for call in calls_to_execute
-                    ]
-
-                    # 2) Run tasks concurrently
-                    results = await asyncio.gather(*tasks)
-
-                    # Build function_call_output items
-                    fc_outputs = [
-                        {
-                            "type": "function_call_output",
-                            "call_id": call_obj["call_id"],
-                            "output": str(result),
-                        }
-                        for call_obj, result in zip(calls_to_execute, results)
-                    ]
-
-                    # Add these new outputs to the conversation input (so LLM sees them next iteration)
-                    transformed_body["input"].extend(fc_outputs)
-
-                    # Accumulate them in our single list for final DB storage
-                    collected_items.extend(fc_outputs)
-
-                    # 4) Clear pending function calls for the next loop iteration
-                    calls_to_execute.clear()
-
-                else:
-                    self.log.debug("No pending function calls. Exiting loop.")
-                    break # LLM response is complete, no further tool calls
-
-            ############################## MAIN LOOP ENDS HERE ##############################
-
-            # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
-            if collected_items:
-                db_items = [item for item in collected_items if item.get("type") != "message"]
-                if db_items:
-                    add_openai_response_items_to_chat_by_id_and_message_id(
-                        chat_id,
-                        message_id,
-                        db_items,
-                        model_id,
-                    )
-
-            # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
-            if valves.LOG_LEVEL == "DEBUG" or user_valves.LOG_LEVEL != "INHERIT":
-                if __event_emitter__:
-                    logs = logs_by_msg_id.get(session_id, [])
-                    if logs:
-                        await self._emit_citation(
-                            __event_emitter__,
-                            "\n".join(logs),
-                            valves.LOG_LEVEL.capitalize() + " Logs",
-                        )
+            # Send to OpenAI Responses API
+            is_streaming = body.get("stream", False)
+            if is_streaming:
+                # Return async generator for partial text
+                return self._multi_turn_streaming(body, transformed_body, valves, __event_emitter__, __metadata__, __tools__)
+            else:
+                # Return final text (non-streaming)
+                return await self._multi_turn_non_streaming(body, transformed_body, valves, __event_emitter__, __metadata__, __tools__)
 
         except Exception as caught_exception:
             await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
-            
-        finally:
-            self.log.debug("Cleaning up resources after loop iteration %d", loop_count)
+            # Optionally, you could yield an error message or raise a custom exception
+                
+    # -------------------------------------------------------------------------
+    # 1) Multi-turn loop: STREAMING
+    # -------------------------------------------------------------------------
+    async def _multi_turn_streaming(
+        self,
+        body: Dict[str, Any],                                       # The unmodified body from Open WebUI (completions API)
+        transformed_body: Dict[str, Any],                           # The transformed body for OpenAI Responses API
+        valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
+        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
+        metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
+        tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming multi-turn conversation loop using OpenAI Responses API.
 
-            # Emit final completion event with the full output
-            if __event_emitter__:
-                await self._emit_completion(
-                    __event_emitter__,
-                    {
-                        "done": True,
-                        "content": final_output.getvalue(), # I don't think we need to include content.
-                        **({"usage": total_usage} if total_usage else {}),
-                    },
+        Workflow:
+        - The conversation loop runs up to `valves.MAX_TOOL_CALL_LOOPS` times to prevent infinite tool-calling cycles.
+        1) In each iteration, `_stream_sse_events(...)` is called to yield partial LLM outputs as SSE events.
+        2) For each event:
+            - Partial text deltas (`response.output_text.delta`) are yielded to the UI for real-time updates.
+            - Other event types, such as reasoning summaries and tool start/end notifications, are handled and emitted as needed.
+        3) When a 'response.completed' event is received, the final output is parsed to check for any function (tool) calls.
+            - If a function call is present, it is executed, its result is appended to `transformed_body["input"]`, and the loop continues for another turn.
+            - If no function call is present, the conversation is considered complete and the loop exits.
+        """
+        chat_id = metadata.get("chat_id", None)
+        message_id = metadata.get("message_id", None)
+        model_id = transformed_body.get("model", "unknown_model")
+
+        final_output = StringIO()
+        reasoning_map: Dict[int, str] = {}
+        total_usage: Dict[str, Any] = {}
+        collected_items: List[dict] = []  # For storing function_call, function_call_output, etc.
+
+        self.log.debug("Entering _multi_turn_streaming with up to %d loops", valves.MAX_TOOL_CALL_LOOPS)
+
+        for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
+            final_response_data: dict[str, Any] | None = None
+            self.log.debug("Starting loop %d of %d", loop_count + 1, valves.MAX_TOOL_CALL_LOOPS)
+            async for event in self._call_llm_sse(transformed_body, api_key=valves.API_KEY, base_url=valves.BASE_URL):
+                event_type = event.get("type")
+                self.log.debug("SSE event type: %s", event_type)
+
+                # Partial text output
+                if event_type == "response.output_text.delta":
+                    delta = event.get("delta", "")
+                    if delta:
+                        final_output.write(delta) # Append to final output. TBD If we use this.
+                        yield delta  # Yielding partial text to Open WebUI
+
+                    continue # continue to next event
+
+                # Partial reasoning summary output
+                if event_type == "response.reasoning_summary_text.delta":
+                    idx = event.get("summary_index", 0)
+                    delta = event.get("delta", "")
+                    if delta:
+                        # 1) Accumulate for this summary_index
+                        reasoning_map[idx] = reasoning_map.get(idx, "") + delta
+
+                        # 2) Merge all blocks (sorted), separated by ---
+                        all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
+
+                        # 3) Extract latest title, else fallback to 'Thinking...'
+                        matches = re.findall(r"\*\*(.+?)\*\*", all_text, flags=re.DOTALL)
+                        latest_title = matches[-1].strip() if matches else "Thinking..."
+
+                        # 4) Build a minimal snippet (omit type="reasoning")
+                        snippet = (
+                            f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
+                            f"<summary>🧠{latest_title}</summary>\n"
+                            f"{all_text}\n"
+                            "</details>"
+                        )
+
+                        # 5) Emit to the front end
+                        await event_emitter({
+                            "type": "chat:completion",
+                            "data": {"content": snippet},
+                        })
+
+                    continue
+
+                # Output item added (e.g., tool call started, reasoning started, etc..)
+                if event_type == "response.output_item.added":
+                    item = event.get("item", {})
+                    item_type = item.get("type", "")
+
+                    #write item to log for debugging
+                    self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
+
+                    if event_emitter:
+                        started = {
+                            "web_search_call": [
+                                "🔍 Hmm, let me quickly check online…",
+                                "🔍 One sec—looking that up…",
+                                "🔍 Just a moment, searching the web…",
+                            ],
+                            "function_call": [                       # {fn} will be replaced
+                                "🛠️ Running the {fn} tool…",
+                                "🛠️ Let me try {fn}…",
+                                "🛠️ Calling {fn} real quick…",
+                            ],
+                            "file_search_call": [
+                                "📂 Let me skim those files…",
+                                "📂 One sec, scanning the documents…",
+                                "📂 Checking the files right now…",
+                            ],
+                            "image_generation_call": [
+                                "🎨 Let me create that image…",
+                                "🎨 Give me a moment to sketch…",
+                                "🎨 Working on your picture…",
+                            ],
+                            "local_shell_call": [
+                                "💻 Let me run that command…",
+                                "💻 Hold on, executing locally…",
+                                "💻 Firing up that shell command…",
+                            ]
+                        }
+                        if item_type in started and event_emitter:
+                            template = random.choice(started[item_type])
+                            msg = template.format(fn=item.get("name", "a tool"))
+                            await self._emit_status(event_emitter, msg, done=False, hidden=False)
+
+                    continue  # continue to next event
+
+                # Output item done (e.g., tool call finished, reasoning done, etc.)
+                elif event_type == "response.output_item.done":
+                    item = event.get("item", {})
+                    item_type = item.get("type", "")
+                    
+                    if event_emitter:
+                        finished = {
+                            "web_search_call": [
+                                "🔎 Got it—here's what I found!",
+                                "🔎 All set—found that info!",
+                                "🔎 Okay, done searching!",
+                            ],
+                            "function_call": [
+                                "🛠️ Done—the tool finished!",
+                                "🛠️ Got the results for you!",
+                            ],
+                            "file_search_call": [
+                                "📂 Done checking files!",
+                                "📂 Found what I needed!",
+                                "📂 Got the documents ready!",
+                            ],
+                            "image_generation_call": [
+                                "🎨 Your image is ready!",
+                                "🎨 Picture's finished!",
+                                "🎨 All done—image created!",
+                            ],
+                            "local_shell_call": [
+                                "💻 Command complete!",
+                                "💻 Finished running that!",
+                                "💻 Shell task done!",
+                            ]
+                        }
+                        if item_type in finished and event_emitter:
+                            template = random.choice(finished[item_type])
+                            msg = template.format(fn=item.get("name", "Tool"))
+                            await self._emit_status(event_emitter, msg, done=True, hidden=False)
+
+                    if item_type == "reasoning":
+                        # Merge all partial reasoning so far
+                        all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
+
+                        if all_text:
+                            all_text += "\n\n --- \n\n"
+                            
+                            final_snippet = (
+                                f'<details type=\"{__name__}.reasoning\" done="true">\n'
+                                f"<summary>Done thinking!</summary>\n"
+                                f"{all_text}\n"
+                                "</details>"
+                            )
+
+                            # append to final_output
+                            final_output.write(final_snippet + "\n")
+
+                            yield final_snippet
+                        else:
+                            await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
+
+                    continue  # continue to next event
+
+                # Response completed event
+                if event_type == "response.completed":
+                    self.log.debug("Response completed event received.")
+                    final_response_data = event.get("response", {})
+                    break # Exit the streaming loop to process the final response
+
+            # If no final response data, we exit the loop.
+            if not final_response_data:
+                self.log.debug("No final response data after SSE. Exiting loop.")
+                break
+
+            # Capture the final output items
+            collected_items.extend(final_response_data.get("output", []))
+            usage = final_response_data.get("usage", {})
+            if usage:
+                usage["turn_count"] = 1
+                usage["function_call_count"] = sum(
+                    1 for i in final_response_data["output"] if i["type"] == "function_call"
                 )
+                update_usage_totals(total_usage, usage)
 
-            logs_by_msg_id.pop(session_id, None)
-            current_session_id.reset(token)
-            current_log_level.reset(log_token)
+            # Run function calls if present
+            calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
+            if calls:
+                function_call_outputs = await self._execute_function_calls(calls, tools)
+                collected_items.extend(function_call_outputs) # Store function call outputs to be persisted in DB later
+                transformed_body["input"].extend(function_call_outputs) # Append to input for next iteration
+            else:
+                self.log.debug("No pending function calls. Exiting loop.")
+                break # LLM response is complete, no further tool calls
+        
+        
+        if event_emitter:
+            await self._emit_completion(
+                event_emitter,
+                {
+                    "done": True,
+                    #"content": TBD
+                    **({"usage": total_usage} if total_usage else {}),
+                },
+            )
 
-            if __metadata__.get("task") is None:
-                return # TODO: Remove this after we have implemented our own custom background helpers.
-                asyncio.current_task().cancel() # Workaround to skip remaining Open WebUI’s "background" helpers (title, tags, …). Note: middleware.py catches error, logs it, and performs its own upsert.  TODO find cleaner solution.
-                await asyncio.sleep(0)
+        # Persist the final output to database
+        if collected_items:
+            db_items = [item for item in collected_items if item.get("type") != "message"]
+            if db_items:
+                add_openai_response_items_to_chat_by_id_and_message_id(
+                    chat_id,
+                    message_id,
+                    db_items,
+                    model_id,
+                )           
 
-    # ----------------------------------------------------------------------------------------------------
-    #  Helpers (Streaming, Non-streaming, Logging, etc.)
-    # ----------------------------------------------------------------------------------------------------
-    async def _stream_sse_events(
+        # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
+        # TODO ADD LOGIC TO DETECT USER VALVES /= "INHERIT"
+        if valves.LOG_LEVEL == "DEBUG":
+            if event_emitter:
+                logs = logs_by_msg_id.get(current_session_id, [])
+                if logs:
+                    await self._emit_citation(
+                        event_emitter,
+                        "\n".join(logs),
+                        valves.LOG_LEVEL.capitalize() + " Logs",
+                    )
+
+    # -------------------------------------------------------------------------
+    # 2) Multi-turn loop: NON-STREAMING
+    # -------------------------------------------------------------------------
+    async def _multi_turn_non_streaming(
+        self,
+        body: Dict[str, Any],                                       # The unmodified body from Open WebUI (completions API)
+        transformed_body: Dict[str, Any],                           # The transformed body for OpenAI Responses API
+        valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
+        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
+        metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
+        tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
+    ) -> str:
+        """
+        Multi-turn conversation in non-streaming mode.
+        - Up to max_loops iterations.
+        - Each iteration calls _call_llm_non_stream(), capturing the full text.
+        - If a tool is requested, run it and re-call. 
+        - Returns concatenated text at the end.
+        """
+
+        return "".join("")
+
+    # -------------------------------------------------------------------------
+    # HELPER: SSE LLM Call
+    # -------------------------------------------------------------------------
+    async def _call_llm_sse(
         self,
         request_params: dict[str, Any],
         api_key: str,
@@ -725,45 +596,89 @@ class Pipe:
                 if start_idx > 0:
                     del buf[:start_idx]
 
-    async def _non_streaming_api_call(
-        self, payload: dict[str, Any], api_key: str, base_url: str
-    ) -> dict:
+    # -------------------------------------------------------------------------
+    # HELPER: Non-stream LLM Call
+    # -------------------------------------------------------------------------
+    async def _call_llm_non_stream(
+        self,
+        conversation: Dict[str, Any],
+        request: "Request",
+        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]]
+    ) -> Dict[str, Any]:
         """
-        Calls /responses once, returns the full JSON result (not just the text).
-        Raises on HTTP or schema errors.
-        """
-        # Remove 'stream' key to be safe
-        payload.pop("stream", None)
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
+        Calls the LLM once, returning a dict like:
+        {
+            "text": "Hello World!",
+            "usage": {"tokens": 99},
+            "function_call": {...}
         }
-        url = base_url.rstrip("/") + "/responses"
-        self.log.debug("POST %s with payload: %s", url, payload)
+        ...
+        """
+        # Example/fake
+        return {
+            "text": "Hello from non-streaming call!",
+            "usage": {"tokens": 99}
+            # or "function_call": {...}
+        }
 
-        # Make the request
-        try:
-            async with self.session.post(url, json=payload, headers=headers) as resp:
-                if resp.status >= 400:
-                    error_text = await resp.text()
-                    self.log.error("OpenAI /responses failed [%s]: %s", resp.status, error_text)
-                    raise RuntimeError(f"OpenAI /responses error {resp.status}: {error_text}")
+    # -------------------------------------------------------------------------
+    # HELPER: Execute Tool Call
+    # -------------------------------------------------------------------------
+    @staticmethod
+    async def _execute_function_calls(
+        calls: list[dict],                      # raw call-items from the LLM
+        tools: dict[str, dict[str, Any]],       # name → {callable, …}
+    ) -> list[dict]:
+        """
+        Run every function-call in *parallel* and return the synthetic
+        `function_call_output` items the LLM expects next turn.
+        """
+        def _make_task(call):
+            tool_cfg = tools.get(call["name"])
+            if not tool_cfg:                                 # tool missing
+                return asyncio.sleep(0, result="Tool not found")
 
-                # Parse JSON body
-                raw_bytes = await resp.read()
-                data = orjson.loads(raw_bytes)
+            fn = tool_cfg["callable"]
+            args = orjson.loads(call["arguments"])
 
-        except aiohttp.ClientError as e:
-            self.log.error("Network error calling /responses: %s", e)
-            raise RuntimeError(f"Network error calling /responses: {e}") from e
+            if inspect.iscoroutinefunction(fn):              # async tool
+                return fn(**args)
+            else:                                            # sync tool
+                return asyncio.to_thread(fn, **args)
 
-        if "output" not in data:
-            self.log.error("Unexpected /responses schema (no 'output' key). Full data: %s", data)
-            raise KeyError("Missing 'output' in non-streaming response")
+        tasks   = [_make_task(call) for call in calls]       # ← fire & forget
+        results = await asyncio.gather(*tasks)               # ← runs in parallel
 
-        return data
+        return [
+            {
+                "type":   "function_call_output",
+                "call_id": call["call_id"],
+                "output":  str(result),
+            }
+            for call, result in zip(calls, results)
+        ]
+
+
+    # ------------------------------------------------------
+    # helper: Merge User Valve Overrides
+    # ------------------------------------------------------
+    def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
+        """
+        Merge user-level valves into default.
+        Ignores any user value set to "INHERIT" (case-insensitive).
+        """
+        if not user_valves:
+            return global_valves
+
+        # Merge: update only fields not set to "INHERIT"
+        update = {
+            k: v
+            for k, v in user_valves.model_dump().items()
+            if v is not None and str(v).lower() != "inherit"
+        }
+        return global_valves.model_copy(update=update)
+
+    ###########################################################################################################
 
     async def _emit_error(
         self,
@@ -880,22 +795,6 @@ class Pipe:
         await event_emitter(
             {"type": "notification", "data": {"type": level, "content": content}}
         )
-
-    def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
-        """
-        Merge user-level valves into default.
-        Ignores any user value set to "INHERIT" (case-insensitive).
-        """
-        if not user_valves:
-            return global_valves
-
-        # Merge: update only fields not set to "INHERIT"
-        update = {
-            k: v
-            for k, v in user_valves.model_dump().items()
-            if v is not None and str(v).lower() != "inherit"
-        }
-        return global_valves.model_copy(update=update)
 
     async def _get_or_create_aiohttp_session(self) -> aiohttp.ClientSession:
         """
@@ -1189,12 +1088,12 @@ def build_responses_history_by_chat_id_and_message_id(
 
     return final
 
-async def cancel_all_tasks_for_chat(chat_id: str):
-    task_ids = list_task_ids_by_chat_id(chat_id)
-    for t_id in task_ids:
-        try:
-            result = await stop_task(t_id)
-            print(f"Stopped task {t_id}: {result}")
-        except ValueError as e:
-            print(f"Could not stop task {t_id}: {e}")
-                  
+
+## Miscellaneous Helpers
+def update_usage_totals(total, new):
+    for k, v in new.items():
+        if isinstance(v, dict):
+            total[k] = update_usage_totals(total.get(k, {}), v)
+        else:
+            total[k] = total.get(k, 0) + v
+    return total
