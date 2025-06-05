@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.8.0
+version: 0.8.1
 license: MIT
 requirements: orjson
 """
@@ -27,7 +27,6 @@ import sys
 import time
 from collections import defaultdict
 from contextvars import ContextVar
-from io import StringIO
 
 # Third-party imports
 import aiohttp
@@ -53,9 +52,7 @@ from typing import (
 from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import Model
 from open_webui.internal.db import get_db
-from open_webui.tasks import list_task_ids_by_chat_id, stop_task
 from open_webui.utils.misc import get_message_list
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -300,10 +297,66 @@ class Pipe:
         message_id = metadata.get("message_id", None)
         model_id = transformed_body.get("model", "unknown_model")
 
-        final_output = StringIO()
         reasoning_map: Dict[int, str] = {}
         total_usage: Dict[str, Any] = {}
         collected_items: List[dict] = []  # For storing function_call, function_call_output, etc.
+
+        started_msgs = {
+            "web_search_call": [
+                "🔍 Hmm, let me quickly check online…",
+                "🔍 One sec—looking that up…",
+                "🔍 Just a moment, searching the web…",
+            ],
+            "function_call": [
+                "🛠️ Running the {fn} tool…",
+                "🛠️ Let me try {fn}…",
+                "🛠️ Calling {fn} real quick…",
+            ],
+            "file_search_call": [
+                "📂 Let me skim those files…",
+                "📂 One sec, scanning the documents…",
+                "📂 Checking the files right now…",
+            ],
+            "image_generation_call": [
+                "🎨 Let me create that image…",
+                "🎨 Give me a moment to sketch…",
+                "🎨 Working on your picture…",
+            ],
+            "local_shell_call": [
+                "💻 Let me run that command…",
+                "💻 Hold on, executing locally…",
+                "💻 Firing up that shell command…",
+            ],
+        }
+
+        finished_msgs = {
+            "web_search_call": [
+                "🔎 Got it—here's what I found!",
+                "🔎 All set—found that info!",
+                "🔎 Okay, done searching!",
+            ],
+            "function_call": [
+                "🛠️ Done—the tool finished!",
+                "🛠️ Got the results for you!",
+            ],
+            "file_search_call": [
+                "📂 Done checking files!",
+                "📂 Found what I needed!",
+                "📂 Got the documents ready!",
+            ],
+            "image_generation_call": [
+                "🎨 Your image is ready!",
+                "🎨 Picture's finished!",
+                "🎨 All done—image created!",
+            ],
+            "local_shell_call": [
+                "💻 Command complete!",
+                "💻 Finished running that!",
+                "💻 Shell task done!",
+            ],
+        }
+
+        tools = tools or {}
 
         self.log.debug("Entering _multi_turn_streaming with up to %d loops", valves.MAX_TOOL_CALL_LOOPS)
 
@@ -318,13 +371,12 @@ class Pipe:
                 if event_type == "response.output_text.delta":
                     delta = event.get("delta", "")
                     if delta:
-                        final_output.write(delta) # Append to final output. TBD If we use this.
-                        yield delta  # Yielding partial text to Open WebUI
+                        yield delta  # Yield partial text to Open WebUI
 
                     continue # continue to next event
 
                 # Partial reasoning summary output
-                if event_type == "response.reasoning_summary_text.delta":
+                elif event_type == "response.reasoning_summary_text.delta":
                     idx = event.get("summary_index", 0)
                     delta = event.get("delta", "")
                     if delta:
@@ -355,84 +407,28 @@ class Pipe:
                     continue
 
                 # Output item added (e.g., tool call started, reasoning started, etc..)
-                if event_type == "response.output_item.added":
+                elif event_type == "response.output_item.added":
                     item = event.get("item", {})
                     item_type = item.get("type", "")
 
-                    #write item to log for debugging
                     self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
 
-                    if event_emitter:
-                        started = {
-                            "web_search_call": [
-                                "🔍 Hmm, let me quickly check online…",
-                                "🔍 One sec—looking that up…",
-                                "🔍 Just a moment, searching the web…",
-                            ],
-                            "function_call": [                       # {fn} will be replaced
-                                "🛠️ Running the {fn} tool…",
-                                "🛠️ Let me try {fn}…",
-                                "🛠️ Calling {fn} real quick…",
-                            ],
-                            "file_search_call": [
-                                "📂 Let me skim those files…",
-                                "📂 One sec, scanning the documents…",
-                                "📂 Checking the files right now…",
-                            ],
-                            "image_generation_call": [
-                                "🎨 Let me create that image…",
-                                "🎨 Give me a moment to sketch…",
-                                "🎨 Working on your picture…",
-                            ],
-                            "local_shell_call": [
-                                "💻 Let me run that command…",
-                                "💻 Hold on, executing locally…",
-                                "💻 Firing up that shell command…",
-                            ]
-                        }
-                        if item_type in started and event_emitter:
-                            template = random.choice(started[item_type])
-                            msg = template.format(fn=item.get("name", "a tool"))
-                            await self._emit_status(event_emitter, msg, done=False, hidden=False)
-
+                    if item_type in started_msgs:
+                        template = random.choice(started_msgs[item_type])
+                        msg = template.format(fn=item.get("name", "a tool"))
+                        await self._emit_status(event_emitter, msg, done=False, hidden=False)
+                    
                     continue  # continue to next event
 
                 # Output item done (e.g., tool call finished, reasoning done, etc.)
                 elif event_type == "response.output_item.done":
                     item = event.get("item", {})
                     item_type = item.get("type", "")
-                    
-                    if event_emitter:
-                        finished = {
-                            "web_search_call": [
-                                "🔎 Got it—here's what I found!",
-                                "🔎 All set—found that info!",
-                                "🔎 Okay, done searching!",
-                            ],
-                            "function_call": [
-                                "🛠️ Done—the tool finished!",
-                                "🛠️ Got the results for you!",
-                            ],
-                            "file_search_call": [
-                                "📂 Done checking files!",
-                                "📂 Found what I needed!",
-                                "📂 Got the documents ready!",
-                            ],
-                            "image_generation_call": [
-                                "🎨 Your image is ready!",
-                                "🎨 Picture's finished!",
-                                "🎨 All done—image created!",
-                            ],
-                            "local_shell_call": [
-                                "💻 Command complete!",
-                                "💻 Finished running that!",
-                                "💻 Shell task done!",
-                            ]
-                        }
-                        if item_type in finished and event_emitter:
-                            template = random.choice(finished[item_type])
-                            msg = template.format(fn=item.get("name", "Tool"))
-                            await self._emit_status(event_emitter, msg, done=True, hidden=False)
+
+                    if item_type in finished_msgs:
+                        template = random.choice(finished_msgs[item_type])
+                        msg = template.format(fn=item.get("name", "Tool"))
+                        await self._emit_status(event_emitter, msg, done=True, hidden=False)
 
                     if item_type == "reasoning":
                         # Merge all partial reasoning so far
@@ -448,9 +444,6 @@ class Pipe:
                                 "</details>"
                             )
 
-                            # append to final_output
-                            final_output.write(final_snippet + "\n")
-
                             yield final_snippet
                         else:
                             await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
@@ -458,7 +451,7 @@ class Pipe:
                     continue  # continue to next event
 
                 # Response completed event
-                if event_type == "response.completed":
+                elif event_type == "response.completed":
                     self.log.debug("Response completed event received.")
                     final_response_data = event.get("response", {})
                     break # Exit the streaming loop to process the final response
@@ -514,7 +507,7 @@ class Pipe:
         # TODO ADD LOGIC TO DETECT USER VALVES /= "INHERIT"
         if valves.LOG_LEVEL == "DEBUG":
             if event_emitter:
-                logs = logs_by_msg_id.get(current_session_id, [])
+                logs = logs_by_msg_id.get(current_session_id.get(), [])
                 if logs:
                     await self._emit_citation(
                         event_emitter,
