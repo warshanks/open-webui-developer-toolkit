@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.8.1
+version: 0.8.2
 license: MIT
 requirements: orjson
 """
@@ -358,12 +358,22 @@ class Pipe:
 
         tools = tools or {}
 
-        self.log.debug("Entering _multi_turn_streaming with up to %d loops", valves.MAX_TOOL_CALL_LOOPS)
+        self.log.debug(
+            "Entering _multi_turn_streaming with up to %d loops",
+            valves.MAX_TOOL_CALL_LOOPS,
+        )
 
-        for loop_count in range(valves.MAX_TOOL_CALL_LOOPS):
+        for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
             final_response_data: dict[str, Any] | None = None
-            self.log.debug("Starting loop %d of %d", loop_count + 1, valves.MAX_TOOL_CALL_LOOPS)
-            async for event in self._call_llm_sse(transformed_body, api_key=valves.API_KEY, base_url=valves.BASE_URL):
+            reasoning_map.clear()
+            self.log.debug(
+                "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
+            )
+            async for event in self._call_llm_sse(
+                transformed_body,
+                api_key=valves.API_KEY,
+                base_url=valves.BASE_URL,
+            ):
                 event_type = event.get("type")
                 self.log.debug("SSE event type: %s", event_type)
 
@@ -399,10 +409,10 @@ class Pipe:
                         )
 
                         # 5) Emit to the front end
-                        await event_emitter({
-                            "type": "chat:completion",
-                            "data": {"content": snippet},
-                        })
+                        if event_emitter:
+                            await event_emitter(
+                                {"type": "chat:completion", "data": {"content": snippet}}
+                            )
 
                     continue
 
@@ -436,7 +446,7 @@ class Pipe:
 
                         if all_text:
                             all_text += "\n\n --- \n\n"
-                            
+
                             final_snippet = (
                                 f'<details type=\"{__name__}.reasoning\" done="true">\n'
                                 f"<summary>Done thinking!</summary>\n"
@@ -447,6 +457,8 @@ class Pipe:
                             yield final_snippet
                         else:
                             await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
+
+                        reasoning_map.clear()
 
                     continue  # continue to next event
 
@@ -470,6 +482,8 @@ class Pipe:
                     1 for i in final_response_data["output"] if i["type"] == "function_call"
                 )
                 update_usage_totals(total_usage, usage)
+
+            transformed_body["input"].extend(final_response_data.get("output", []))
 
             # Run function calls if present
             calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
