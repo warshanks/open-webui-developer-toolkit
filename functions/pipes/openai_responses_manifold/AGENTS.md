@@ -12,10 +12,14 @@ We follow **Semantic Versioning** (`MAJOR.MINOR.PATCH`):
 - **PATCH** – bug fixes or internal changes that keep existing behaviour.
 
 ## Changelog Updates
+When `openai_responses_manifold.py` is modified, update the `version` field only once per day. All changes made on the same day should be grouped under a single version in `CHANGELOG.md` using the format:
 
-Whenever `openai_responses_manifold.py` is modified, increment the version field
-following the rules above **and** add an entry to `CHANGELOG.md` under a new
-heading `## [x.y.z] - YYYY-MM-DD` describing the change.
+```
+## [x.y.z] - YYYY-MM-DD
+```
+
+If additional changes are made later on the same day, update the existing entry instead of creating a new version. Only increment the version number when changes are made on a new day or when a significant milestone warrants it.
+
 
 Documentation-only edits do not require a version bump.
 

@@ -4,29 +4,18 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.3] - 2025-06-09
-- Reworked logger setup with a custom `Logger` subclass so session-specific log
-  levels work correctly.
-
-## [0.9.2] - 2025-06-09
-- Fixed per-session log level filtering using `ContextVar`-based filters.
-
-## [0.9.1] - 2025-06-08
-- Returned OpenAI-compatible dict from `_handle_task`.
-
-## [0.9.0] - 2025-06-07
-- Added basic task model support via `_handle_task`.
-
-## [0.8.4] - 2025-06-06
-- Enabled tool-call loops in `_multi_turn_non_streaming` for parity with the streaming path.
-
-## [0.8.3] - 2025-06-06
-- Implemented `_multi_turn_non_streaming` with single-request flow.
-
 ## [0.8.2] - 2025-06-05
 - Fixed reasoning summaries leaking into subsequent turns.
 - Added missing output items to subsequent requests.
 - Guarded reasoning event emission when no emitter is provided.
+- Implemented `_multi_turn_non_streaming` with single-request flow.
+- Enabled tool-call loops in `_multi_turn_non_streaming` for parity with the streaming path.
+- Added basic task model support via `_handle_task`.
+- Returned OpenAI-compatible dict from `_handle_task`.
+- Fixed per-session log level filtering using `ContextVar`-based filters.
+- Reworked logger setup with a custom `Logger` subclass so session-specific log levels work correctly.
+- Avoid errors if a streaming response ends without `response.completed`.
+- Respect `PERSIST_TOOL_RESULTS` valve when saving tool outputs.
 
 ## [0.8.1] - 2025-06-05
 - Refactored `_multi_turn_streaming` for simplicity and removed unused output buffer.
