@@ -198,7 +198,7 @@ class Pipe:
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if body.get("task"):
-            return await self._handle_task(body["task"], __user__, __request__, __event_emitter__, __metadata__, __tools__) # Placeholder for task handling logic
+            return await self._handle_task(body, __user__, __request__, __event_emitter__, __metadata__, __tools__) # Placeholder for task handling logic
 
         try:
             # Build the OpenAI Responses API request body
