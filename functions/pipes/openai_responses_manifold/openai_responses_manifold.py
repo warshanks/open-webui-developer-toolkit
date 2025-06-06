@@ -13,7 +13,7 @@ requirements: orjson
 from __future__ import annotations
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Standard lib & third-party imports
+# Standard lib imports
 # ─────────────────────────────────────────────────────────────────────────────
 import asyncio
 import datetime
@@ -28,24 +28,16 @@ import sys
 import time
 from collections import defaultdict
 from contextvars import ContextVar
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
 
+# ─────────────────────────────────────────────────────────────────────────────
 # Third-party imports
+# ─────────────────────────────────────────────────────────────────────────────
 import aiohttp
 import orjson
 from fastapi import Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-# Typing imports
-from typing import (
-    Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Open WebUI internals
@@ -53,8 +45,7 @@ from typing import (
 from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import Model
 from open_webui.internal.db import get_db
-
-from open_webui.utils.misc import get_message_list
+from open_webui.utils.misc import get_message_list, get_system_message
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -66,10 +57,87 @@ FEATURE_SUPPORT = {
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high" }, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 }
 
-current_session_id = ContextVar("current_session_id", default=None)
-current_log_level = ContextVar("current_log_level", default=logging.INFO)
-logs_by_msg_id = defaultdict(list)
+# OpenAI Completions API body
+class CompletionsBody(BaseModel):
+    model: str
+    stream: bool = False
+    messages: List[Dict[str, Any]]
+    tools: Optional[List[Dict[str, Any]]] = None                            # native function-calling tools
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None     # reasoning effort for o-series models
+    parallel_tool_calls: Optional[bool] = None                              # allow parallel tool execution
+    seed: Optional[int] = None                                              # deterministic sampling
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
 
+    class Config:
+        extra = "allow"
+
+    @model_validator(mode='after')
+    def normalize_model(cls, values: "CompletionsBody") -> "CompletionsBody":
+        """
+        Normalize the model ID:
+        - Strip 'openai_responses.' prefix.
+        - Handle pseudo-model IDs like 'o4-mini-high'.
+        """
+        # Strip prefix if present
+        values.model = values.model.removeprefix("openai_responses.")
+
+        # Handle pseudo-models (e.g., o4-mini-high → o4-mini, effort=high)
+        if values.model in {"o3-mini-high", "o4-mini-high"}:
+            values.model = values.model.replace("-high", "")
+            values.reasoning_effort = "high"
+
+        return values
+
+# OpenAI Responses API body
+class ResponsesBody(BaseModel):
+    # Required parameters
+    model: str                                    # e.g. "gpt-4o"
+    input: Union[str, List[Dict[str, Any]]]       # plain text, or rich array
+
+    # Optional parameters
+    instructions: Optional[str] = ""              # system / developer prompt
+    stream: bool = False                          # SSE chunking
+    store: Optional[bool] = False                  # persist response on OpenAI side
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    max_output_tokens: Optional[int] = None
+    truncation: Optional[Literal["auto", "disabled"]] = None
+    reasoning: Optional[Dict[str, Any]] = None    # {"effort":"high", ...}
+    parallel_tool_calls: Optional[bool] = True
+    tool_choice: Optional[Literal["none", "auto", "required"]] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    include: Optional[List[str]] = None           # extra output keys
+
+    class Config:
+        extra = "allow"
+
+    @staticmethod
+    def from_completions(
+        completions: "CompletionsBody",
+        **extras: Any
+    ) -> "ResponsesBody":
+        """
+        Converts CompletionsBody to ResponsesBody, explicitly mapping parameters,
+        and allowing extra parameters to be passed directly.
+        """
+        system_message = get_system_message(completions.messages)
+
+        return ResponsesBody(
+            model=completions.model,
+            stream=completions.stream,
+            temperature=completions.temperature,
+            top_p=completions.top_p,
+            instructions=system_message.get("content", "") if system_message else "",
+            input=transform_messages(completions.messages),
+            tools=transform_tools(completions.tools) if completions.tools else None,
+            reasoning=(
+                {"effort": completions.reasoning_effort} 
+                if completions.reasoning_effort else None
+            ),
+            **{k: v for k, v in extras.items() if v is not None}
+        )
 
 class SessionIDFilter(logging.Filter):
     """Attach the current session ID to each log record."""
@@ -84,9 +152,10 @@ class ContextLevelFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
         return record.levelno >= current_log_level.get()
-
-# Precompiled regex for stripping <details> blocks from assistant text
-DETAILS_RE = re.compile(r"<details\b[^>]*>.*?<\/details>", flags=re.IGNORECASE | re.DOTALL)
+    
+current_session_id = ContextVar("current_session_id", default=None)
+current_log_level = ContextVar("current_log_level", default=logging.INFO)
+logs_by_msg_id = defaultdict(list)
 
 class Pipe:
     class Valves(BaseModel):
@@ -125,10 +194,6 @@ class Pipe:
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
-        )
-        STORE_RESPONSE: bool = Field(
-            default=False,
-            description="Whether to store the generated model response (on OpenAI's side) for later debugging. Defaults to False.",
         )
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
@@ -225,91 +290,49 @@ class Pipe:
         # Get or create aiohttp session (aiohttp is used for performance).
         self.session = await self._get_or_create_aiohttp_session()
 
-        chat_id = __metadata__.get("chat_id", None)
-        message_id = __metadata__.get("message_id", None)
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         current_session_id.set(__metadata__.get("session_id", None))
         current_log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
-
-        # Extract Model ID from body["model"]
-        model_id = str(body.get("model")).strip()  # e.g., openai_responses.o4-mini-high
-        model_id = model_id.split(".", 1)[-1]  # e.g., o4-mini-high
-        if model_id in {"o3-mini-high", "o4-mini-high"}: # OpenAI pseudo models
-            model_id = model_id.replace("-high", "")
-            body["reasoning_effort"] = "high"
+        completions_body = CompletionsBody.model_validate(body)
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
-            self.log.debug("Detected task model: %s", __task__)
-            self.log.debug("Task body: %s", __task_body__)
-
-            return await self._handle_task(body, __user__, __request__, __event_emitter__, __metadata__, __tools__) # Placeholder for task handling logic
+            self.log.info("Detected task model: %s", __task__)
+            return await self._handle_task(completions_body.model_dump(), valves) # Placeholder for task handling logic
 
         try:
-            # Build the OpenAI Responses API request body
-            transformed_body = {
-                "model": model_id,
-                "instructions": next((msg["content"] for msg in reversed(body.get("messages", [])) if msg.get("role") == "system"), ""),
-                "input": build_responses_history_by_chat_id_and_message_id(chat_id, message_id, model_id=model_id),
-                "stream": body.get("stream", False),
-                "user": __user__.get("email", "unknown_user"),
-                "store": valves.STORE_RESPONSE,
-                **({"temperature": body["temperature"]} if "temperature" in body else {}),
-                **({"top_p": body["top_p"]} if "top_p" in body else {}),
-                **({"max_tokens": body["max_tokens"]} if "max_tokens" in body else {}),
-                **({"parallel_tool_calls": valves.PARALLEL_TOOL_CALLS} if valves.PARALLEL_TOOL_CALLS else {}),
-                # Conditionally add tools only if function calling is supported and enabled
-                **(
-                    {
-                        "tools": [
-                            *self.transform_tools_for_responses_api(__tools__),
+            # Convert 'OpenAI Completions' body to 'OpenAI Responses' body
+            responses_body = ResponsesBody.from_completions(completions_body, truncation="auto")
+            responses_body.input = build_responses_history_by_chat_id_and_message_id(
+                __metadata__.get("chat_id"),
+                __metadata__.get("message_id"),
+                model_id=__metadata__.get("model").get("id"),
+            )
 
-                            # Conditionally include web_search
-                            *(
-                                [self.web_search_tool(valves)]
-                                if (model_id in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH ))
-                                else []
-                            )
-                        ]
-                    }
-                    if model_id in FEATURE_SUPPORT["function_calling"]
-                    else {}
-                ),
-                # Conditionally add reasoning dict if the model supports reasoning AND (effort or summary) was specified
-                **(
-                    {
-                        "reasoning": {
-                            **({"effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}),
-                            **(
-                                {"summary": valves.ENABLE_REASONING_SUMMARY}
-                                if (
-                                    valves.ENABLE_REASONING_SUMMARY
-                                    and model_id in FEATURE_SUPPORT["reasoning_summary"]
-                                )
-                                else {}
-                            ),
-                        }
-                    }
-                    if (model_id in FEATURE_SUPPORT["reasoning"]) else {}
-                ),
-                # Only include "include" if it's a reasoning model. Included encrypted reasoning tokens (important for multi-turn loops).
-                **(
-                    {
-                        "include": ["reasoning.encrypted_content"]
-                    }
-                    if model_id in FEATURE_SUPPORT["reasoning"]
-                    else {}
-                ),
-            }
+            # Conditionally append tools
+            if completions_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
+                responses_body.tools = responses_body.tools or []
+                responses_body.tools.append(self.web_search_tool(valves))
+
+            # Conditionally set reasoning summary
+            if completions_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+                responses_body.reasoning = responses_body.reasoning or []
+                responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
+
+            # Conditionally include reasoning.encrypted_content
+            # TODO make this configurable via valves since some orgs might not be approved for encrypted content
+            # Note storing encrypted contents is only supported when store = False
+            if completions_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+                responses_body.include = responses_body.include or []
+                responses_body.include.append("reasoning.encrypted_content")
 
             # Send to OpenAI Responses API
-            is_streaming = body.get("stream", False)
-            if is_streaming:
+            if responses_body.stream:
                 # Return async generator for partial text
-                return self._multi_turn_streaming(body, transformed_body, valves, __event_emitter__, __metadata__, __tools__)
+                return self._multi_turn_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
             else:
                 # Return final text (non-streaming)
-                return await self._multi_turn_non_streaming(body, transformed_body, valves, __event_emitter__, __metadata__, __tools__)
+                return await self._multi_turn_non_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
 
         except Exception as caught_exception:
             await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
@@ -320,25 +343,21 @@ class Pipe:
     async def _handle_task(
         self,
         body: Dict[str, Any],
-        __user__: Dict[str, Any],
-        __request__: Request,
-        __event_emitter__: Callable[[Dict[str, Any]], Awaitable[None]],
-        __metadata__: Dict[str, Any],
-        __tools__: Optional[Dict[str, Any]] = None,
+        valves: Pipe.Valves
     ) -> Dict[str, Any]:
         """Call the Responses API for task requests and return OpenAI-style output."""
 
-        valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
-        model_id = str(body.get("model", "")).split(".", 1)[-1].strip()
-        transformed_body = {
-            "model": model_id,
+        task_body = {
+            "model": body.get("model"),
             "instructions": "",
-            "input": body.get("messages"),
+            "input": transform_messages(body.get("messages", [])), # TODO consider just testing text to save tokens.
             "stream": False,
         }
 
+        self.log.info("Handling task_body: %s", task_body)
+
         response = await self._call_llm_non_stream(
-            transformed_body,
+            task_body,
             api_key=valves.API_KEY,
             base_url=valves.BASE_URL,
         )
@@ -360,8 +379,7 @@ class Pipe:
     # -------------------------------------------------------------------------
     async def _multi_turn_streaming(
         self,
-        body: Dict[str, Any],                                       # The unmodified body from Open WebUI (completions API)
-        transformed_body: Dict[str, Any],                           # The transformed body for OpenAI Responses API
+        body: ResponsesBody,                             # The transformed body for OpenAI Responses API
         valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
@@ -455,7 +473,7 @@ class Pipe:
                 self.log.debug(
                     "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
                 )
-                async for event in self._call_llm_sse(transformed_body,api_key=valves.API_KEY,base_url=valves.BASE_URL):
+                async for event in self._call_llm_sse(body.model_dump(exclude_none=True), api_key=valves.API_KEY, base_url=valves.BASE_URL):
                     event_type = event.get("type")
 
                     # Partial text output
@@ -562,14 +580,14 @@ class Pipe:
                     )
                     update_usage_totals(total_usage, usage)
 
-                transformed_body["input"].extend(final_response_data.get("output", []))
+                body.input.extend(final_response_data.get("output", []))
 
                 # Run function calls if present
                 calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
                 if calls:
                     function_call_outputs = await self._execute_function_calls(calls, tools)
                     collected_items.extend(function_call_outputs) # Store function call outputs to be persisted in DB later
-                    transformed_body["input"].extend(function_call_outputs) # Append to input for next iteration
+                    body.input.extend(function_call_outputs) # Append to input for next iteration
                 else:
                     self.log.debug("No pending function calls. Exiting loop.")
                     break # LLM response is complete, no further tool calls
@@ -601,7 +619,7 @@ class Pipe:
                         metadata.get("chat_id"),
                         metadata.get("message_id"),
                         db_items,
-                        body.get("model"),
+                        metadata.get("model").get("id"),
                     ) 
 
             # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
@@ -615,14 +633,16 @@ class Pipe:
                             "\n".join(logs),
                             valves.LOG_LEVEL.capitalize() + " Logs",
                         )
+            
+            # Clear logs
+            logs_by_msg_id.clear()
 
     # -------------------------------------------------------------------------
     # 2) Multi-turn loop: NON-STREAMING
     # -------------------------------------------------------------------------
     async def _multi_turn_non_streaming(
         self,
-        body: Dict[str, Any],                                       # The unmodified body from Open WebUI (completions API)
-        transformed_body: Dict[str, Any],                           # The transformed body for OpenAI Responses API
+        body: ResponsesBody,                                       # The transformed body for OpenAI Responses API
         valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
@@ -644,7 +664,7 @@ class Pipe:
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
                 response = await self._call_llm_non_stream(
-                    transformed_body,
+                    body.model_dump(exclude_none=True),
                     api_key=valves.API_KEY,
                     base_url=valves.BASE_URL,
                 )
@@ -668,14 +688,14 @@ class Pipe:
                     )
                     update_usage_totals(total_usage, usage)
 
-                transformed_body["input"].extend(items)
+                body.input.extend(items)
 
                 # Run tools if requested
                 calls = [i for i in items if i.get("type") == "function_call"]
                 if calls:
                     fn_outputs = await self._execute_function_calls(calls, tools)
                     collected_items.extend(fn_outputs)
-                    transformed_body["input"].extend(fn_outputs)
+                    body.input.extend(fn_outputs)
                 else:
                     break
 
@@ -692,6 +712,9 @@ class Pipe:
             if total_usage:
                 await self._emit_completion(event_emitter, usage=total_usage, done=True)
 
+            # Clear logs
+            logs_by_msg_id.clear()
+
         return final_output.getvalue()
 
     # -------------------------------------------------------------------------
@@ -699,7 +722,7 @@ class Pipe:
     # -------------------------------------------------------------------------
     async def _call_llm_sse(
         self,
-        request_params: dict[str, Any],
+        request_body: dict[str, Any],
         api_key: str,
         base_url: str
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -716,7 +739,7 @@ class Pipe:
 
         buf = bytearray()
         orjson_loads = orjson.loads  # Cached reference for speed
-        async with self.session.post(url, json=request_params, headers=headers) as resp:
+        async with self.session.post(url, json=request_body, headers=headers) as resp:
             resp.raise_for_status()
 
             async for chunk in resp.content.iter_chunked(4096):
@@ -1263,3 +1286,55 @@ def update_usage_totals(total, new):
             # Skip or explicitly set non-numeric values
             total[k] = v if v is not None else total.get(k, 0)
     return total
+
+def transform_tools(tools: list[dict]) -> list[dict]:
+    """
+    Flattens OpenAI-style tools with a nested 'function' key into the flat format
+    required by the Responses API.
+    
+    Input:  [{"type": "function", "function": {"name": "x", ...}}]
+    Output: [{"type": "function", "name": "x", ...}]
+    """
+    if not tools:
+        return []
+    
+    result = []
+    for tool in tools:
+        if tool.get("type") == "function" and "function" in tool:
+            # Start with the 'type' field from the original tool
+            flattened = {"type": tool["type"]}
+            # Add all content from the nested function object
+            flattened.update(tool["function"])
+            result.append(flattened)
+        else:
+            # Keep any tools that don't need flattening
+            result.append(tool)
+    
+    return result
+
+def transform_messages(
+    completions_messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Converts completions messages to Responses API format.
+    Excludes system messages (handled by 'instructions').
+    """
+    responses_input = []
+
+    for msg in completions_messages:
+        role = msg.get("role", "assistant")
+        if role == "system":
+            continue  # Skip system messages
+
+        text = msg.get("content", "").strip()
+
+        responses_input.append({
+            "type": "message",
+            "role": role,
+            "content": [{
+                "type": "input_text" if role == "user" else "output_text",
+                "text": text,
+            }],
+        })
+
+    return responses_input
