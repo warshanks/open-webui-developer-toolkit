@@ -43,7 +43,7 @@ from pydantic import BaseModel, Field, model_validator
 # Open WebUI internals
 # ─────────────────────────────────────────────────────────────────────────────
 from open_webui.models.chats import Chats, ChatModel
-from open_webui.models.models import Model
+from open_webui.models.models import Model, ModelForm, Models
 from open_webui.internal.db import get_db
 from open_webui.utils.misc import get_message_list, get_system_message
 
@@ -215,6 +215,7 @@ class Pipe:
 
     def __init__(self):
         self.type = "manifold"
+        self.id = "openai_responses" # Unique ID for this manifold
         self.valves = self.Valves()  # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
         
         self.session: aiohttp.ClientSession | None = None
@@ -251,25 +252,10 @@ class Pipe:
                 else None
             )
             self.log.addHandler(mem_handler)
-    
-    def pipes(self):
 
-        try :
-            models = [m.strip() for m in self.valves.MODEL_ID.split(",") if m.strip()]
-
-            # Then return the model info for Open WebUI
-            return [
-                {"id": model_id, "name": f"OpenAI: {model_id}", "direct": True}
-                for model_id in models
-            ]
-        finally:
-            # TODO Try setting native function calling parm here.
-
-            # Loop through models and set function calling to native if supported
-            for model_id in self.valves.MODEL_ID.split(","):
-                model_id = model_id.strip()
-                self.set_function_calling_to_native(model_id)
-            pass
+    async def pipes(self):
+        model_ids = [model_id.strip() for model_id in self.valves.MODEL_ID.split(",") if model_id.strip()]
+        return [{"id": model_id, "name": f"OpenAI: {model_id}"} for model_id in model_ids]
 
     async def pipe(
         self,
@@ -294,38 +280,56 @@ class Pipe:
         current_session_id.set(__metadata__.get("session_id", None))
         current_log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
         completions_body = CompletionsBody.model_validate(body)
+        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto")
+        full_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.log.info("Detected task model: %s", __task__)
-            return await self._handle_task(completions_body.model_dump(), valves) # Placeholder for task handling logic
+            #self.log.info("Completions body: %s", body)
+            return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
 
         try:
-            # Convert 'OpenAI Completions' body to 'OpenAI Responses' body
-            responses_body = ResponsesBody.from_completions(completions_body, truncation="auto")
             responses_body.input = build_responses_history_by_chat_id_and_message_id(
                 __metadata__.get("chat_id"),
                 __metadata__.get("message_id"),
-                model_id=__metadata__.get("model").get("id"),
+                model_id=full_model_id,
             )
 
             # Conditionally append tools
-            if completions_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
+            if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
                 responses_body.tools = responses_body.tools or []
                 responses_body.tools.append(self.web_search_tool(valves))
 
             # Conditionally set reasoning summary
-            if completions_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+            if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
                 responses_body.reasoning = responses_body.reasoning or {}
                 responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
             # Conditionally include reasoning.encrypted_content
             # TODO make this configurable via valves since some orgs might not be approved for encrypted content
             # Note storing encrypted contents is only supported when store = False
-            if completions_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+            if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
                 responses_body.include = responses_body.include or []
                 responses_body.include.append("reasoning.encrypted_content")
 
+
+            # If tools are present and native function calling is not set,
+            # check if the model supports function calling. Warn if not supported, otherwise enable.
+            if __tools__ and __metadata__.get("function_calling", None) != "native":
+                if responses_body.model in FEATURE_SUPPORT["function_calling"]:
+                    # If model supports function calling, enable it
+                    self._emit_notification(__event_emitter__, f"Enabling native function calling for model: {responses_body.model}", level="info")
+                    patch_model_param_field(full_model_id, "function_calling", "native")
+                elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
+                    # If model does not support function calling, warn the user and exit early
+                    await self._emit_error(
+                        __event_emitter__,
+                        f"Tools are not supported by the selected model: {responses_body.model}. "
+                        f"Please disable tools or choose a model that supports tool use.",
+                    )
+                    return  # Exit early if function calling is not supported
+                
             # Send to OpenAI Responses API
             if responses_body.stream:
                 # Return async generator for partial text
@@ -349,12 +353,10 @@ class Pipe:
 
         task_body = {
             "model": body.get("model"),
-            "instructions": "",
-            "input": transform_messages(body.get("messages", [])), # TODO consider just testing text to save tokens.
+            "instructions": body.get("instructions", ""),
+            "input": body.get("input", ""),
             "stream": False,
         }
-
-        self.log.info("Handling task_body: %s", task_body)
 
         response = await self._call_llm_non_stream(
             task_body,
@@ -1023,34 +1025,6 @@ class Pipe:
         return session
     
     @staticmethod
-    def set_function_calling_to_native(model_id: str) -> None:
-        """
-        Updates only the 'function_calling' field in params, setting it to 'native'.
-        Also updates 'updated_at'.
-        """
-        with get_db() as db:
-            row = db.query(Model).filter(Model.id == model_id).one_or_none()
-            if not row:
-                return  # Model doesn't exist
-
-            # Make sure params is a dict
-            row.params = row.params or {}
-
-            # If it's already 'native', nothing else to do
-            if row.params.get("function_calling") == "native":
-                return
-
-            # Update just this one field
-            row.params["function_calling"] = "native"
-
-            # Bump the updated_at timestamp
-            row.updated_at = int(time.time())
-
-            db.commit()   # Write changes
-            db.refresh(row)  # optional, if you need the updated row
-
-
-    @staticmethod
     def transform_tools_for_responses_api(tools_dict: dict[str, dict]) -> list[dict]:
         """
         Convert the internal 'tools_dict' from get_tools(...) into 
@@ -1342,3 +1316,18 @@ def transform_messages(
         })
 
     return responses_input
+
+def patch_model_param_field(model_id: str, field: str, value: Any):
+    model = Models.get_model_by_id(model_id)
+    if not model:
+        return
+
+    form_data = model.model_dump()
+    form_data["params"] = dict(model.params or {})
+    if form_data["params"].get(field) == value:
+        return
+
+    form_data["params"][field] = value
+
+    form = ModelForm(**form_data)
+    Models.update_model_by_id(model_id, form)
