@@ -15,7 +15,7 @@
 | Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
 | Optimized token caching | ✅ GA | 2025-06-03 | Saves ~50–75 % tokens on tuned models. |
 | Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
-| Task model support | 🔄 In-progress | 2025-06-03 | Roadmap item. |
+| Task model support | ✅ GA | 2025-06-08 | Basic support implemented. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
 | File upload / file search tool integration | 🕒 Backlog | 2025-06-03 | Roadmap item. |
