@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.8.4
+version: 0.9.1
 license: MIT
 requirements: orjson
 """
@@ -268,6 +268,53 @@ class Pipe:
 
         except Exception as caught_exception:
             await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
+
+    # -------------------------------------------------------------------------
+    # Helper: Handle simple task models
+    # -------------------------------------------------------------------------
+    async def _handle_task(
+        self,
+        body: Dict[str, Any],
+        __user__: Dict[str, Any],
+        __request__: Request,
+        __event_emitter__: Callable[[Dict[str, Any]], Awaitable[None]],
+        __metadata__: Dict[str, Any],
+        __tools__: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Call the Responses API for task requests and return OpenAI-style output."""
+
+        valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
+        model_id = str(body.get("model", "")).split(".", 1)[-1].strip()
+        transformed_body = {
+            "model": model_id,
+            "instructions": "",
+            "input": body.get("messages"),
+            "stream": False,
+        }
+
+        response = await self._call_llm_non_stream(
+            transformed_body,
+            api_key=valves.API_KEY,
+            base_url=valves.BASE_URL,
+        )
+
+        text_parts: list[str] = []
+        for item in response.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    text_parts.append(content.get("text", ""))
+
+        message = "".join(text_parts)
+
+        return {
+            "choices": [
+                {
+                    "message": {"content": message, "role": "assistant"},
+                }
+            ]
+        }
                 
     # -------------------------------------------------------------------------
     # 1) Multi-turn loop: STREAMING
