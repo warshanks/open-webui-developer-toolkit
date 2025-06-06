@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Refactored Responses API integration and introduced typed request models.
 - Improved message and tool transformation.
 - Added full support for task models via `_handle_task`.
+- Fixed initialization of the reasoning dictionary when enabling summaries.
 
 ## [0.8.2] - 2025-06-05
 - Fixed reasoning summaries leaking into subsequent turns.
