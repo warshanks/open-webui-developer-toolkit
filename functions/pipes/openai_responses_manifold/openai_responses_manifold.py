@@ -154,31 +154,37 @@ class Pipe:
         
         self.session: aiohttp.ClientSession | None = None
         
-        class ContextLogger(logging.Logger):
-            """Logger with :func:`isEnabledFor` backed by :data:`current_log_level`."""
-
-            def isEnabledFor(self, level: int) -> bool:  # noqa: D401
-                if self.manager.disable >= level:
-                    return False
-                return level >= current_log_level.get()
-
-        old_cls = logging.getLoggerClass()
-        logging.setLoggerClass(ContextLogger)
+        # Set up the logger
         self.log = logging.getLogger(__name__)
-        logging.setLoggerClass(old_cls)
-        if not self.log.handlers:  # Prevent duplicate logs
-            self.log.propagate = False
-            self.log.setLevel(logging.DEBUG)
+        self.log.propagate = False
+        self.log.setLevel(logging.DEBUG)
+        
+        # Only configure handlers/filters if none are present
+        if not self.log.handlers:
+            # Attach custom filters
             self.log.addFilter(SessionIDFilter())
             self.log.addFilter(ContextLevelFilter())
-
+            
+            # Console handler
             console = logging.StreamHandler(sys.stdout)
-            console.setFormatter(logging.Formatter("%(levelname)s [mid=%(session_id)s] %(message)s"))
+            console.setFormatter(
+                logging.Formatter("%(levelname)s [mid=%(session_id)s] %(message)s")
+            )
             self.log.addHandler(console)
-
+            
+            # In-memory handler to store messages by session_id
             mem_handler = logging.Handler()
-            mem_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-            mem_handler.emit = lambda r: logs_by_msg_id.setdefault(getattr(r, "session_id", None), []).append(mem_handler.format(r)) if getattr(r, "session_id", None) else None
+            mem_handler.setFormatter(
+                logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+            )
+            # Inline emit override
+            mem_handler.emit = lambda record: (
+                logs_by_msg_id
+                .setdefault(getattr(record, "session_id", None), [])
+                .append(mem_handler.format(record))
+                if getattr(record, "session_id", None)
+                else None
+            )
             self.log.addHandler(mem_handler)
     
     def pipes(self):
@@ -193,6 +199,11 @@ class Pipe:
             ]
         finally:
             # TODO Try setting native function calling parm here.
+
+            # Loop through models and set function calling to native if supported
+            for model_id in self.valves.MODEL_ID.split(","):
+                model_id = model_id.strip()
+                self.set_function_calling_to_native(model_id)
             pass
 
     async def pipe(
@@ -580,7 +591,18 @@ class Pipe:
 
             if total_usage:
                 # Emit final usage stats if available
-                await self._emit_completion(event_emitter, usage=total_usage, done=True)       
+                await self._emit_completion(event_emitter, usage=total_usage, done=True)
+
+            # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
+            if collected_items:
+                db_items = [item for item in collected_items if item.get("type") != "message"]
+                if db_items:
+                    add_openai_response_items_to_chat_by_id_and_message_id(
+                        metadata.get("chat_id"),
+                        metadata.get("message_id"),
+                        db_items,
+                        body.get("model"),
+                    ) 
 
             # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
             # TODO ADD LOGIC TO DETECT USER VALVES /= "INHERIT"
