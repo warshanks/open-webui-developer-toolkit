@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.8.2
+version: 0.8.4
 license: MIT
 requirements: orjson
 """
@@ -53,7 +53,7 @@ from typing import (
 from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import Model
 from open_webui.internal.db import get_db
-from open_webui.socket.main import get_event_call, get_event_emitter
+
 from open_webui.utils.misc import get_message_list
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,9 +295,6 @@ class Pipe:
             - If a function call is present, it is executed, its result is appended to `transformed_body["input"]`, and the loop continues for another turn.
             - If no function call is present, the conversation is considered complete and the loop exits.
         """
-        chat_id = metadata.get("chat_id", None)
-        message_id = metadata.get("message_id", None)
-        model_id = transformed_body.get("model", "unknown_model")
 
         reasoning_map: Dict[int, str] = {}
         total_usage: Dict[str, Any] = {}
@@ -536,14 +533,70 @@ class Pipe:
         tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
     ) -> str:
         """
-        Multi-turn conversation in non-streaming mode.
-        - Up to max_loops iterations.
-        - Each iteration calls _call_llm_non_stream(), capturing the full text.
-        - If a tool is requested, run it and re-call. 
-        - Returns concatenated text at the end.
+        Multi-turn conversation loop without streaming chunks.
+
+        This mirrors :meth:`_multi_turn_streaming` but issues a full
+        HTTP request each turn and processes the returned JSON before
+        optionally calling tools again.
         """
 
-        return "".join("")
+        tools = tools or {}
+        final_output = StringIO()
+        total_usage: Dict[str, Any] = {}
+        collected_items: List[dict] = []
+
+        try:
+            for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
+                response = await self._call_llm_non_stream(
+                    transformed_body,
+                    api_key=valves.API_KEY,
+                    base_url=valves.BASE_URL,
+                )
+
+                items = response.get("output", [])
+                collected_items.extend(items)
+
+                # append text from any message blocks
+                for item in items:
+                    if item.get("type") != "message":
+                        continue
+                    for content in item.get("content", []):
+                        if content.get("type") == "output_text":
+                            final_output.write(content.get("text", ""))
+
+                usage = response.get("usage", {})
+                if usage:
+                    usage["turn_count"] = 1
+                    usage["function_call_count"] = sum(
+                        1 for i in items if i.get("type") == "function_call"
+                    )
+                    update_usage_totals(total_usage, usage)
+
+                transformed_body["input"].extend(items)
+
+                # Run tools if requested
+                calls = [i for i in items if i.get("type") == "function_call"]
+                if calls:
+                    fn_outputs = await self._execute_function_calls(calls, tools)
+                    collected_items.extend(fn_outputs)
+                    transformed_body["input"].extend(fn_outputs)
+                else:
+                    break
+
+        except Exception as e:  # pragma: no cover - network errors
+            await self._emit_error(
+                event_emitter,
+                e,
+                show_error_message=True,
+                show_error_log_citation=True,
+                done=True,
+            )
+            return ""
+        finally:
+            if total_usage:
+                await self._emit_completion(event_emitter, usage=total_usage, done=True)
+
+        return final_output.getvalue()
 
     # -------------------------------------------------------------------------
     # HELPER: SSE LLM Call
@@ -602,25 +655,20 @@ class Pipe:
     # -------------------------------------------------------------------------
     async def _call_llm_non_stream(
         self,
-        conversation: Dict[str, Any],
-        request: "Request",
-        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]]
+        request_params: dict[str, Any],
+        api_key: str,
+        base_url: str,
     ) -> Dict[str, Any]:
-        """
-        Calls the LLM once, returning a dict like:
-        {
-            "text": "Hello World!",
-            "usage": {"tokens": 99},
-            "function_call": {...}
+        """Perform a non-streaming POST request to the Responses API."""
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
         }
-        ...
-        """
-        # Example/fake
-        return {
-            "text": "Hello from non-streaming call!",
-            "usage": {"tokens": 99}
-            # or "function_call": {...}
-        }
+        url = base_url.rstrip("/") + "/responses"
+
+        async with self.session.post(url, json=request_params, headers=headers) as resp:
+            resp.raise_for_status()
+            return await resp.json()
 
     # -------------------------------------------------------------------------
     # HELPER: Execute Tool Call
