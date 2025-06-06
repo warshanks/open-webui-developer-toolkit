@@ -316,7 +316,7 @@ class Pipe:
 
             # Conditionally set reasoning summary
             if completions_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
-                responses_body.reasoning = responses_body.reasoning or []
+                responses_body.reasoning = responses_body.reasoning or {}
                 responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
             # Conditionally include reasoning.encrypted_content
