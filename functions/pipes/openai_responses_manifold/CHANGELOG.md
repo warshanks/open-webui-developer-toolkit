@@ -4,6 +4,10 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2025-06-10
+- Respect `PERSIST_TOOL_RESULTS` valve when saving tool outputs.
+- Avoid errors if a streaming response ends without `response.completed`.
+
 ## [0.9.3] - 2025-06-09
 - Reworked logger setup with a custom `Logger` subclass so session-specific log
   levels work correctly.

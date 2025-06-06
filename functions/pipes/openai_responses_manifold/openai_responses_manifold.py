@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.9.3
+version: 0.9.4
 license: MIT
 requirements: orjson
 """
@@ -552,6 +552,10 @@ class Pipe:
                         yield ""
                         break # Exit the streaming loop to process the final response
                 
+                if final_response_data is None:
+                    self.log.error("Streaming ended without a final response.")
+                    break
+
                 # Capture the final output items
                 collected_items.extend(final_response_data.get("output", []))
                 usage = final_response_data.get("usage", {})
@@ -594,7 +598,7 @@ class Pipe:
                 await self._emit_completion(event_emitter, usage=total_usage, done=True)
 
             # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
-            if collected_items:
+            if valves.PERSIST_TOOL_RESULTS and collected_items:
                 db_items = [item for item in collected_items if item.get("type") != "message"]
                 if db_items:
                     add_openai_response_items_to_chat_by_id_and_message_id(
