@@ -56,7 +56,14 @@ misc_mod = types.ModuleType("open_webui.utils.misc")
 def get_message_list(*args, **kwargs):
     return []
 
+def get_system_message(messages):
+    for msg in messages or []:
+        if msg.get("role") == "system":
+            return msg
+    return None
+
 misc_mod.get_message_list = get_message_list
+misc_mod.get_system_message = get_system_message
 utils_mod.misc = misc_mod
 
 tasks_mod = types.ModuleType("open_webui.tasks")
