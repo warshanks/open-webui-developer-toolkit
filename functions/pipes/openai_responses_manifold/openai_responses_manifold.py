@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import inspect
+from io import StringIO
 import json
 import logging
 import os
@@ -52,6 +53,7 @@ from typing import (
 from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import Model
 from open_webui.internal.db import get_db
+from open_webui.socket.main import get_event_call, get_event_emitter
 from open_webui.utils.misc import get_message_list
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,177 +359,169 @@ class Pipe:
         }
 
         tools = tools or {}
+        final_output = StringIO()
 
         self.log.debug(
             "Entering _multi_turn_streaming with up to %d loops",
             valves.MAX_TOOL_CALL_LOOPS,
         )
 
-        for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
-            final_response_data: dict[str, Any] | None = None
-            reasoning_map.clear()
-            self.log.debug(
-                "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
-            )
-            async for event in self._call_llm_sse(
-                transformed_body,
-                api_key=valves.API_KEY,
-                base_url=valves.BASE_URL,
-            ):
-                event_type = event.get("type")
-                self.log.debug("SSE event type: %s", event_type)
+        try:
+            for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
+                final_response_data: dict[str, Any] | None = None
+                reasoning_map.clear()
+                self.log.debug(
+                    "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
+                )
+                async for event in self._call_llm_sse(transformed_body,api_key=valves.API_KEY,base_url=valves.BASE_URL):
+                    event_type = event.get("type")
 
-                # Partial text output
-                if event_type == "response.output_text.delta":
-                    delta = event.get("delta", "")
-                    if delta:
-                        yield delta  # Yield partial text to Open WebUI
+                    # Partial text output
+                    if event_type == "response.output_text.delta":
+                        delta = event.get("delta", "")
+                        if delta:
+                            #yield delta  # Yield partial text to Open WebUI
+                            final_output.write(delta)  # Accumulate in final_output
+                            yield delta
 
-                    continue # continue to next event
+                        continue # continue to next event
 
-                # Partial reasoning summary output
-                elif event_type == "response.reasoning_summary_text.delta":
-                    idx = event.get("summary_index", 0)
-                    delta = event.get("delta", "")
-                    if delta:
-                        # 1) Accumulate for this summary_index
-                        reasoning_map[idx] = reasoning_map.get(idx, "") + delta
+                    # Partial reasoning summary output
+                    elif event_type == "response.reasoning_summary_text.delta":
+                        idx = event.get("summary_index", 0)
+                        delta = event.get("delta", "")
+                        if delta:
+                            # 1) Accumulate for this summary_index
+                            reasoning_map[idx] = reasoning_map.get(idx, "") + delta
 
-                        # 2) Merge all blocks (sorted), separated by ---
-                        all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
+                            # 2) Merge all blocks (sorted), separated by ---
+                            all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
 
-                        # 3) Extract latest title, else fallback to 'Thinking...'
-                        matches = re.findall(r"\*\*(.+?)\*\*", all_text, flags=re.DOTALL)
-                        latest_title = matches[-1].strip() if matches else "Thinking..."
+                            # 3) Extract latest title, else fallback to 'Thinking...'
+                            matches = re.findall(r"\*\*(.+?)\*\*", all_text, flags=re.DOTALL)
+                            latest_title = matches[-1].strip() if matches else "Thinking..."
 
-                        # 4) Build a minimal snippet (omit type="reasoning")
-                        snippet = (
-                            f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
-                            f"<summary>🧠{latest_title}</summary>\n"
-                            f"{all_text}\n"
-                            "</details>"
-                        )
-
-                        # 5) Emit to the front end
-                        if event_emitter:
-                            await event_emitter(
-                                {"type": "chat:completion", "data": {"content": snippet}}
-                            )
-
-                    continue
-
-                # Output item added (e.g., tool call started, reasoning started, etc..)
-                elif event_type == "response.output_item.added":
-                    item = event.get("item", {})
-                    item_type = item.get("type", "")
-
-                    self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
-
-                    if item_type in started_msgs:
-                        template = random.choice(started_msgs[item_type])
-                        msg = template.format(fn=item.get("name", "a tool"))
-                        await self._emit_status(event_emitter, msg, done=False, hidden=False)
-                    
-                    continue  # continue to next event
-
-                # Output item done (e.g., tool call finished, reasoning done, etc.)
-                elif event_type == "response.output_item.done":
-                    item = event.get("item", {})
-                    item_type = item.get("type", "")
-
-                    if item_type in finished_msgs:
-                        template = random.choice(finished_msgs[item_type])
-                        msg = template.format(fn=item.get("name", "Tool"))
-                        await self._emit_status(event_emitter, msg, done=True, hidden=False)
-
-                    if item_type == "reasoning":
-                        # Merge all partial reasoning so far
-                        all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-
-                        if all_text:
-                            all_text += "\n\n --- \n\n"
-
-                            final_snippet = (
-                                f'<details type=\"{__name__}.reasoning\" done="true">\n'
-                                f"<summary>Done thinking!</summary>\n"
+                            # 4) Build a minimal snippet (omit type="reasoning")
+                            snippet = (
+                                f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
+                                f"<summary>🧠{latest_title}</summary>\n"
                                 f"{all_text}\n"
                                 "</details>"
                             )
+                            if event_emitter:
+                                await event_emitter(
+                                    {"type": "chat:completion", "data": {"content": snippet}}
+                                )
 
-                            yield final_snippet
-                        else:
-                            await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
+                            # 5) Emit to the front end
+                            yield "" # Yield an empty string to release the event loop for responsiveness
 
-                        reasoning_map.clear()
+                        continue
 
-                    continue  # continue to next event
+                    # Output item added (e.g., tool call started, reasoning started, etc..)
+                    elif event_type == "response.output_item.added":
+                        item = event.get("item", {})
+                        item_type = item.get("type", "")
 
-                # Response completed event
-                elif event_type == "response.completed":
-                    self.log.debug("Response completed event received.")
-                    final_response_data = event.get("response", {})
-                    break # Exit the streaming loop to process the final response
+                        self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
 
-            # If no final response data, we exit the loop.
-            if not final_response_data:
-                self.log.debug("No final response data after SSE. Exiting loop.")
-                break
+                        if item_type in started_msgs:
+                            template = random.choice(started_msgs[item_type])
+                            msg = template.format(fn=item.get("name", "a tool"))
+                            await self._emit_status(event_emitter, msg, done=False, hidden=False)
+                        
+                        continue  # continue to next event
 
-            # Capture the final output items
-            collected_items.extend(final_response_data.get("output", []))
-            usage = final_response_data.get("usage", {})
-            if usage:
-                usage["turn_count"] = 1
-                usage["function_call_count"] = sum(
-                    1 for i in final_response_data["output"] if i["type"] == "function_call"
-                )
-                update_usage_totals(total_usage, usage)
+                    # Output item done (e.g., tool call finished, reasoning done, etc.)
+                    elif event_type == "response.output_item.done":
+                        item = event.get("item", {})
+                        item_type = item.get("type", "")
 
-            transformed_body["input"].extend(final_response_data.get("output", []))
+                        if item_type in finished_msgs:
+                            template = random.choice(finished_msgs[item_type])
+                            msg = template.format(fn=item.get("name", "Tool"))
+                            await self._emit_status(event_emitter, msg, done=True, hidden=False)
 
-            # Run function calls if present
-            calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
-            if calls:
-                function_call_outputs = await self._execute_function_calls(calls, tools)
-                collected_items.extend(function_call_outputs) # Store function call outputs to be persisted in DB later
-                transformed_body["input"].extend(function_call_outputs) # Append to input for next iteration
-            else:
-                self.log.debug("No pending function calls. Exiting loop.")
-                break # LLM response is complete, no further tool calls
-        
-        
-        if event_emitter:
-            await self._emit_completion(
-                event_emitter,
-                {
-                    "done": True,
-                    #"content": TBD
-                    **({"usage": total_usage} if total_usage else {}),
-                },
-            )
+                        if item_type == "reasoning":
+                            # Merge all partial reasoning so far
+                            all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
 
-        # Persist the final output to database
-        if collected_items:
-            db_items = [item for item in collected_items if item.get("type") != "message"]
-            if db_items:
-                add_openai_response_items_to_chat_by_id_and_message_id(
-                    chat_id,
-                    message_id,
-                    db_items,
-                    model_id,
-                )           
+                            if all_text:
+                                all_text += "\n\n --- \n\n"
 
-        # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
-        # TODO ADD LOGIC TO DETECT USER VALVES /= "INHERIT"
-        if valves.LOG_LEVEL == "DEBUG":
-            if event_emitter:
-                logs = logs_by_msg_id.get(current_session_id.get(), [])
-                if logs:
-                    await self._emit_citation(
-                        event_emitter,
-                        "\n".join(logs),
-                        valves.LOG_LEVEL.capitalize() + " Logs",
+                                final_snippet = (
+                                    f'<details type=\"{__name__}.reasoning\" done="true">\n'
+                                    f"<summary>Done thinking!</summary>\n"
+                                    f"{all_text}\n"
+                                    "</details>"
+                                )
+                                yield final_snippet  # Yield an empty string to release the event loop for responsiveness
+                            else:
+                                await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
+
+                            reasoning_map.clear()
+
+                        continue  # continue to next event
+
+                    # Response completed event
+                    elif event_type == "response.completed":
+                        self.log.debug("Response completed event received.")
+                        final_response_data = event.get("response", {})
+                        yield ""
+                        break # Exit the streaming loop to process the final response
+                
+                # Capture the final output items
+                collected_items.extend(final_response_data.get("output", []))
+                usage = final_response_data.get("usage", {})
+                if usage:
+                    usage["turn_count"] = 1
+                    usage["function_call_count"] = sum(
+                        1 for i in final_response_data["output"] if i["type"] == "function_call"
                     )
+                    update_usage_totals(total_usage, usage)
+
+                transformed_body["input"].extend(final_response_data.get("output", []))
+
+                # Run function calls if present
+                calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
+                if calls:
+                    function_call_outputs = await self._execute_function_calls(calls, tools)
+                    collected_items.extend(function_call_outputs) # Store function call outputs to be persisted in DB later
+                    transformed_body["input"].extend(function_call_outputs) # Append to input for next iteration
+                else:
+                    self.log.debug("No pending function calls. Exiting loop.")
+                    break # LLM response is complete, no further tool calls
+
+        except Exception as e:
+            await self._emit_error(
+                event_emitter,
+                e,
+                show_error_message=True,
+                show_error_log_citation=True,
+                done=True,
+            )
+            return
+        
+
+        finally:
+            self.log.debug("Exiting _multi_turn_streaming loop.")
+            # Final cleanup: close the aiohttp session if it was created
+
+            if total_usage:
+                # Emit final usage stats if available
+                await self._emit_completion(event_emitter, usage=total_usage, done=True)       
+
+            # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
+            # TODO ADD LOGIC TO DETECT USER VALVES /= "INHERIT"
+            if valves.LOG_LEVEL == "DEBUG":
+                if event_emitter:
+                    logs = logs_by_msg_id.get(current_session_id.get(), [])
+                    if logs:
+                        await self._emit_citation(
+                            event_emitter,
+                            "\n".join(logs),
+                            valves.LOG_LEVEL.capitalize() + " Logs",
+                        )
 
     # -------------------------------------------------------------------------
     # 2) Multi-turn loop: NON-STREAMING
@@ -759,15 +753,28 @@ class Pipe:
     async def _emit_completion(
         self,
         event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
-        data: dict[str, Any],
         *,
-        done: bool = False,
+        content: str | None = "",                       # always included (may be "").  UI will stall if you leave it out.
+        title:   str | None = None,                     # optional title.
+        usage:   dict[str, Any] | None = None,          # optional usage block
+        done:    bool = True,                           # True → final frame
     ) -> None:
         """Emit a chat:completion event to the UI if possible."""
         if event_emitter is None:
             return
 
-        await event_emitter({"type": "chat:completion", "data": data, "done": done})
+        # Note: Open WebUI emits a final "chat:completion" event after the stream ends, which overwrites any previously emitted completion events' content and title in the UI.
+        await event_emitter(
+            {
+                "type": "chat:completion",
+                "data": {
+                    "done": done,
+                    "content": content,
+                    **({"title": title} if title is not None else {}),
+                    **({"usage": usage} if usage is not None else {}),
+                }
+            }
+        )
 
     async def _emit_status(
         self,
