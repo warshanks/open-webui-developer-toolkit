@@ -140,31 +140,34 @@ class Pipe:
         self.session: aiohttp.ClientSession | None = None
         
         self.log = logging.getLogger(__name__)
-        self.log.propagate = False
-        self.log.setLevel(logging.DEBUG)
-        self.log.addFilter(lambda record: (setattr(record, "session_id", getattr(record, "session_id", None) or current_session_id.get()) or True))
-        self.log.addFilter(lambda record, logger=self.log: record.levelno >= current_log_level.get(logger.level))
-        console = logging.StreamHandler(sys.stdout)
-        console.setFormatter(logging.Formatter("%(levelname)s [mid=%(session_id)s] %(message)s"))
-        self.log.addHandler(console)
-        mem_handler = logging.Handler()
-        mem_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        mem_handler.emit = lambda record: (
-            logs_by_msg_id.setdefault(getattr(record, "session_id", None), [])
-                        .append(mem_handler.format(record))
-            if getattr(record, "session_id", None)
-            else None
-        )
-        self.log.addHandler(mem_handler)
+        if not self.log.handlers:  # Prevent duplicate logs
+            self.log.propagate = False
+            self.log.setLevel(logging.DEBUG)
+            self.log.addFilter(lambda r: (setattr(r, "session_id", getattr(r, "session_id", None) or current_session_id.get()) or True))
+            self.log.addFilter(lambda r: r.levelno >= current_log_level.get())
+
+            console = logging.StreamHandler(sys.stdout)
+            console.setFormatter(logging.Formatter("%(levelname)s [mid=%(session_id)s] %(message)s"))
+            self.log.addHandler(console)
+
+            mem_handler = logging.Handler()
+            mem_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+            mem_handler.emit = lambda r: logs_by_msg_id.setdefault(getattr(r, "session_id", None), []).append(mem_handler.format(r)) if getattr(r, "session_id", None) else None
+            self.log.addHandler(mem_handler)
     
     def pipes(self):
-        models = [m.strip() for m in self.valves.MODEL_ID.split(",") if m.strip()]
 
-        # Then return the model info for Open WebUI
-        return [
-            {"id": model_id, "name": f"OpenAI: {model_id}", "direct": True}
-            for model_id in models
-        ]
+        try :
+            models = [m.strip() for m in self.valves.MODEL_ID.split(",") if m.strip()]
+
+            # Then return the model info for Open WebUI
+            return [
+                {"id": model_id, "name": f"OpenAI: {model_id}", "direct": True}
+                for model_id in models
+            ]
+        finally:
+            # TODO Try setting native function calling parm here.
+            pass
 
     async def pipe(
         self,
@@ -173,7 +176,9 @@ class Pipe:
         __request__: Request,
         __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
         __metadata__: dict[str, Any],
-        __tools__: list[dict[str, Any]] | dict[str, Any] | None
+        __tools__: list[dict[str, Any]] | dict[str, Any] | None,
+        __task__: Optional[dict[str, Any]] = None,
+        __task_body__: Optional[dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None] | str | None:
         """
         Single entry point:
@@ -197,7 +202,10 @@ class Pipe:
             body["reasoning_effort"] = "high"
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
-        if body.get("task"):
+        if __task__:
+            self.log.debug("Detected task model: %s", __task__)
+            self.log.debug("Task body: %s", __task_body__)
+
             return await self._handle_task(body, __user__, __request__, __event_emitter__, __metadata__, __tools__) # Placeholder for task handling logic
 
         try:
@@ -308,13 +316,7 @@ class Pipe:
 
         message = "".join(text_parts)
 
-        return {
-            "choices": [
-                {
-                    "message": {"content": message, "role": "assistant"},
-                }
-            ]
-        }
+        return message
                 
     # -------------------------------------------------------------------------
     # 1) Multi-turn loop: STREAMING
