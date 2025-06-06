@@ -4,6 +4,9 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2025-06-07
+- Added basic task model support via `_handle_task`.
+
 ## [0.8.4] - 2025-06-06
 - Enabled tool-call loops in `_multi_turn_non_streaming` for parity with the streaming path.
 
