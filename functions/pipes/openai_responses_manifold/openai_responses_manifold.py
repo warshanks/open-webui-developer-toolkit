@@ -268,7 +268,6 @@ class Pipe:
 
         except Exception as caught_exception:
             await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
-            # Optionally, you could yield an error message or raise a custom exception
                 
     # -------------------------------------------------------------------------
     # 1) Multi-turn loop: STREAMING
@@ -746,10 +745,15 @@ class Pipe:
         self.log.error("Error: %s", error_message)
 
         if show_error_message and event_emitter:
-            await self._emit_completion(
-                event_emitter,
-                {"error": {"message": error_message}},
-                done=done,
+            await event_emitter(
+                {
+                    "type": "chat:completion",
+                    "data": {
+                        "error": {
+                            "message": error_message,
+                        },
+                    },
+                }
             )
 
             # 2) Optionally emit the citation with logs
@@ -1156,6 +1160,9 @@ def update_usage_totals(total, new):
     for k, v in new.items():
         if isinstance(v, dict):
             total[k] = update_usage_totals(total.get(k, {}), v)
-        else:
+        elif isinstance(v, (int, float)):
             total[k] = total.get(k, 0) + v
+        else:
+            # Skip or explicitly set non-numeric values
+            total[k] = v if v is not None else total.get(k, 0)
     return total
