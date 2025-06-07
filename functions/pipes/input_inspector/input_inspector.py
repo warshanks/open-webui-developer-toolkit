@@ -16,6 +16,13 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from fastapi import Request
 
+SENSITIVE_HEADERS = {
+    "authorization",
+    "cookie",
+    "x-forwarded-for",
+    "x-envoy-external-address",
+}
+
 
 class Pipe:
     async def pipe(
@@ -54,15 +61,24 @@ class Pipe:
         await emit("body", body)
         await emit("__metadata__", __metadata__ or {})
         await emit("__user__", __user__)
-        await emit("__request__", {
-            "method": __request__.method,
-            "url": str(__request__.url),
-            "headers": dict(__request__.headers),
-        })
+        await emit("__request__", _sanitize_request(__request__))
         await emit("__files__", __files__ or [])
         await emit("__tools__", __tools__ or {})
 
         return "Input inspection complete. See citations for details."
+
+def _sanitize_request(request: Request) -> dict[str, Any]:
+    """Return a sanitized representation of ``request``."""
+
+    headers = {
+        k: ("[REDACTED]" if k.lower() in SENSITIVE_HEADERS else v)
+        for k, v in request.headers.items()
+    }
+    return {
+        "method": request.method,
+        "url": str(request.url),
+        "headers": headers,
+    }
 
 def _safe_json(obj: Any) -> Any:
     """Recursively convert obj to JSON-serializable form."""
