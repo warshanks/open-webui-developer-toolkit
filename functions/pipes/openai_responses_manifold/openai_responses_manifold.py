@@ -203,9 +203,9 @@ class ResponsesBody(BaseModel):
         """
         responses_input = []
         for msg in completions_messages:
-            role = msg.get("role", "assistant")
+            role = msg.get("role", "assistant") # typically "user", "assistant", or "system"; default to "assistant" if not specified
             if role == "system":
-                continue  # Skip system messages
+                continue  # Skip system messages since they are included in the `instructions` field
             text = msg.get("content", "").strip()
             responses_input.append({
                 "type": "message",
@@ -341,7 +341,7 @@ class Pipe:
 
         # Transform request body (Completions API -> Responses API). Populates with default values.
         completions_body = CompletionsBody.model_validate(body)
-        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto") # from_completions() supports custom params (e.g., truncation) which are injected into ResponsesBody
+        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto") # supports passing custom params (e.g., truncation) which are injected into ResponsesBody
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
@@ -371,6 +371,21 @@ class Pipe:
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
             })
 
+        # If Open WebUI native function calling is disabled, update model metadata if supported
+        if __tools__ and __metadata__.get("function_calling", None) != "native":
+            if responses_body.model in FEATURE_SUPPORT["function_calling"]:
+                # Model supports function calling, enable it
+                await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
+                patch_model_param_field(full_model_id, "function_calling", "native")
+            elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
+                # Model does not support function calling, warn the user and exit early
+                await self._emit_error(
+                    __event_emitter__,
+                    f"Tools are not supported by the selected model: {responses_body.model}. "
+                    f"Please disable tools or choose a model that supports tool use (e.g. {', '.join(FEATURE_SUPPORT['function_calling'])}).",
+                )
+                return  # Exit early if function calling is not supported
+            
         # Enable reasoning summary, if supported and enabled
         if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
             responses_body.reasoning = responses_body.reasoning or {}
@@ -382,21 +397,6 @@ class Pipe:
         if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
-
-        # Enable function calling, if supported and tools are present
-        if __tools__ and __metadata__.get("function_calling", None) != "native":
-            if responses_body.model in FEATURE_SUPPORT["function_calling"]:
-                # If model supports function calling, enable it
-                await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
-                patch_model_param_field(full_model_id, "function_calling", "native")
-            elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
-                # If model does not support function calling, warn the user and exit early
-                await self._emit_error(
-                    __event_emitter__,
-                    f"Tools are not supported by the selected model: {responses_body.model}. "
-                    f"Please disable tools or choose a model that supports tool use (e.g. {', '.join(FEATURE_SUPPORT['function_calling'])}).",
-                )
-                return  # Exit early if function calling is not supported
             
         # Send to OpenAI Responses API
         if responses_body.stream:
