@@ -4,7 +4,7 @@ id: input_inspector
 author: OpenAI Codex
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Emit citations showing the data passed to a pipe for debugging.
-version: 0.1.0
+version: 0.1.1
 license: MIT
 """
 
@@ -112,4 +112,4 @@ def _safe_json(obj: Any) -> Any:
             return _safe_json(obj.model_dump())
         except Exception:  # pragma: no cover - best effort
             pass
-    return str(obj)
+    return f"<UNSERIALIZABLE {type(obj).__name__}>"
