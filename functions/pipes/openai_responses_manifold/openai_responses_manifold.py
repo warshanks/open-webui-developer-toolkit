@@ -13,8 +13,9 @@ requirements: orjson
 from __future__ import annotations
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Standard lib imports
+# 1. Imports
 # ─────────────────────────────────────────────────────────────────────────────
+# Standard library imports
 import asyncio
 import datetime
 import inspect
@@ -26,29 +27,26 @@ import random
 import re
 import sys
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Third-party imports
-# ─────────────────────────────────────────────────────────────────────────────
 import aiohttp
 import orjson
 from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Open WebUI internals
-# ─────────────────────────────────────────────────────────────────────────────
 from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import Model, ModelForm, Models
 from open_webui.internal.db import get_db
 from open_webui.utils.misc import get_message_list, get_system_message
 
 # ─────────────────────────────────────────────────────────────────────────────
-
+# 2. Constants & Global Configuration
+# ─────────────────────────────────────────────────────────────────────────────
 FEATURE_SUPPORT = {
     "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}, # OpenAI's built-in web search tool.
     "image_gen_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
@@ -57,8 +55,13 @@ FEATURE_SUPPORT = {
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high" }, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 }
 
-# OpenAI Completions API body
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Data Models
+# ─────────────────────────────────────────────────────────────────────────────
 class CompletionsBody(BaseModel):
+    """
+    Represents the body of a completions request to OpenAI completions API.
+    """
     model: str
     stream: bool = False
     messages: List[Dict[str, Any]]
@@ -90,8 +93,10 @@ class CompletionsBody(BaseModel):
 
         return values
 
-# OpenAI Responses API body
 class ResponsesBody(BaseModel):
+    """
+    Represents the body of a responses request to OpenAI Responses API.
+    """
     # Required parameters
     model: str                                    # e.g. "gpt-4o"
     input: Union[str, List[Dict[str, Any]]]       # plain text, or rich array
@@ -114,6 +119,54 @@ class ResponsesBody(BaseModel):
         extra = "allow"
 
     @staticmethod
+    def transform_tools(tools: list[dict]) -> list[dict]:
+        """
+        Flattens OpenAI-style tools with a nested 'function' key into the flat format
+        required by the Responses API.
+        
+        Input:  [{"type": "function", "function": {"name": "x", ...}}]
+        Output: [{"type": "function", "name": "x", ...}]
+        """
+        if not tools:
+            return []
+        result = []
+        for tool in tools:
+            if tool.get("type") == "function" and "function" in tool:
+                # Start with the 'type' field from the original tool
+                flattened = {"type": tool["type"]}
+                # Add all content from the nested function object
+                flattened.update(tool["function"])
+                result.append(flattened)
+            else:
+                # Keep any tools that don't need flattening
+                result.append(tool)
+        return result
+
+    @staticmethod
+    def transform_messages(
+        completions_messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Converts completions messages to Responses API format.
+        Excludes system messages (handled by 'instructions').
+        """
+        responses_input = []
+        for msg in completions_messages:
+            role = msg.get("role", "assistant")
+            if role == "system":
+                continue  # Skip system messages
+            text = msg.get("content", "").strip()
+            responses_input.append({
+                "type": "message",
+                "role": role,
+                "content": [{
+                    "type": "input_text" if role == "user" else "output_text",
+                    "text": text,
+                }],
+            })
+        return responses_input
+
+    @staticmethod
     def from_completions(
         completions: "CompletionsBody",
         **extras: Any
@@ -130,8 +183,8 @@ class ResponsesBody(BaseModel):
             temperature=completions.temperature,
             top_p=completions.top_p,
             instructions=system_message.get("content", "") if system_message else "",
-            input=transform_messages(completions.messages),
-            tools=transform_tools(completions.tools) if completions.tools else None,
+            input=ResponsesBody.transform_messages(completions.messages),
+            tools=ResponsesBody.transform_tools(completions.tools) if completions.tools else None,
             reasoning=(
                 {"effort": completions.reasoning_effort} 
                 if completions.reasoning_effort else None
@@ -139,25 +192,11 @@ class ResponsesBody(BaseModel):
             **{k: v for k, v in extras.items() if v is not None}
         )
 
-class SessionIDFilter(logging.Filter):
-    """Attach the current session ID to each log record."""
-
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
-        record.session_id = getattr(record, "session_id", None) or current_session_id.get()
-        return True
-
-
-class ContextLevelFilter(logging.Filter):
-    """Filter records using the per-session log level from :data:`current_log_level`."""
-
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
-        return record.levelno >= current_log_level.get()
-    
-current_session_id = ContextVar("current_session_id", default=None)
-current_log_level = ContextVar("current_log_level", default=logging.INFO)
-logs_by_msg_id = defaultdict(list)
-
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Main Controller: Pipe
+# ─────────────────────────────────────────────────────────────────────────────
 class Pipe:
+    # 4.1 Configuration Schemas
     class Valves(BaseModel):
         BASE_URL: str = Field(
             default=((os.getenv("OPENAI_API_BASE_URL") or "").strip() or "https://api.openai.com/v1"),
@@ -199,7 +238,7 @@ class Pipe:
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
-
+    
     class UserValves(BaseModel):
         """Per-user valve overrides."""
         LOG_LEVEL: Literal[
@@ -209,49 +248,13 @@ class Pipe:
             description="Select logging level. 'INHERIT' uses the pipe default.",
         )
 
-    class SelfTerminate(Exception):
-        """Intentionally raised to terminate task early without triggering CancelledError logic."""
-        pass
-
+    # 4.2 Constructor and Entry Points
     def __init__(self):
         self.type = "manifold"
         self.id = "openai_responses" # Unique ID for this manifold
         self.valves = self.Valves()  # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
-        
         self.session: aiohttp.ClientSession | None = None
-        
-        # Set up the logger
-        self.log = logging.getLogger(__name__)
-        self.log.propagate = False
-        self.log.setLevel(logging.DEBUG)
-        
-        # Only configure handlers/filters if none are present
-        if not self.log.handlers:
-            # Attach custom filters
-            self.log.addFilter(SessionIDFilter())
-            self.log.addFilter(ContextLevelFilter())
-            
-            # Console handler
-            console = logging.StreamHandler(sys.stdout)
-            console.setFormatter(
-                logging.Formatter("%(levelname)s [mid=%(session_id)s] %(message)s")
-            )
-            self.log.addHandler(console)
-            
-            # In-memory handler to store messages by session_id
-            mem_handler = logging.Handler()
-            mem_handler.setFormatter(
-                logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-            )
-            # Inline emit override
-            mem_handler.emit = lambda record: (
-                logs_by_msg_id
-                .setdefault(getattr(record, "session_id", None), [])
-                .append(mem_handler.format(record))
-                if getattr(record, "session_id", None)
-                else None
-            )
-            self.log.addHandler(mem_handler)
+        self.logger = SessionLogger.get_logger(__name__)
 
     async def pipes(self):
         model_ids = [model_id.strip() for model_id in self.valves.MODEL_ID.split(",") if model_id.strip()]
@@ -273,20 +276,21 @@ class Pipe:
         1) If body["stream"] is True, return an async generator
         2) Otherwise, await _multi_turn_non_streaming(...) for a final string.
         """
-        # Get or create aiohttp session (aiohttp is used for performance).
-        self.session = await self._get_or_create_aiohttp_session()
-
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
-        current_session_id.set(__metadata__.get("session_id", None))
-        current_log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
+        full_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
+
+        # Set up session logger with session_id and log level
+        SessionLogger.session_id.set(__metadata__.get("session_id", None))
+        SessionLogger.log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
+
+        # Transform request body (Completions API -> Responses API)
         completions_body = CompletionsBody.model_validate(body)
         responses_body = ResponsesBody.from_completions(completions_body, truncation="auto")
-        full_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
+        self.logger.debug("Transformed request body to ResponsesBody: %s", responses_body.model_dump(exclude_none=True))
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
-            self.log.info("Detected task model: %s", __task__)
-            #self.log.info("Completions body: %s", body)
+            self.logger.info("Detected task model: %s", __task__)
             return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
 
         try:
@@ -296,10 +300,13 @@ class Pipe:
                 model_id=full_model_id,
             )
 
-            # Conditionally append tools
+            # Conditionally append web_search tool
             if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
                 responses_body.tools = responses_body.tools or []
-                responses_body.tools.append(self.web_search_tool(valves))
+                responses_body.tools.append({
+                    "type": "web_search",
+                    "search_context_size": valves.SEARCH_CONTEXT_SIZE,
+                })
 
             # Conditionally set reasoning summary
             if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
@@ -313,14 +320,14 @@ class Pipe:
                 responses_body.include = responses_body.include or []
                 responses_body.include.append("reasoning.encrypted_content")
 
-
             # If tools are present and native function calling is not set,
             # check if the model supports function calling. Warn if not supported, otherwise enable.
             if __tools__ and __metadata__.get("function_calling", None) != "native":
                 if responses_body.model in FEATURE_SUPPORT["function_calling"]:
                     # If model supports function calling, enable it
-                    self._emit_notification(__event_emitter__, f"Enabling native function calling for model: {responses_body.model}", level="info")
+                    await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
                     patch_model_param_field(full_model_id, "function_calling", "native")
+
                 elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
                     # If model does not support function calling, warn the user and exit early
                     await self._emit_error(
@@ -341,9 +348,7 @@ class Pipe:
         except Exception as caught_exception:
             await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
 
-    # -------------------------------------------------------------------------
-    # Helper: Handle simple task models
-    # -------------------------------------------------------------------------
+    # 4.3 Task Model Handling
     async def _handle_task(
         self,
         body: Dict[str, Any],
@@ -376,9 +381,7 @@ class Pipe:
 
         return message
                 
-    # -------------------------------------------------------------------------
-    # 1) Multi-turn loop: STREAMING
-    # -------------------------------------------------------------------------
+    # 4.4 Core Multi-Turn Handlers
     async def _multi_turn_streaming(
         self,
         body: ResponsesBody,                             # The transformed body for OpenAI Responses API
@@ -463,7 +466,7 @@ class Pipe:
         tools = tools or {}
         final_output = StringIO()
 
-        self.log.debug(
+        self.logger.debug(
             "Entering _multi_turn_streaming with up to %d loops",
             valves.MAX_TOOL_CALL_LOOPS,
         )
@@ -472,7 +475,7 @@ class Pipe:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
                 final_response_data: dict[str, Any] | None = None
                 reasoning_map.clear()
-                self.log.debug(
+                self.logger.debug(
                     "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
                 )
                 async for event in self._call_llm_sse(body.model_dump(exclude_none=True), api_key=valves.API_KEY, base_url=valves.BASE_URL):
@@ -525,7 +528,7 @@ class Pipe:
                         item = event.get("item", {})
                         item_type = item.get("type", "")
 
-                        self.log.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
+                        self.logger.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
 
                         if item_type in started_msgs:
                             template = random.choice(started_msgs[item_type])
@@ -567,13 +570,13 @@ class Pipe:
 
                     # Response completed event
                     elif event_type == "response.completed":
-                        self.log.debug("Response completed event received.")
+                        self.logger.debug("Response completed event received.")
                         final_response_data = event.get("response", {})
                         yield ""
                         break # Exit the streaming loop to process the final response
                 
                 if final_response_data is None:
-                    self.log.error("Streaming ended without a final response.")
+                    self.logger.error("Streaming ended without a final response.")
                     break
 
                 # Capture the final output items
@@ -595,7 +598,7 @@ class Pipe:
                     collected_items.extend(function_call_outputs) # Store function call outputs to be persisted in DB later
                     body.input.extend(function_call_outputs) # Append to input for next iteration
                 else:
-                    self.log.debug("No pending function calls. Exiting loop.")
+                    self.logger.debug("No pending function calls. Exiting loop.")
                     break # LLM response is complete, no further tool calls
 
         except Exception as e:
@@ -610,7 +613,7 @@ class Pipe:
         
 
         finally:
-            self.log.debug("Exiting _multi_turn_streaming loop.")
+            self.logger.debug("Exiting _multi_turn_streaming loop.")
             # Final cleanup: close the aiohttp session if it was created
 
             if total_usage:
@@ -628,24 +631,20 @@ class Pipe:
                         metadata.get("model").get("id"),
                     ) 
 
-            # If valves is DEBUG or user_valves is as value other than "INHERIT", emit citation with logs
-            # TODO ADD LOGIC TO DETECT USER VALVES /= "INHERIT"
+            # If valves is DEBUG or user_valves is set to something other than "INHERIT"
             if valves.LOG_LEVEL == "DEBUG":
                 if event_emitter:
-                    logs = logs_by_msg_id.get(current_session_id.get(), [])
+                    logs = SessionLogger.logs.get(SessionLogger.session_id.get(), [])
                     if logs:
                         await self._emit_citation(
                             event_emitter,
                             "\n".join(logs),
-                            valves.LOG_LEVEL.capitalize() + " Logs",
+                            f"{valves.LOG_LEVEL.capitalize()} Logs",
                         )
-            
-            # Clear logs
-            logs_by_msg_id.clear()
 
-    # -------------------------------------------------------------------------
-    # 2) Multi-turn loop: NON-STREAMING
-    # -------------------------------------------------------------------------
+            # Clear logs after emitting
+            SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
+
     async def _multi_turn_non_streaming(
         self,
         body: ResponsesBody,                                       # The transformed body for OpenAI Responses API
@@ -723,9 +722,7 @@ class Pipe:
 
         return final_output.getvalue()
 
-    # -------------------------------------------------------------------------
-    # HELPER: SSE LLM Call
-    # -------------------------------------------------------------------------
+    # 4.5 LLM HTTP Request Helpers
     async def _call_llm_sse(
         self,
         request_body: dict[str, Any],
@@ -736,6 +733,9 @@ class Pipe:
         Streams SSE events from OpenAI's /responses endpoint and yields them ASAP.
         Optimized for low latency.
         """
+        # Get or create aiohttp session (aiohttp is used for performance).
+        self.session = await self._get_or_create_aiohttp_session()
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -775,9 +775,6 @@ class Pipe:
                 if start_idx > 0:
                     del buf[:start_idx]
 
-    # -------------------------------------------------------------------------
-    # HELPER: Non-stream LLM Call
-    # -------------------------------------------------------------------------
     async def _call_llm_non_stream(
         self,
         request_params: dict[str, Any],
@@ -785,6 +782,9 @@ class Pipe:
         base_url: str,
     ) -> Dict[str, Any]:
         """Perform a non-streaming POST request to the Responses API."""
+        # Get or create aiohttp session (aiohttp is used for performance).
+        self.session = await self._get_or_create_aiohttp_session()
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -794,10 +794,44 @@ class Pipe:
         async with self.session.post(url, json=request_params, headers=headers) as resp:
             resp.raise_for_status()
             return await resp.json()
+    
+    async def _get_or_create_aiohttp_session(self) -> aiohttp.ClientSession:
+        """
+        Get or create a reusable aiohttp.ClientSession with sane defaults.
+        Call once in `pipes()`; keep it for the life of the process.
+        """
+        # Reuse existing session if available and open
+        if self.session is not None and not self.session.closed:
+            self.logger.debug("Reusing existing aiohttp.ClientSession")
+            return self.session
 
-    # -------------------------------------------------------------------------
-    # HELPER: Execute Tool Call
-    # -------------------------------------------------------------------------
+        self.logger.debug("Creating new aiohttp.ClientSession")
+
+        # Configure TCP connector for connection pooling and DNS caching
+        connector = aiohttp.TCPConnector(
+            limit=50,  # Max total simultaneous connections
+            limit_per_host=10,  # Max connections per host
+            keepalive_timeout=75,  # Seconds to keep idle sockets open
+            ttl_dns_cache=300,  # DNS cache time-to-live in seconds
+        )
+
+        # Set reasonable timeouts for connection and socket operations
+        timeout = aiohttp.ClientTimeout(
+            connect=30,  # Max seconds to establish connection
+            sock_connect=30,  # Max seconds for socket connect
+            sock_read=3600,  # Max seconds for reading from socket (1 hour)
+        )
+
+        # Use orjson for fast JSON serialization
+        session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            json_serialize=lambda obj: orjson.dumps(obj).decode(),
+        )
+
+        return session
+    
+    # 4.6 Tool Execution Logic
     @staticmethod
     async def _execute_function_calls(
         calls: list[dict],                      # raw call-items from the LLM
@@ -832,28 +866,7 @@ class Pipe:
             for call, result in zip(calls, results)
         ]
 
-
-    # ------------------------------------------------------
-    # helper: Merge User Valve Overrides
-    # ------------------------------------------------------
-    def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
-        """
-        Merge user-level valves into default.
-        Ignores any user value set to "INHERIT" (case-insensitive).
-        """
-        if not user_valves:
-            return global_valves
-
-        # Merge: update only fields not set to "INHERIT"
-        update = {
-            k: v
-            for k, v in user_valves.model_dump().items()
-            if v is not None and str(v).lower() != "inherit"
-        }
-        return global_valves.model_copy(update=update)
-
-    ###########################################################################################################
-
+    # 4.7 Emitters (Front-end communication)
     async def _emit_error(
         self,
         event_emitter: Callable[[dict[str, Any]], Awaitable[None]],
@@ -868,7 +881,7 @@ class Pipe:
         If 'citation' is True, also emits the debug logs for the current session_id.
         """
         error_message = str(error_obj)  # If it's an exception, convert to string
-        self.log.error("Error: %s", error_message)
+        self.logger.error("Error: %s", error_message)
 
         if show_error_message and event_emitter:
             await event_emitter(
@@ -893,7 +906,7 @@ class Pipe:
                         "Error Logs",
                     )
                 else:
-                    self.log.warning(
+                    self.logger.warning(
                         "No debug logs found for session_id %s", msg_id
                     )
 
@@ -988,122 +1001,62 @@ class Pipe:
             {"type": "notification", "data": {"type": level, "content": content}}
         )
 
-    async def _get_or_create_aiohttp_session(self) -> aiohttp.ClientSession:
+    # 4.8 Internal Static Helpers
+    def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """
-        Get or create a reusable aiohttp.ClientSession with sane defaults.
-        Call once in `pipes()`; keep it for the life of the process.
+        Merge user-level valves into default.
+        Ignores any user value set to "INHERIT" (case-insensitive).
         """
-        # Reuse existing session if available and open
-        if self.session is not None and not self.session.closed:
-            self.log.debug("Reusing existing aiohttp.ClientSession")
-            return self.session
+        if not user_valves:
+            return global_valves
 
-        self.log.debug("Creating new aiohttp.ClientSession")
-
-        # Configure TCP connector for connection pooling and DNS caching
-        connector = aiohttp.TCPConnector(
-            limit=50,  # Max total simultaneous connections
-            limit_per_host=10,  # Max connections per host
-            keepalive_timeout=75,  # Seconds to keep idle sockets open
-            ttl_dns_cache=300,  # DNS cache time-to-live in seconds
-        )
-
-        # Set reasonable timeouts for connection and socket operations
-        timeout = aiohttp.ClientTimeout(
-            connect=30,  # Max seconds to establish connection
-            sock_connect=30,  # Max seconds for socket connect
-            sock_read=3600,  # Max seconds for reading from socket (1 hour)
-        )
-
-        # Use orjson for fast JSON serialization
-        session = aiohttp.ClientSession(
-            connector=connector,
-            timeout=timeout,
-            json_serialize=lambda obj: orjson.dumps(obj).decode(),
-        )
-
-        return session
-    
-    @staticmethod
-    def transform_tools_for_responses_api(tools_dict: dict[str, dict]) -> list[dict]:
-        """
-        Convert the internal 'tools_dict' from get_tools(...) into 
-        an array of tool definitions for the OpenAI Responses API.
-
-        NOTE: We rely on __tools__ (server-injected) instead of body["tools"], 
-        because __tools__ is always provided, whereas body["tools"] is only set 
-        if native function calling is enabled by the user. 
-        """
-        if not tools_dict:
-            return []
-
-        items = []
-        for name, data in tools_dict.items():
-            spec = data.get("spec", {})
-            items.append({
-                "type": "function",
-                "name": spec.get("name", name),
-                "description": spec.get("description", ""),
-                "parameters": spec.get("parameters", {}),
-                "strict": False # Revisit in future if I can get strict working (or if I should at all)
-            })
-        return items
-
-    @staticmethod
-    def web_search_tool(valves) -> dict:
-        """Build a web_search tool dictionary."""
-        return {"type": "web_search", "search_context_size": valves.SEARCH_CONTEXT_SIZE}
-
-    @staticmethod
-    def image_generation_tool(valves) -> dict:
-        """Build an image_generation tool dictionary."""
-        tool = {
-            "type": "image_generation",
-            "quality": valves.IMAGE_QUALITY,
-            "size": valves.IMAGE_SIZE,
-            "response_format": valves.IMAGE_FORMAT,
-            "background": valves.IMAGE_BACKGROUND,
+        # Merge: update only fields not set to "INHERIT"
+        update = {
+            k: v
+            for k, v in user_valves.model_dump().items()
+            if v is not None and str(v).lower() != "inherit"
         }
-        if valves.IMAGE_COMPRESSION:
-            tool["output_compression"] = valves.IMAGE_COMPRESSION
-        return tool
+        return global_valves.model_copy(update=update)
 
-# ----------------------------------------------------------------------------------------------------
-#  Public helpers ─ mirror Chats.* naming style
-# ----------------------------------------------------------------------------------------------------
-"""
-Helpers to persist OpenAI responses safely in Open WebUI DB without impacting other
-chat data. This allows us to store function call traces, tool outputs, and other
-special items related to messages in a structured way, enabling easy retrieval
-and reconstruction of conversations with additional context.
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Utility Classes (Shared utilities)
+# ─────────────────────────────────────────────────────────────────────────────
+class SessionLogger:
+    session_id = ContextVar("session_id", default=None)
+    log_level = ContextVar("log_level", default=logging.INFO)
+    logs = defaultdict(lambda: deque(maxlen=1000))
 
-Schema Overview
----------------
-Inside each chat document (`chat_model.chat`), we store an `openai_responses_pipe` structure:
+    @classmethod
+    def get_logger(cls, name=__name__):
+        logger = logging.getLogger(name)
+        logger.handlers.clear()
+        logger.filters.clear()
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
 
-    {
-      "openai_responses_pipe": {
-        "__v": 2,                           # version
+        # Single combined filter
+        def filter(record):
+            record.session_id = cls.session_id.get()
+            return record.levelno >= cls.log_level.get()
 
-        "messages": {
-          "<message_id>": {
-            "model": "o4-mini",          # stamped once – avoids per-item duplication
-            "created_at": 1719922512,    # unix-seconds the root message arrived
+        logger.addFilter(filter)
 
-            "items": [ /* raw output items in arrival order */ ]
-          }
-        },
-      }
-    }
+        # Console handler
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter("[%(levelname)s] [%(session_id)s] %(message)s"))
+        logger.addHandler(console)
 
-When users or the system perform a function call (or any special action)
-related to a message, we append these "response items" to
-`openai_responses_pipe.messages[<message_id>]`. Later, when reconstructing
-the conversation, these items can be inserted above the respective message
-that triggered them. This allows for easy referencing of function calls,
-their outputs, or any other extra JSON data in the final conversation flow.
-"""
+        # Memory handler
+        mem = logging.Handler()
+        mem.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        mem.emit = lambda r: cls.logs[r.session_id].append(mem.format(r)) if r.session_id else None
+        logger.addHandler(mem)
 
+        return logger
+    
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Framework Integration Helpers (Open WebUI DB operations)
+# ─────────────────────────────────────────────────────────────────────────────
 def add_openai_response_items_to_chat_by_id_and_message_id(
     chat_id: str,
     message_id: str,
@@ -1111,8 +1064,36 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     model_id: str,
 ) -> Optional[ChatModel]:
     """
-    Append JSON-serializable items under chat.openai_responses_pipe.messages[message_id].
-    Returns the updated ChatModel or None if the chat is not found.
+    Helper to persist OpenAI responses safely in Open WebUI DB without impacting other
+    chat data. This allows us to store function call traces, tool outputs, and other
+    special items related to messages in a structured way, enabling easy retrieval
+    and reconstruction of conversations with additional context.
+
+    Schema Overview
+    ---------------
+    Inside each chat document (`chat_model.chat`), we store an `openai_responses_pipe` structure:
+
+        {
+        "openai_responses_pipe": {
+            "__v": 2,                           # version
+
+            "messages": {
+            "<message_id>": {
+                "model": "o4-mini",          # stamped once – avoids per-item duplication
+                "created_at": 1719922512,    # unix-seconds the root message arrived
+
+                "items": [ /* raw output items in arrival order */ ]
+            }
+            },
+        }
+        }
+
+    When users or the system perform a function call (or any special action)
+    related to a message, we append these "response items" to
+    `openai_responses_pipe.messages[<message_id>]`. Later, when reconstructing
+    the conversation, these items can be inserted above the respective message
+    that triggered them. This allows for easy referencing of function calls,
+    their outputs, or any other extra JSON data in the final conversation flow.
     """
     if not items:
         return Chats.get_chat_by_id(chat_id)  # nothing to add
@@ -1138,50 +1119,6 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     bucket["items"].extend(items)
 
     return Chats.update_chat_by_id(chat_id, chat_model.chat)
-
-
-def get_openai_response_items_by_chat_id_and_message_id(
-    chat_id: str,
-    message_id: str,
-    *,
-    type_filter: Optional[str] = None,
-    model_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Return stored items from chat.openai_responses_pipe.messages[message_id].
-    If type_filter is given, only items whose 'type' matches are returned.
-    """
-    chat_model = Chats.get_chat_by_id(chat_id)
-    if not chat_model:
-        return []
-
-    bucket = (
-        chat_model.chat
-        .get("openai_responses_pipe", {})
-        .get("messages", {})
-        .get(message_id, {})
-    )
-
-    if model_id and bucket.get("model") != model_id:
-        return []
-
-    all_items = bucket.get("items", [])
-    if not type_filter:
-        return all_items
-    return [x for x in all_items if x.get("type") == type_filter]
-
-def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
-    """
-    Removes any <details> tag whose type attribute is in `removal_types`.
-    Example:
-      remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
-      => "Hello "
-    """
-    # Safely escape the types in case they have special regex chars
-    pattern_types = "|".join(map(re.escape, removal_types))
-    # Example pattern: <details type="reasoning">...</details>
-    pattern = rf'<details\b[^>]*\btype=["\'](?:{pattern_types})["\'][^>]*>.*?</details>'
-    return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
 def build_responses_history_by_chat_id_and_message_id(
     chat_id: str,
@@ -1252,8 +1189,9 @@ def build_responses_history_by_chat_id_and_message_id(
 
     return final
 
-
-## Miscellaneous Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. General-Purpose Utility Functions (Data transforms & patches)
+# ─────────────────────────────────────────────────────────────────────────────
 def update_usage_totals(total, new):
     for k, v in new.items():
         if isinstance(v, dict):
@@ -1264,58 +1202,6 @@ def update_usage_totals(total, new):
             # Skip or explicitly set non-numeric values
             total[k] = v if v is not None else total.get(k, 0)
     return total
-
-def transform_tools(tools: list[dict]) -> list[dict]:
-    """
-    Flattens OpenAI-style tools with a nested 'function' key into the flat format
-    required by the Responses API.
-    
-    Input:  [{"type": "function", "function": {"name": "x", ...}}]
-    Output: [{"type": "function", "name": "x", ...}]
-    """
-    if not tools:
-        return []
-    
-    result = []
-    for tool in tools:
-        if tool.get("type") == "function" and "function" in tool:
-            # Start with the 'type' field from the original tool
-            flattened = {"type": tool["type"]}
-            # Add all content from the nested function object
-            flattened.update(tool["function"])
-            result.append(flattened)
-        else:
-            # Keep any tools that don't need flattening
-            result.append(tool)
-    
-    return result
-
-def transform_messages(
-    completions_messages: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """
-    Converts completions messages to Responses API format.
-    Excludes system messages (handled by 'instructions').
-    """
-    responses_input = []
-
-    for msg in completions_messages:
-        role = msg.get("role", "assistant")
-        if role == "system":
-            continue  # Skip system messages
-
-        text = msg.get("content", "").strip()
-
-        responses_input.append({
-            "type": "message",
-            "role": role,
-            "content": [{
-                "type": "input_text" if role == "user" else "output_text",
-                "text": text,
-            }],
-        })
-
-    return responses_input
 
 def patch_model_param_field(model_id: str, field: str, value: Any):
     model = Models.get_model_by_id(model_id)
@@ -1331,3 +1217,16 @@ def patch_model_param_field(model_id: str, field: str, value: Any):
 
     form = ModelForm(**form_data)
     Models.update_model_by_id(model_id, form)
+
+def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
+    """
+    Removes any <details> tag whose type attribute is in `removal_types`.
+    Example:
+      remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
+      => "Hello "
+    """
+    # Safely escape the types in case they have special regex chars
+    pattern_types = "|".join(map(re.escape, removal_types))
+    # Example pattern: <details type="reasoning">...</details>
+    pattern = rf'<details\b[^>]*\btype=["\'](?:{pattern_types})["\'][^>]*>.*?</details>'
+    return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
