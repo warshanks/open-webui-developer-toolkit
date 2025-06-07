@@ -33,18 +33,6 @@ class Filter:
 
 ## Tools
 
-When a tool handles uploaded files, define `file_handler = True` either at module scope or on the `Tools` class. The loader exposes this flag through metadata so the middleware skips injecting file contents:
-
-```python
-"metadata": {
-    "file_handler": hasattr(module, "file_handler") and module.file_handler,
-    "citation": hasattr(module, "citation") and module.citation,
-}
-...
-if tools[tool_function_name].get("metadata", {}).get("file_handler", False):
-    skip_files = True
-```
-
 Example:
 
 ```python
@@ -63,4 +51,4 @@ class Tools:
 
 ## Pipes
 
-Pipes do not support a `file_handler` flag. They may remove the `files` entry from the payload to prevent the default file handler from running.
+Pipes do not support a `file_handler` flag. If it's not disabled via any of the enabled tools or filters, you will see the the file contents injected in the system prompt.
