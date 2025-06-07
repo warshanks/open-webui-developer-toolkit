@@ -5,7 +5,8 @@ It emits a citation block for `body`, `__metadata__`, `__user__`, `__request__`,
 pipeline.
 
 Sensitive headers like `Authorization` and `Cookie` are redacted from
-`__request__` to avoid leaking private information.
+`__request__` to avoid leaking private information. The `REDACT_REQUEST`
+valve controls this behavior and defaults to `True`.
 
 ## Usage
 1. Copy `input_inspector.py` to your WebUI under **Admin ▸ Pipelines**.
