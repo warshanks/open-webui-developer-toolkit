@@ -2,6 +2,8 @@
 title: Debug
 id: debug_toggle_filter
 description: Attach session logs and input data as citations for debugging.
+git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
+required_open_webui_version: 0.6.10
 """
 
 from __future__ import annotations
