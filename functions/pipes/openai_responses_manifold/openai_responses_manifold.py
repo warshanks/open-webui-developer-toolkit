@@ -24,7 +24,6 @@ from io import StringIO
 import json
 import logging
 import os
-import random
 import re
 import sys
 from collections import defaultdict, deque
@@ -375,60 +374,7 @@ class Pipe:
         total_usage: Dict[str, Any] = {}
         collected_items: List[dict] = []  # For storing function_call, function_call_output, etc.
 
-        started_msgs = {
-            "web_search_call": [
-                "🔍 Hmm, let me quickly check online…",
-                "🔍 One sec—looking that up…",
-                "🔍 Just a moment, searching the web…",
-            ],
-            "function_call": [
-                "🛠️ Running the {fn} tool…",
-                "🛠️ Let me try {fn}…",
-                "🛠️ Calling {fn} real quick…",
-            ],
-            "file_search_call": [
-                "📂 Let me skim those files…",
-                "📂 One sec, scanning the documents…",
-                "📂 Checking the files right now…",
-            ],
-            "image_generation_call": [
-                "🎨 Let me create that image…",
-                "🎨 Give me a moment to sketch…",
-                "🎨 Working on your picture…",
-            ],
-            "local_shell_call": [
-                "💻 Let me run that command…",
-                "💻 Hold on, executing locally…",
-                "💻 Firing up that shell command…",
-            ],
-        }
 
-        finished_msgs = {
-            "web_search_call": [
-                "🔎 Got it—here's what I found!",
-                "🔎 All set—found that info!",
-                "🔎 Okay, done searching!",
-            ],
-            "function_call": [
-                "🛠️ Done—the tool finished!",
-                "🛠️ Got the results for you!",
-            ],
-            "file_search_call": [
-                "📂 Done checking files!",
-                "📂 Found what I needed!",
-                "📂 Got the documents ready!",
-            ],
-            "image_generation_call": [
-                "🎨 Your image is ready!",
-                "🎨 Picture's finished!",
-                "🎨 All done—image created!",
-            ],
-            "local_shell_call": [
-                "💻 Command complete!",
-                "💻 Finished running that!",
-                "💻 Shell task done!",
-            ],
-        }
 
         tools = tools or {}
         final_output = StringIO()
@@ -497,9 +443,19 @@ class Pipe:
 
                         self.logger.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
 
-                        if item_type in started_msgs:
-                            template = random.choice(started_msgs[item_type])
-                            msg = template.format(fn=item.get("name", "a tool"))
+                        msg: str | None = None
+                        if item_type == "web_search_call":
+                            msg = "🔍 Searching the web..."
+                        elif item_type == "function_call":
+                            msg = f"🛠️ Running {item.get('name', 'a tool')}..."
+                        elif item_type == "file_search_call":
+                            msg = "📂 Searching files..."
+                        elif item_type == "image_generation_call":
+                            msg = "🎨 Generating image..."
+                        elif item_type == "local_shell_call":
+                            msg = "💻 Executing command..."
+
+                        if msg:
                             await self._emit_status(event_emitter, msg, done=False, hidden=False)
                         
                         continue  # continue to next event
@@ -509,9 +465,19 @@ class Pipe:
                         item = event.get("item", {})
                         item_type = item.get("type", "")
 
-                        if item_type in finished_msgs:
-                            template = random.choice(finished_msgs[item_type])
-                            msg = template.format(fn=item.get("name", "Tool"))
+                        msg: str | None = None
+                        if item_type == "web_search_call":
+                            msg = "🔎 Done searching."
+                        elif item_type == "function_call":
+                            msg = "🛠️ Tool finished."
+                        elif item_type == "file_search_call":
+                            msg = "📂 File search complete."
+                        elif item_type == "image_generation_call":
+                            msg = "🎨 Image ready."
+                        elif item_type == "local_shell_call":
+                            msg = "💻 Command complete."
+
+                        if msg:
                             await self._emit_status(event_emitter, msg, done=True, hidden=False)
 
                         if item_type == "reasoning":
