@@ -65,7 +65,7 @@ class CompletionsBody(BaseModel):
     model: str
     stream: bool = False
     messages: List[Dict[str, Any]]
-    tools: Optional[List[Dict[str, Any]]] = None                            # native function-calling tools
+    tools: Optional[List[Dict[str, Any]]] = None                            # tools to use for function calling
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None     # reasoning effort for o-series models
     parallel_tool_calls: Optional[bool] = None                              # allow parallel tool execution
     seed: Optional[int] = None                                              # deterministic sampling
@@ -99,8 +99,8 @@ class ResponsesBody(BaseModel):
     Represents the body of a responses request to OpenAI Responses API.
     """
     # Required parameters
-    model: str                                    # e.g. "gpt-4o"
-    input: Union[str, List[Dict[str, Any]]]       # plain text, or rich array
+    model: str
+    input: Union[str, List[Dict[str, Any]]] # plain text, or rich array
 
     # Optional parameters
     instructions: Optional[str] = ""              # system / developer prompt
@@ -124,19 +124,27 @@ class ResponsesBody(BaseModel):
         tools: list[dict] | dict[str, Any],
         strict: bool = False,
     ) -> list[dict]:
-        """Normalize tool definitions for the Responses API.
+        """
+        Normalize tool definitions from Open WebUI (`__tools__`) or OpenAI Completions API (`body["tools"]` when native mode is enabled) formats into the OpenAI Responses API schema.
 
         Parameters
         ----------
-        tools:
-            Mapping of tool definitions or a list in the format used by the
-            Completions API.
-        strict:
-            When ``True`` the returned schema follows OpenAI's strict mode
-            guidance by disabling additional properties, requiring all fields
-            and allowing ``null`` for optional ones.
-        """
+        tools : dict[str, Any] | list[dict]
+            Tool definitions in either:
+            - **Internal dict format**(`__tools__`): `{tool_name: {"spec": {...}, ...}}`
+            - **Completions API format** (`body["tools"]`): `[{"type": "function", "function": {...}}, ...]`
 
+        strict : bool, default=False
+            If `True`, applies OpenAI strict schema enforcement:
+            - Sets `additionalProperties=False`
+            - Marks all fields as required
+            - Allows `"null"` explicitly for optional fields
+
+        Returns
+        -------
+        list[dict]
+            Tools formatted per OpenAI Responses API.
+        """
         if not tools:
             return []
 
@@ -331,21 +339,29 @@ class Pipe:
         SessionLogger.session_id.set(__metadata__.get("session_id", None))
         SessionLogger.log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
 
-        # Transform request body (Completions API -> Responses API)
+        # Transform request body (Completions API -> Responses API). Populates with default values.
         completions_body = CompletionsBody.model_validate(body)
-        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto")
+        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto") # from_completions() supports custom params (e.g., truncation) which are injected into ResponsesBody
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
             return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
 
-        # Build responses_body.input based on chat history (and include previously response API items if available)
-        responses_body.input = build_responses_history_by_chat_id_and_message_id(
-            __metadata__.get("chat_id"),
-            __metadata__.get("message_id"),
-            model_id=full_model_id,
-        )
+        # Override input, if chat_id and message_id are provided.
+        # Uses specialized helper which rebuilds input history and injects previously persisted OpenAI responses output items (e.g. function_call, encrypted reasoning tokens, etc.) into the input history.
+        if __metadata__.get("chat_id") and __metadata__.get("message_id"):
+            responses_body.input = build_responses_history_by_chat_id_and_message_id(
+                __metadata__.get("chat_id"),
+                __metadata__.get("message_id"),
+                model_id=full_model_id,
+            )
+            self.logger.debug("Built input history for ResponsesBody: %s", json.dumps(responses_body.input, indent=2, ensure_ascii=False))
+
+        # Override tools, if __tools__ provided
+        if __tools__:
+            responses_body.tools = ResponsesBody.transform_tools(__tools__, strict=True) # __tools__ is always provided if one or more tools are enabled in the UI (unlike body["tools"] which is only present when function calling is enabled)
+            self.logger.debug("Transformed tools: %s", json.dumps(responses_body.tools, indent=2, ensure_ascii=False))
 
         # Add web_search tool, if supported and enabled
         if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
@@ -373,17 +389,14 @@ class Pipe:
                 # If model supports function calling, enable it
                 await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
                 patch_model_param_field(full_model_id, "function_calling", "native")
-
             elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
                 # If model does not support function calling, warn the user and exit early
                 await self._emit_error(
                     __event_emitter__,
                     f"Tools are not supported by the selected model: {responses_body.model}. "
-                    f"Please disable tools or choose a model that supports tool use.",
+                    f"Please disable tools or choose a model that supports tool use (e.g. {', '.join(FEATURE_SUPPORT['function_calling'])}).",
                 )
                 return  # Exit early if function calling is not supported
-        
-        self.logger.debug("Transformed request body to ResponsesBody: %s", responses_body.model_dump(exclude_none=True))
             
         # Send to OpenAI Responses API
         if responses_body.stream:
