@@ -2,7 +2,7 @@
 
 Open WebUI reads uploaded files and injects their contents into the system prompt. Extensions can skip this behavior when they manage files themselves.
 
-Declare a module level variable `file_handler = True` to signal that a filter's `inlet` or tool handles file uploads. The manifold.py checks this flag and removes the files from the payload after your handler runs:
+Set `self.file_handler = True` in the filter or tool `__init__` to signal that you will process file uploads. WebUI's [filter loader](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/filter.py) and [middleware](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/middleware.py) inspect this flag and delete the files from the payload once your handler runs:
 
 ```python
 # Check if the function has a file_handler variable
@@ -13,6 +13,43 @@ if skip_files and "files" in form_data.get("metadata", {}):
     del form_data["files"]
     del form_data["metadata"]["files"]
 ```
+
+When a tool declares `file_handler = True` the middleware performs a similar
+cleanup:
+
+```python
+if (
+    tools[tool_function_name]
+    .get("metadata", {})
+    .get("file_handler", False)
+):
+    skip_files = True
+
+...
+
+if skip_files and "files" in body.get("metadata", {}):
+    del body["metadata"]["files"]
+```
+
+When `file_handler` is **False** (the default), the middleware collects context
+from each attached file using `get_sources_from_files` and then injects that
+context into a system message:
+
+```python
+context_string = ""
+for source in sources:
+    for doc_context, doc_meta in zip(source["document"], source["metadata"]):
+        context_string += (
+            f'<source id="{citation_idx[citation_id]}">' f"{doc_context}</source>\n"
+        )
+
+form_data["messages"] = add_or_update_system_message(
+    rag_template(request.app.state.config.RAG_TEMPLATE, context_string, prompt),
+    form_data["messages"],
+)
+```
+
+See [middleware.py lines 922–980](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/middleware.py#L922-L980) for the full logic.
 
 ## Filters
 
