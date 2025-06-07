@@ -15,6 +15,7 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Imports
 # ─────────────────────────────────────────────────────────────────────────────
+# Standard library, third-party, and Open WebUI imports
 # Standard library imports
 import asyncio
 import datetime
@@ -45,6 +46,7 @@ from open_webui.utils.misc import get_message_list, get_system_message
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Constants & Global Configuration
 # ─────────────────────────────────────────────────────────────────────────────
+# Feature flags and other module level constants
 FEATURE_SUPPORT = {
     "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}, # OpenAI's built-in web search tool.
     "image_gen_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
@@ -56,6 +58,7 @@ FEATURE_SUPPORT = {
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Data Models
 # ─────────────────────────────────────────────────────────────────────────────
+# Pydantic models for validating request and response payloads
 class CompletionsBody(BaseModel):
     """
     Represents the body of a completions request to OpenAI completions API.
@@ -76,10 +79,11 @@ class CompletionsBody(BaseModel):
 
     @model_validator(mode='after')
     def normalize_model(cls, values: "CompletionsBody") -> "CompletionsBody":
-        """
-        Normalize the model ID:
-        - Strip 'openai_responses.' prefix.
-        - Handle pseudo-model IDs like 'o4-mini-high'.
+        """Sanitize the ``model`` field after validation.
+
+        The helper removes the ``openai_responses.`` prefix and converts
+        pseudo-model IDs (e.g. ``o4-mini-high``) into their base model while
+        recording the requested reasoning effort.
         """
         # Strip prefix if present
         values.model = values.model.removeprefix("openai_responses.")
@@ -199,6 +203,7 @@ class ResponsesBody(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Main Controller: Pipe
 # ─────────────────────────────────────────────────────────────────────────────
+# Primary interface implementing the Responses manifold
 class Pipe:
     # 4.1 Configuration Schemas
     class Valves(BaseModel):
@@ -275,10 +280,11 @@ class Pipe:
         __task__: Optional[dict[str, Any]] = None,
         __task_body__: Optional[dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None] | str | None:
-        """
-        Single entry point:
-        1) If body["stream"] is True, return an async generator
-        2) Otherwise, await _multi_turn_non_streaming(...) for a final string.
+        """Process a user request and return either a stream or final text.
+
+        When ``body['stream']`` is ``True`` the method yields deltas from
+        ``_multi_turn_streaming``.  Otherwise it falls back to
+        ``_multi_turn_non_streaming`` and returns the aggregated response.
         """
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         full_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
@@ -1044,6 +1050,7 @@ class Pipe:
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Utility Classes (Shared utilities)
 # ─────────────────────────────────────────────────────────────────────────────
+# Support classes used across the pipe implementation
 class SessionLogger:
     session_id = ContextVar("session_id", default=None)
     log_level = ContextVar("log_level", default=logging.INFO)
@@ -1086,6 +1093,7 @@ current_session_id: ContextVar[str | None] = ContextVar("current_session_id", de
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Framework Integration Helpers (Open WebUI DB operations)
 # ─────────────────────────────────────────────────────────────────────────────
+# Utility functions that interface with Open WebUI's data models
 def add_openai_response_items_to_chat_by_id_and_message_id(
     chat_id: str,
     message_id: str,
@@ -1219,8 +1227,9 @@ def build_responses_history_by_chat_id_and_message_id(
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
 # ─────────────────────────────────────────────────────────────────────────────
+# Helper functions shared by multiple parts of the pipe
 def update_usage_totals(total, new):
-    """Recursively sum usage dictionaries."""
+    """Recursively merge nested usage statistics."""
     for k, v in new.items():
         if isinstance(v, dict):
             total[k] = update_usage_totals(total.get(k, {}), v)
