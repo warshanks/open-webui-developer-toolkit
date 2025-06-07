@@ -4,6 +4,7 @@ id: create_image_toggle_filter
 description: Injects the image_generation tool with configurable size and quality.
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
 required_open_webui_version: 0.6.10
+version: 0.1.0
 """
 
 from __future__ import annotations
