@@ -295,7 +295,6 @@ class Pipe:
         # Transform request body (Completions API -> Responses API)
         completions_body = CompletionsBody.model_validate(body)
         responses_body = ResponsesBody.from_completions(completions_body, truncation="auto")
-        self.logger.debug("Transformed request body to ResponsesBody: %s", responses_body.model_dump(exclude_none=True))
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
@@ -344,6 +343,8 @@ class Pipe:
                     f"Please disable tools or choose a model that supports tool use.",
                 )
                 return  # Exit early if function calling is not supported
+        
+        self.logger.debug("Transformed request body to ResponsesBody: %s", responses_body.model_dump(exclude_none=True))
             
         # Send to OpenAI Responses API
         if responses_body.stream:
