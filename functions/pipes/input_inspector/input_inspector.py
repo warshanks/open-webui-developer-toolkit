@@ -14,6 +14,8 @@ import datetime
 import json
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
+from pydantic import BaseModel, Field
+
 from fastapi import Request
 
 SENSITIVE_HEADERS = {
@@ -25,6 +27,17 @@ SENSITIVE_HEADERS = {
 
 
 class Pipe:
+    class Valves(BaseModel):
+        """Configurable pipe settings."""
+
+        REDACT_REQUEST: bool = Field(
+            default=True,
+            description="Redact sensitive request headers in the citation output.",
+        )
+
+    def __init__(self) -> None:
+        self.valves = self.Valves()
+
     async def pipe(
         self,
         body: dict[str, Any],
@@ -61,17 +74,17 @@ class Pipe:
         await emit("body", body)
         await emit("__metadata__", __metadata__ or {})
         await emit("__user__", __user__)
-        await emit("__request__", _sanitize_request(__request__))
+        await emit("__request__", _sanitize_request(__request__, self.valves.REDACT_REQUEST))
         await emit("__files__", __files__ or [])
         await emit("__tools__", __tools__ or {})
 
         return "Input inspection complete. See citations for details."
 
-def _sanitize_request(request: Request) -> dict[str, Any]:
+def _sanitize_request(request: Request, redact: bool) -> dict[str, Any]:
     """Return a sanitized representation of ``request``."""
 
     headers = {
-        k: ("[REDACTED]" if k.lower() in SENSITIVE_HEADERS else v)
+        k: ("[REDACTED]" if redact and k.lower() in SENSITIVE_HEADERS else v)
         for k, v in request.headers.items()
     }
     return {
