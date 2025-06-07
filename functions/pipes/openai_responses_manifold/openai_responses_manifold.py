@@ -297,103 +297,61 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
 
-        try:
-            responses_body.input = build_responses_history_by_chat_id_and_message_id(
-                __metadata__.get("chat_id"),
-                __metadata__.get("message_id"),
-                model_id=full_model_id,
-            )
-
-            # Conditionally append web_search tool
-            if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
-                responses_body.tools = responses_body.tools or []
-                responses_body.tools.append({
-                    "type": "web_search",
-                    "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                })
-
-            # Conditionally set reasoning summary
-            if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
-                responses_body.reasoning = responses_body.reasoning or {}
-                responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
-
-            # Conditionally include reasoning.encrypted_content
-            # TODO make this configurable via valves since some orgs might not be approved for encrypted content
-            # Note storing encrypted contents is only supported when store = False
-            if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
-                responses_body.include = responses_body.include or []
-                responses_body.include.append("reasoning.encrypted_content")
-
-            # If tools are present and native function calling is not set,
-            # check if the model supports function calling. Warn if not supported, otherwise enable.
-            if __tools__ and __metadata__.get("function_calling", None) != "native":
-                if responses_body.model in FEATURE_SUPPORT["function_calling"]:
-                    # If model supports function calling, enable it
-                    await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
-                    patch_model_param_field(full_model_id, "function_calling", "native")
-
-                elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
-                    # If model does not support function calling, warn the user and exit early
-                    await self._emit_error(
-                        __event_emitter__,
-                        f"Tools are not supported by the selected model: {responses_body.model}. "
-                        f"Please disable tools or choose a model that supports tool use.",
-                    )
-                    return  # Exit early if function calling is not supported
-                
-            # Send to OpenAI Responses API
-            if responses_body.stream:
-                # Return async generator for partial text
-                return self._multi_turn_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
-            else:
-                # Return final text (non-streaming)
-                return await self._multi_turn_non_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
-
-        except Exception as caught_exception:
-            await self._emit_error(__event_emitter__, caught_exception, show_error_message=True, show_error_log_citation=True, done=True)
-
-    # 4.3 Task Model Handling
-    async def _handle_task(
-        self,
-        body: Dict[str, Any],
-        valves: Pipe.Valves
-    ) -> Dict[str, Any]:
-        """Process a task model request via the Responses API.
-
-        Task models (e.g. generating a chat title or tags) return their
-        information as standard Responses output.  This helper performs a single
-        non-streaming call and extracts the plain text from the response items.
-        """
-
-        task_body = {
-            "model": body.get("model"),
-            "instructions": body.get("instructions", ""),
-            "input": body.get("input", ""),
-            "stream": False,
-        }
-
-        response = await self._call_llm_non_stream(
-            task_body,
-            api_key=valves.API_KEY,
-            base_url=valves.BASE_URL,
+        # Build responses_body.input based on chat history (and include previously response API items if available)
+        responses_body.input = build_responses_history_by_chat_id_and_message_id(
+            __metadata__.get("chat_id"),
+            __metadata__.get("message_id"),
+            model_id=full_model_id,
         )
 
-        text_parts: list[str] = []
-        for item in response.get("output", []):
-            if item.get("type") != "message":
-                continue
-            for content in item.get("content", []):
-                if content.get("type") == "output_text":
-                    text_parts.append(content.get("text", ""))
+        # Add web_search tool, if supported and enabled
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
+            responses_body.tools = responses_body.tools or []
+            responses_body.tools.append({
+                "type": "web_search",
+                "search_context_size": valves.SEARCH_CONTEXT_SIZE,
+            })
 
-        message = "".join(text_parts)
+        # Enable reasoning summary, if supported and enabled
+        if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+            responses_body.reasoning = responses_body.reasoning or {}
+            responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
-        return message
-                
-    # 4.4 Core Multi-Turn Handlers
+        # Enable persistence of encrypted reasoning tokens, if supported and store=False
+        # TODO make this configurable via valves since some orgs might not be approved for encrypted content
+        # Note storing encrypted contents is only supported when store = False
+        if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+            responses_body.include = responses_body.include or []
+            responses_body.include.append("reasoning.encrypted_content")
+
+        # Enable function calling, if supported and tools are present
+        if __tools__ and __metadata__.get("function_calling", None) != "native":
+            if responses_body.model in FEATURE_SUPPORT["function_calling"]:
+                # If model supports function calling, enable it
+                await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
+                patch_model_param_field(full_model_id, "function_calling", "native")
+
+            elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
+                # If model does not support function calling, warn the user and exit early
+                await self._emit_error(
+                    __event_emitter__,
+                    f"Tools are not supported by the selected model: {responses_body.model}. "
+                    f"Please disable tools or choose a model that supports tool use.",
+                )
+                return  # Exit early if function calling is not supported
+            
+        # Send to OpenAI Responses API
+        if responses_body.stream:
+            # Return async generator for partial text
+            return self._multi_turn_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+        else:
+            # Return final text (non-streaming)
+            return await self._multi_turn_non_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+
+    # 4.3 Core Multi-Turn Handlers
     async def _multi_turn_streaming(
         self,
-        body: ResponsesBody,                             # The transformed body for OpenAI Responses API
+        body: ResponsesBody,                                        # The transformed body for OpenAI Responses API
         valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
@@ -723,7 +681,45 @@ class Pipe:
             logs_by_msg_id.clear()
 
         return final_output.getvalue()
+    
+    # 4.4 Task Model Handling
+    async def _handle_task(
+        self,
+        body: Dict[str, Any],
+        valves: Pipe.Valves
+    ) -> Dict[str, Any]:
+        """Process a task model request via the Responses API.
 
+        Task models (e.g. generating a chat title or tags) return their
+        information as standard Responses output.  This helper performs a single
+        non-streaming call and extracts the plain text from the response items.
+        """
+
+        task_body = {
+            "model": body.get("model"),
+            "instructions": body.get("instructions", ""),
+            "input": body.get("input", ""),
+            "stream": False,
+        }
+
+        response = await self._call_llm_non_stream(
+            task_body,
+            api_key=valves.API_KEY,
+            base_url=valves.BASE_URL,
+        )
+
+        text_parts: list[str] = []
+        for item in response.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    text_parts.append(content.get("text", ""))
+
+        message = "".join(text_parts)
+
+        return message
+      
     # 4.5 LLM HTTP Request Helpers
     async def _call_llm_sse(
         self,
