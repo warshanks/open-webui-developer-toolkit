@@ -4,7 +4,7 @@ id: debug_toggle_filter
 description: Attach session logs and input data as citations for debugging.
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
 required_open_webui_version: 0.6.10
-version: 0.1.0
+version: 0.1.1
 """
 
 from __future__ import annotations
@@ -19,42 +19,45 @@ from typing import Any, Callable, Awaitable, Optional
 from fastapi import Request
 from pydantic import BaseModel
 
+try:  # Use shared logger from OpenAI Responses pipe if available
+    from function_openai_responses import SessionLogger  # type: ignore
+except Exception:  # Fallback for standalone usage
+
+    class SessionLogger:
+        """Session-aware logger that stores logs in memory."""
+
+        session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
+        log_level: ContextVar[int] = ContextVar("log_level", default=logging.INFO)
+        logs: defaultdict[str | None, deque[str]] = defaultdict(lambda: deque(maxlen=1000))
+
+        @classmethod
+        def get_logger(cls, name: str = __name__) -> logging.Logger:
+            logger = logging.getLogger(name)
+            logger.handlers.clear()
+            logger.filters.clear()
+            logger.setLevel(logging.DEBUG)
+            logger.propagate = False
+
+            def _filter(record: logging.LogRecord) -> bool:
+                record.session_id = cls.session_id.get()
+                return record.levelno >= cls.log_level.get()
+
+            logger.addFilter(_filter)
+
+            mem = logging.Handler()
+            mem.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+            mem.emit = (
+                lambda r: cls.logs[r.session_id].append(mem.format(r)) if r.session_id else None
+            )
+            logger.addHandler(mem)
+            return logger
+
 SENSITIVE_HEADERS = {
     "authorization",
     "cookie",
     "x-forwarded-for",
     "x-envoy-external-address",
 }
-
-
-class SessionLogger:
-    """Session-aware logger that stores logs in memory."""
-
-    session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
-    log_level: ContextVar[int] = ContextVar("log_level", default=logging.INFO)
-    logs: defaultdict[str | None, deque[str]] = defaultdict(lambda: deque(maxlen=1000))
-
-    @classmethod
-    def get_logger(cls, name: str = __name__) -> logging.Logger:
-        logger = logging.getLogger(name)
-        logger.handlers.clear()
-        logger.filters.clear()
-        logger.setLevel(logging.DEBUG)
-        logger.propagate = False
-
-        def _filter(record: logging.LogRecord) -> bool:
-            record.session_id = cls.session_id.get()
-            return record.levelno >= cls.log_level.get()
-
-        logger.addFilter(_filter)
-
-        mem = logging.Handler()
-        mem.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        mem.emit = (
-            lambda r: cls.logs[r.session_id].append(mem.format(r)) if r.session_id else None
-        )
-        logger.addHandler(mem)
-        return logger
 
 
 class Filter:
@@ -82,7 +85,8 @@ class Filter:
     ) -> dict[str, Any]:
         SessionLogger.session_id.set((__metadata__ or {}).get("session_id"))
         SessionLogger.log_level.set(logging.DEBUG)
-        self.logger.debug("Debug filter enabled")
+        self.logger.info("Debug filter inlet called")
+        self.logger.debug("files=%s tools=%s", bool(__files__), bool(__tools__))
         self._inputs = {
             "body": _safe_json(body),
             "__metadata__": _safe_json(__metadata__ or {}),
@@ -98,6 +102,7 @@ class Filter:
         body: dict[str, Any],
         __event_emitter__: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> dict[str, Any]:
+        self.logger.info("Debug filter outlet called")
         if __event_emitter__:
             for name, value in self._inputs.items():
                 await __event_emitter__(
