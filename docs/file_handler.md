@@ -2,9 +2,7 @@
 
 Open WebUI reads uploaded files and injects their contents into the system prompt. Extensions can skip this behavior when they manage files themselves.
 
-## Filters
-
-Declare a module level variable `file_handler = True` to signal that a filter's `inlet` handles file uploads. The filter loader checks this flag and removes the files from the payload after your handler runs:
+Declare a module level variable `file_handler = True` to signal that a filter's `inlet` or tool handles file uploads. The manifold.py checks this flag and removes the files from the payload after your handler runs:
 
 ```python
 # Check if the function has a file_handler variable
@@ -15,6 +13,8 @@ if skip_files and "files" in form_data.get("metadata", {}):
     del form_data["files"]
     del form_data["metadata"]["files"]
 ```
+
+## Filters
 
 Example:
 
@@ -44,9 +44,6 @@ class Tools:
         self.citation = False  # disable auto citations (optional)
         self.valves = self.Valves()
 
-    async def run(self, files: list[str], query: str = ""):
-        # inspect or modify `files` here before returning
-        return {"tags": ["example"]}
 ```
 
 ## Pipes
