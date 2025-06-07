@@ -6,3 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [0.1.0] - 2025-06-07
 - Initial release.
+
+## [0.1.1] - 2025-06-07
+- Use shared `SessionLogger` from OpenAI Responses pipe when available.
+- Added inlet and outlet log statements to ensure output.
