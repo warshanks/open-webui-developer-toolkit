@@ -26,7 +26,6 @@ import os
 import random
 import re
 import sys
-import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
@@ -40,8 +39,7 @@ from pydantic import BaseModel, Field, model_validator
 
 # Open WebUI internals
 from open_webui.models.chats import Chats, ChatModel
-from open_webui.models.models import Model, ModelForm, Models
-from open_webui.internal.db import get_db
+from open_webui.models.models import ModelForm, Models
 from open_webui.utils.misc import get_message_list, get_system_message
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,12 +118,13 @@ class ResponsesBody(BaseModel):
 
     @staticmethod
     def transform_tools(tools: list[dict]) -> list[dict]:
-        """
-        Flattens OpenAI-style tools with a nested 'function' key into the flat format
-        required by the Responses API.
-        
-        Input:  [{"type": "function", "function": {"name": "x", ...}}]
-        Output: [{"type": "function", "name": "x", ...}]
+        """Convert Completions API style tools to Responses format.
+
+        The Completions API nests the actual function specification inside a
+        ``{"function": {...}}`` wrapper.  The Responses API expects those
+        fields to be flattened.  This helper performs that flattening so a list
+        such as ``[{"type": "function", "function": {"name": "x"}}]`` becomes
+        ``[{"type": "function", "name": "x"}]``.
         """
         if not tools:
             return []
@@ -146,9 +145,11 @@ class ResponsesBody(BaseModel):
     def transform_messages(
         completions_messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """
-        Converts completions messages to Responses API format.
-        Excludes system messages (handled by 'instructions').
+        """Translate completion-style messages into Responses input.
+
+        System messages are omitted because the ``instructions`` field carries
+        that information.  Each remaining message is wrapped in the structure
+        expected by the Responses API.
         """
         responses_input = []
         for msg in completions_messages:
@@ -171,9 +172,12 @@ class ResponsesBody(BaseModel):
         completions: "CompletionsBody",
         **extras: Any
     ) -> "ResponsesBody":
-        """
-        Converts CompletionsBody to ResponsesBody, explicitly mapping parameters,
-        and allowing extra parameters to be passed directly.
+        """Create a :class:`ResponsesBody` from a :class:`CompletionsBody`.
+
+        Parameters that share the same meaning are copied directly while any
+        additional keyword arguments are forwarded verbatim.  The helper also
+        extracts the system prompt, flattens tools and converts the message
+        history to the format required by the Responses API.
         """
         system_message = get_system_message(completions.messages)
 
@@ -354,7 +358,12 @@ class Pipe:
         body: Dict[str, Any],
         valves: Pipe.Valves
     ) -> Dict[str, Any]:
-        """Call the Responses API for task requests and return OpenAI-style output."""
+        """Process a task model request via the Responses API.
+
+        Task models (e.g. generating a chat title or tags) return their
+        information as standard Responses output.  This helper performs a single
+        non-streaming call and extracts the plain text from the response items.
+        """
 
         task_body = {
             "model": body.get("model"),
@@ -390,18 +399,12 @@ class Pipe:
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
         tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
     ) -> AsyncGenerator[str, None]:
-        """
-        Streaming multi-turn conversation loop using OpenAI Responses API.
+        """Stream a conversation loop, handling tools and reasoning events.
 
-        Workflow:
-        - The conversation loop runs up to `valves.MAX_TOOL_CALL_LOOPS` times to prevent infinite tool-calling cycles.
-        1) In each iteration, `_stream_sse_events(...)` is called to yield partial LLM outputs as SSE events.
-        2) For each event:
-            - Partial text deltas (`response.output_text.delta`) are yielded to the UI for real-time updates.
-            - Other event types, such as reasoning summaries and tool start/end notifications, are handled and emitted as needed.
-        3) When a 'response.completed' event is received, the final output is parsed to check for any function (tool) calls.
-            - If a function call is present, it is executed, its result is appended to `transformed_body["input"]`, and the loop continues for another turn.
-            - If no function call is present, the conversation is considered complete and the loop exits.
+        The generator yields partial text deltas as they arrive from the
+        Responses API.  Each iteration checks for function calls, executes them
+        if present and then continues until a final answer is produced or the
+        maximum number of tool-call loops is reached.
         """
 
         reasoning_map: Dict[int, str] = {}
@@ -653,12 +656,11 @@ class Pipe:
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
         tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
     ) -> str:
-        """
-        Multi-turn conversation loop without streaming chunks.
+        """Multi-turn conversation loop using blocking requests.
 
-        This mirrors :meth:`_multi_turn_streaming` but issues a full
-        HTTP request each turn and processes the returned JSON before
-        optionally calling tools again.
+        Each iteration performs a standard POST request rather than streaming
+        SSE chunks.  The returned JSON is parsed, optional tool calls are
+        executed and the final text is accumulated before being returned.
         """
 
         tools = tools or {}
@@ -729,9 +731,11 @@ class Pipe:
         api_key: str,
         base_url: str
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """
-        Streams SSE events from OpenAI's /responses endpoint and yields them ASAP.
-        Optimized for low latency.
+        """Yield SSE events from the Responses endpoint as soon as they arrive.
+
+        This low-level helper is tuned for minimal latency when streaming large
+        responses.  It decodes each ``data:`` line and yields the parsed JSON
+        payload immediately.
         """
         # Get or create aiohttp session (aiohttp is used for performance).
         self.session = await self._get_or_create_aiohttp_session()
@@ -781,7 +785,7 @@ class Pipe:
         api_key: str,
         base_url: str,
     ) -> Dict[str, Any]:
-        """Perform a non-streaming POST request to the Responses API."""
+        """Send a blocking request to the Responses API and return the JSON payload."""
         # Get or create aiohttp session (aiohttp is used for performance).
         self.session = await self._get_or_create_aiohttp_session()
 
@@ -796,9 +800,10 @@ class Pipe:
             return await resp.json()
     
     async def _get_or_create_aiohttp_session(self) -> aiohttp.ClientSession:
-        """
-        Get or create a reusable aiohttp.ClientSession with sane defaults.
-        Call once in `pipes()`; keep it for the life of the process.
+        """Return a cached ``aiohttp.ClientSession`` instance.
+
+        The session is created with connection pooling and sensible timeouts on
+        first use and is then reused for the lifetime of the process.
         """
         # Reuse existing session if available and open
         if self.session is not None and not self.session.closed:
@@ -837,9 +842,11 @@ class Pipe:
         calls: list[dict],                      # raw call-items from the LLM
         tools: dict[str, dict[str, Any]],       # name → {callable, …}
     ) -> list[dict]:
-        """
-        Run every function-call in *parallel* and return the synthetic
-        `function_call_output` items the LLM expects next turn.
+        """Execute one or more tool calls and return their outputs.
+
+        Each call specification is looked up in the ``tools`` mapping by name
+        and executed concurrently.  The returned list contains synthetic
+        ``function_call_output`` items suitable for feeding back into the LLM.
         """
         def _make_task(call):
             tool_cfg = tools.get(call["name"])
@@ -876,9 +883,11 @@ class Pipe:
         show_error_log_citation: bool = False,
         done: bool = False,
     ) -> None:
-        """
-        Logs the error and optionally emits data to the front-end UI.
-        If 'citation' is True, also emits the debug logs for the current session_id.
+        """Log an error and optionally surface it to the UI.
+
+        When ``show_error_log_citation`` is true the function also emits the
+        collected debug logs as a citation block so users can inspect what went
+        wrong.
         """
         error_message = str(error_obj)  # If it's an exception, convert to string
         self.logger.error("Error: %s", error_message)
@@ -916,7 +925,12 @@ class Pipe:
         document: str | list[str],
         source_name: str,
     ) -> None:
-        """Emit a citation event to the UI if an emitter is provided."""
+        """Send a citation block to the UI if an emitter is available.
+
+        ``document`` may be either a single string or a list of strings.  The
+        function normalizes this input and emits a ``citation`` event containing
+        the text and its source metadata.
+        """
         if event_emitter is None:
             return
 
@@ -950,7 +964,12 @@ class Pipe:
         usage:   dict[str, Any] | None = None,          # optional usage block
         done:    bool = True,                           # True → final frame
     ) -> None:
-        """Emit a chat:completion event to the UI if possible."""
+        """Emit a ``chat:completion`` event if an emitter is present.
+
+        The ``done`` flag indicates whether this is the final frame for the
+        request.  When ``usage`` information is provided it is forwarded as part
+        of the event data.
+        """
         if event_emitter is None:
             return
 
@@ -975,7 +994,11 @@ class Pipe:
         done: bool = False,
         hidden: bool = False,
     ) -> None:
-        """Emit a status event to the UI if possible."""
+        """Emit a short status update to the UI.
+
+        ``hidden`` allows emitting a transient update that is not shown in the
+        conversation transcript.
+        """
         if event_emitter is None:
             return
         
@@ -993,7 +1016,10 @@ class Pipe:
         *,
         level: Literal["info", "success", "warning", "error"] = "info",
     ) -> None:
-        """Emit a toast notification event to the UI if possible."""
+        """Emit a toast-style notification to the UI.
+
+        The ``level`` argument controls the styling of the notification banner.
+        """
         if event_emitter is None:
             return
 
@@ -1003,9 +1029,10 @@ class Pipe:
 
     # 4.8 Internal Static Helpers
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
-        """
-        Merge user-level valves into default.
-        Ignores any user value set to "INHERIT" (case-insensitive).
+        """Merge user-level valves into the global defaults.
+
+        Any field set to ``"INHERIT"`` (case-insensitive) is ignored so the
+        corresponding global value is preserved.
         """
         if not user_valves:
             return global_valves
@@ -1028,6 +1055,7 @@ class SessionLogger:
 
     @classmethod
     def get_logger(cls, name=__name__):
+        """Return a logger wired to the current ``SessionLogger`` context."""
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.filters.clear()
@@ -1053,6 +1081,11 @@ class SessionLogger:
         logger.addHandler(mem)
 
         return logger
+
+# In-memory store for debug logs keyed by message ID
+logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
+# Context variable tracking the current message being processed
+current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
     
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Framework Integration Helpers (Open WebUI DB operations)
@@ -1126,13 +1159,11 @@ def build_responses_history_by_chat_id_and_message_id(
     *,
     model_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Return a list of messages + any stored pipe items, up to `message_id`.
-    Minimal version:
-      - If chat_id doesn't exist, return empty.
-      - Build chain from root to message_id.
-      - Insert any "pipe" items before the corresponding message.
-      - Wrap each message's content as a single text block.
+    """Return chat history plus any persisted pipe items.
+
+    The function walks the message chain from the chat root to ``message_id``
+    and interleaves stored OpenAI Responses items (function calls, web search
+    results, etc.) in their original order.
     """
 
     # 1. Fetch the chat, exit if not found
@@ -1193,6 +1224,7 @@ def build_responses_history_by_chat_id_and_message_id(
 # 7. General-Purpose Utility Functions (Data transforms & patches)
 # ─────────────────────────────────────────────────────────────────────────────
 def update_usage_totals(total, new):
+    """Recursively sum usage dictionaries."""
     for k, v in new.items():
         if isinstance(v, dict):
             total[k] = update_usage_totals(total.get(k, {}), v)
@@ -1204,6 +1236,7 @@ def update_usage_totals(total, new):
     return total
 
 def patch_model_param_field(model_id: str, field: str, value: Any):
+    """Update a model's parameter field if it differs from ``value``."""
     model = Models.get_model_by_id(model_id)
     if not model:
         return
@@ -1219,11 +1252,12 @@ def patch_model_param_field(model_id: str, field: str, value: Any):
     Models.update_model_by_id(model_id, form)
 
 def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
-    """
-    Removes any <details> tag whose type attribute is in `removal_types`.
-    Example:
-      remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
-      => "Hello "
+    """Strip ``<details>`` blocks matching the specified ``type`` values.
+
+    Example::
+
+        remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
+        # -> "Hello "
     """
     # Safely escape the types in case they have special regex chars
     pattern_types = "|".join(map(re.escape, removal_types))
