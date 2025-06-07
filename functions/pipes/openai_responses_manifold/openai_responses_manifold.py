@@ -5,7 +5,7 @@ author: Justin Kropp
 author_url: https://github.com/jrkropp
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
-version: 0.8.3
+version: 0.8.4
 license: MIT
 requirements: orjson
 """
@@ -685,6 +685,7 @@ class Pipe:
 
             # Clear logs
             logs_by_msg_id.clear()
+            SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
         return final_output.getvalue()
     
@@ -899,17 +900,16 @@ class Pipe:
                 {
                     "type": "chat:completion",
                     "data": {
-                        "error": {
-                            "message": error_message,
-                        },
+                        "error": {"message": error_message},
+                        "done": done,
                     },
                 }
             )
 
             # 2) Optionally emit the citation with logs
             if show_error_log_citation:
-                msg_id = current_session_id.get()
-                logs = logs_by_msg_id.get(msg_id, [])
+                session_id = SessionLogger.session_id.get()
+                logs = SessionLogger.logs.get(session_id, [])
                 if logs:
                     await self._emit_citation(
                         event_emitter,
@@ -918,7 +918,7 @@ class Pipe:
                     )
                 else:
                     self.logger.warning(
-                        "No debug logs found for session_id %s", msg_id
+                        "No debug logs found for session_id %s", session_id
                     )
 
     async def _emit_citation(
