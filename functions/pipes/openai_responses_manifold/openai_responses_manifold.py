@@ -1130,31 +1130,37 @@ def build_responses_history_by_chat_id_and_message_id(
     *,
     model_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Return chat history plus any persisted pipe items.
+    """
+    Reconstructs a chain of messages up to `message_id` (or the currentId)
+    and inserts any items from `openai_responses_pipe.messages[<msg-id>]`
+    before the corresponding message.
 
-    The function walks the message chain from the chat root to ``message_id``
-    and interleaves stored OpenAI Responses items (function calls, web search
-    results, etc.) in their original order.
+    Returns a list of items the OpenAI Responses API expects:
+      [
+        {"type": "function_call", ...},
+        {"type": "message", "role": "assistant", "content": [...]},
+        ...
+      ]
     """
 
-    # 1. Fetch the chat, exit if not found
+    # Precompiled regex for stripping <details> blocks from assistant text
+    DETAILS_RE = re.compile(r"<details\b[^>]*>.*?<\/details>", flags=re.S | re.I)
+
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
         return []
 
     chat_data = chat_model.chat
-
-    # 2. Determine message_id (default: currentId from history)
     if not message_id:
         message_id = chat_data.get("history", {}).get("currentId")
 
-    # 3. Gather message chain (root → message_id)
+    # Gather chain of messages from root → message_id
     hist_dict = chat_data.get("history", {}).get("messages", {})
     chain = get_message_list(hist_dict, message_id)
     if not chain:
         return []
 
-    # 4. Retrieve any pipe messages
+    # Shortcut to any stored extras
     pipe_messages = (
         chat_data
         .get("openai_responses_pipe", {})
@@ -1163,30 +1169,62 @@ def build_responses_history_by_chat_id_and_message_id(
 
     final: List[Dict[str, Any]] = []
 
-    # 5. For each message in the chain
     for msg in chain:
         msg_id = msg["id"]
 
-        # 5a. Insert openai_responses_pipe items (function calls, etc.) first if they exist
+        # 1) Pipe items (function_call, function_call_output, etc.) go first
         bucket = pipe_messages.get(msg_id, {})
+        extras = []
         if bucket and (not model_id or bucket.get("model") == model_id):
             extras = bucket.get("items", [])
+        if extras:
             final.extend(extras)
 
-        # 5b. Add the main message
+        # 2) Then the main message as type=message
         role = msg.get("role", "assistant")
-        text_content = msg.get("content", "")
+        raw_content = msg.get("content", "")  # could be str or list
 
-        # Build the final message structure
+        # Normalize to a list
+        if isinstance(raw_content, str):
+            raw_content = [raw_content]
+
+        content_blocks = []
+        for part in raw_content:
+            # If it's a simple string, treat it as text
+            if isinstance(part, str):
+                text = part.strip()
+                if role == "assistant":
+                    text = DETAILS_RE.sub("", text).strip()
+                if text:
+                    content_blocks.append({
+                        "type": "input_text" if role == "user" else "output_text",
+                        "text": text
+                    })
+            # If it's a dict, you can detect e.g. images/files/etc.
+            elif isinstance(part, dict):
+                # Example: handle images
+                if part.get("type") in ("image", "input_image"):
+                    content_blocks.append({
+                        "type": "input_image" if role == "user" else "output_image",
+                        "image_url": part.get("url", "")
+                    })
+                else:
+                    # fallback to text
+                    text_str = part.get("text") or part.get("content", "")
+                    text_str = text_str.strip()
+                    if role == "assistant":
+                        text_str = remove_details_tags_by_type(text_str, ["reasoning","{__name__}.reasoning"]) # Open WebUI uses reasoning. This function appends the function name to differentiate it.
+                    if text_str:
+                        content_blocks.append({
+                            "type": "input_text" if role == "user" else "output_text",
+                            "text": text_str
+                        })
+            # else: skip unknown parts
+
         final.append({
             "type": "message",
             "role": role,
-            "content": [
-                {
-                    "type": "input_text" if role == "user" else "output_text",
-                    "text": text_content.strip()
-                }
-            ]
+            "content": content_blocks
         })
 
     return final
