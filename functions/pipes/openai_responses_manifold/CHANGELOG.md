@@ -4,6 +4,10 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2025-06-07
+- Fixed missing done flag in `_emit_error` causing hanging requests.
+- Emitted log citations using new `SessionLogger` store.
+
 ## [0.8.3] - 2025-06-06
 - Refactored Responses API integration and introduced typed request models.
 - Improved message and tool transformation.
