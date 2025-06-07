@@ -120,28 +120,67 @@ class ResponsesBody(BaseModel):
         extra = "allow"
 
     @staticmethod
-    def transform_tools(tools: list[dict]) -> list[dict]:
-        """Convert Completions API style tools to Responses format.
+    def transform_tools(
+        tools: list[dict] | dict[str, Any],
+        strict: bool = False,
+    ) -> list[dict]:
+        """Normalize tool definitions for the Responses API.
 
-        The Completions API nests the actual function specification inside a
-        ``{"function": {...}}`` wrapper.  The Responses API expects those
-        fields to be flattened.  This helper performs that flattening so a list
-        such as ``[{"type": "function", "function": {"name": "x"}}]`` becomes
-        ``[{"type": "function", "name": "x"}]``.
+        Parameters
+        ----------
+        tools:
+            Mapping of tool definitions or a list in the format used by the
+            Completions API.
+        strict:
+            When ``True`` the returned schema follows OpenAI's strict mode
+            guidance by disabling additional properties, requiring all fields
+            and allowing ``null`` for optional ones.
         """
+
         if not tools:
             return []
-        result = []
-        for tool in tools:
-            if tool.get("type") == "function" and "function" in tool:
-                # Start with the 'type' field from the original tool
-                flattened = {"type": tool["type"]}
-                # Add all content from the nested function object
+
+        def normalize_tool(tool: dict) -> dict:
+            if "function" in tool:
+                flattened = {"type": "function"}
                 flattened.update(tool["function"])
-                result.append(flattened)
-            else:
-                # Keep any tools that don't need flattening
-                result.append(tool)
+                return flattened
+            if "spec" in tool:
+                spec = tool["spec"] or {}
+                return {
+                    "type": "function",
+                    "name": spec.get("name", ""),
+                    "description": spec.get("description", ""),
+                    "parameters": spec.get("parameters", {}),
+                }
+            return tool
+
+        def apply_strict(schema: dict) -> dict:
+            params = schema.get("parameters", {})
+            properties = params.get("properties", {})
+            required_fields = set(params.get("required", []))
+
+            for prop, definition in properties.items():
+                if prop not in required_fields:
+                    f_type = definition.get("type")
+                    if isinstance(f_type, list):
+                        if "null" not in f_type:
+                            definition["type"].append("null")
+                    elif f_type is not None:
+                        definition["type"] = [f_type, "null"]
+
+            params["required"] = list(properties.keys())
+            params["additionalProperties"] = False
+            schema["parameters"] = params
+            schema["strict"] = True
+            return schema
+
+        tools_iter = tools.values() if isinstance(tools, dict) else tools
+        result = [normalize_tool(t) for t in tools_iter]
+
+        if strict:
+            result = [apply_strict(t) for t in result]
+
         return result
 
     @staticmethod

@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Fixed missing done flag in `_emit_error` causing hanging requests.
 - Emitted log citations using new `SessionLogger` store.
 - Simplified progress status messages.
+- Redesigned `transform_tools` with strict mode and WebUI tool support.
+- Clarified `transform_tools` internals and documented strict mode.
 
 ## [0.8.3] - 2025-06-06
 - Refactored Responses API integration and introduced typed request models.
