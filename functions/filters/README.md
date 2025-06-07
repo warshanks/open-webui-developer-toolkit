@@ -48,3 +48,4 @@ See `external/FILTER_GUIDE.md` for deeper middleware notes and additional exampl
 - `web_search_toggle_filter.py` – enable web search with a toggle.
 - `create_image_filter.py` – inject the `image_generation` tool with configurable `SIZE` and `QUALITY` valves.
 - `reason_filter.py` – temporarily route a request to another model.
+- `debug_toggle_filter.py` – capture logs and inputs for the current session.
