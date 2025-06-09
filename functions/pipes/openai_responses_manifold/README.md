@@ -23,7 +23,7 @@
 | Computer use tool | 🕒 Backlog | 2025-06-03 | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
 | Live conversational voice via talk feature | 🕒 Backlog | 2025-06-03 | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
 | Dynamic chat titles | 🕒 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
-| MCP tool support | 🕒 Backlog | 2025-06-07 | Enable remote MCP servers via the Responses API. [Learn more](https://platform.openai.com/docs/guides/tools-remote-mcp) |
+| MCP tool support | 🕒 Backlog | 2025-06-09 | Enable remote MCP servers via the Responses API. [Learn more](https://platform.openai.com/docs/guides/tools-remote-mcp) |
 
 ### Quality of life improvements
 - **Pseudo-models**
