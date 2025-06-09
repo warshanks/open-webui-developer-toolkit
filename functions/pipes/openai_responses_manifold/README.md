@@ -1,11 +1,11 @@
 # OpenAI Responses Manifold
 | Visible reasoning summariesIntegrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
 
-⚠️ **Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.7.0 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
 1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
-2. Activate the pipe and configure the valves for your environment.
+2. Enable the pipe and configure the valves for your environment.
 
 ## Features
 | Feature | Status | Last updated | Notes |
@@ -26,11 +26,8 @@
 | MCP tool support | 🕒 Backlog | 2025-06-09 | Enable remote MCP servers via the Responses API. [Learn more](https://platform.openai.com/docs/guides/tools-remote-mcp) |
 
 ### Other Features
-- **Pseudo-models**
-  - `o3-mini-high` – alias for `o3-mini` with high reasoning effort.
-  - `o4-mini-high` – alias for `o4-mini` with high reasoning effort.
-- **Debug logging**
-  - Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
+- **Pseudo-models**: `o3-mini-high` / `o4-mini-high` – alias for `o3-mini` / `o4-mini` with high reasoning effort.
+- **Debug logging**: Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
