@@ -24,16 +24,16 @@ Each subdirectory has a small README explaining its contents.
 This repository uses three primary branches:
 
 1. **`main`**
-   Production-ready and stable code. Updates only arrive here after thorough testing on the `alpha-preview` branch.
+   Production-ready and stable code.
 
 2. **`alpha-preview`**
-   The next planned release. More stable than `development`, this branch serves as a staging area to validate features before they reach production (`main`).
+   Next release candidate. Tested, pre-production code.
 
 3. **`development`**
-   Active development, experiments, and new features happen here. This branch is frequently updated and may contain unstable code.
+   Active development, experimentation, and potentially unstable changes.
 
   ```
-  development → alpha-preview → main
+   development (continuous changes) → alpha-preview (2–3 weeks testing) → main (stable)
   ```
 
 ## Installing Toolkit Locally (for developers)
