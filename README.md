@@ -15,9 +15,9 @@ Each subdirectory has a small README explaining its contents.
 
 | Name | Description | Links |
 | --- | --- | --- |
-| Input Inspector | Shows pipe input arguments as citations for debugging. | [Production](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/input_inspector)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/input_inspector)<br>[Development](https://github.com/jrkropp/open-webui-developer-toolkit/tree/development/functions/pipes/input_inspector) |
-| OpenAI Responses Manifold | OpenAI Reasponse API pipe. | [Production](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/openai_responses_manifold)<br>[Development](https://github.com/jrkropp/open-webui-developer-toolkit/tree/development/functions/pipes/openai_responses_manifold) |
-| Reason Toggle Filter | Filter toggle that temporarily routes a request to another model. | [Production](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/filters/reason_toggle_filter)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/filters/reason_toggle_filter)<br>[Development](https://github.com/jrkropp/open-webui-developer-toolkit/tree/development/functions/filters/reason_toggle_filter) |
+| Input Inspector | Shows pipe input arguments as citations for debugging. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/input_inspector)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/input_inspector) |
+| OpenAI Responses Manifold | OpenAI Reasponse API pipe. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/openai_responses_manifold) |
+| Reason Toggle Filter | Filter toggle that temporarily routes a request to another model. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/filters/reason_toggle_filter)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/filters/reason_toggle_filter) |
 
 
 ## Branching Model
