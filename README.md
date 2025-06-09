@@ -36,13 +36,17 @@ This repository uses three primary branches:
    development (continuous changes) → alpha-preview (2–3 weeks testing) → main (stable)
   ```
 
-## Installing Toolkit Locally (for developers)
+## Local Development Setup (Developers Only)
+
+For local development and testing:
+
 ```bash
-# local development
 pip install -e '.[dev]'
 nox -s lint tests
 ```
 
-Installing with the `dev` extras provides `ruff`, `pytest` and `nox`. The `nox` sessions reuse your current Python environment and run the test suite with coverage enabled.
+The `dev` extras include developer tools (`ruff`, `pytest`, and `nox`) used for linting and testing.
 
-The `external/` directory mirrors a read-only version of upstream Open WebUI repo for reference. Handy for local testing.
+**Note:**
+
+* The `external/` directory includes a read-only copy of the upstream Open WebUI repository for local reference and testing convenience.
