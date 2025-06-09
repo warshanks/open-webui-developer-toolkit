@@ -4,7 +4,7 @@
 ⚠️ **Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
-1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin ▸ Pipelines**.
+1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
 2. Activate the pipe and configure the valves for your environment.
 
 ## Features
@@ -25,7 +25,7 @@
 | Dynamic chat titles | 🕒 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
 | MCP tool support | 🕒 Backlog | 2025-06-09 | Enable remote MCP servers via the Responses API. [Learn more](https://platform.openai.com/docs/guides/tools-remote-mcp) |
 
-### Quality of life improvements
+### Other Features
 - **Pseudo-models**
   - `o3-mini-high` – alias for `o3-mini` with high reasoning effort.
   - `o4-mini-high` – alias for `o4-mini` with high reasoning effort.
@@ -45,8 +45,6 @@ The manifold should work with any model that supports the responses API. Confirm
 # How it Works / Design Architecture
 ## Core concepts
 - **Responses API endpoint** – uses the OpenAI Responses API endpoint than completions, enabling features like visible reasoning summaries and built-in tools (web search, etc..).
-- **Valves configuration** – each setting is exposed through valves, so you can tweak behavior without touching code.
-- **History reconstruction** – previous tool calls are replayed when creating new requests, ensuring continuity.
 - **Persistent tool results** – tool outputs are stored alongside messages, making them available on later turns.
 - **Encrypted reasoning tokens** – specialized reasoning tokens (`encrypted_content`) are persisted to optimize follow‑ups.
 
