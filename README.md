@@ -19,18 +19,22 @@ Each subdirectory has a small README explaining its contents.
 | OpenAI Responses Manifold | OpenAI Reasponse API pipe. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold) (main)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/openai_responses_manifold) (alpha-preview) |
 | Reason Toggle Filter | Filter toggle that temporarily routes a request to another model. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/filters/reason_toggle_filter) (main) <br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/filters/reason_toggle_filter) (alpha-preview) |
 
-
 ## Branching Model
 
-This repo uses three long‑lived branches:
+This repository uses three primary branches:
 
-1. **`development`** – active development and experiments; may break.
-2. **`alpha-preview`** – next release candidate. More stable than `development`.
-3. **`main`** – production‑ready code pulled from `alpha-preview`.
+1. **`main`**
+   Production-ready and stable code. Updates only arrive here after thorough testing on the `alpha-preview` branch.
 
-Feature work typically happens in short‑lived branches, merged into `development` via pull requests.
+2. **`alpha-preview`**
+   The next planned release. More stable than `development`, this branch serves as a staging area to validate features before they reach production (`main`).
 
-Changes flow from `development` → `alpha-preview` → `main` after testing.
+3. **`development`**
+   Active development, experiments, and new features happen here. This branch is frequently updated and may contain unstable code.
+
+  ```
+  development → alpha-preview → main
+  ```
 
 ## Installing Toolkit Locally (for developers)
 ```bash
