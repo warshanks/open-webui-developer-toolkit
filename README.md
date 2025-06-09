@@ -1,6 +1,6 @@
 # Open-WebUI Developer Toolkit
 
-A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](https://github.com/open-webui/open-webui). Every module lives in its own folder so you can copy it directly into a WebUI instance.
+A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](https://github.com/open-webui/open-webui).
 
 ## Repository Layout
 
