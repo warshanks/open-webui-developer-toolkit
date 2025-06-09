@@ -1,5 +1,8 @@
 # OpenAI Responses Manifold
-Integrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
+**Enables advanced OpenAI features (function calling, tool use, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
+
+> **Author:** [Justin Kropp](https://github.com/jrkropp)  
+> **License:** MIT
 
 ⚠️ **Version 0.7.0 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
@@ -8,22 +11,26 @@ Integrates OpenAI's Responses API into Open WebUI, enabling features such as bui
 2. Enable the pipe and configure the valves for your environment.
 
 ## Features
+
 | Feature | Status | Last updated | Notes |
 | --- | --- | --- | --- |
 | Native function calling | ✅ GA | 2025-06-04 | Automatically enabled for supported models. |
 | Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
 | Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
-| Optimized token caching | ✅ GA | 2025-06-03 | Saves ~50–75 % tokens on tuned models. |
+| Optimized token caching | ✅ GA | 2025-06-03 | Save up to ~50–75 % on supported models. |
 | Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
-| Task model support | ✅ GA | 2025-06-06 | Task models fully supported via the Responses API. |
+| Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
+| Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
+| Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
-| Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
-| File upload / file search tool integration | 🕒 Backlog | 2025-06-03 | Roadmap item. |
-| Code interpreter tool | 🕒 Backlog | 2025-06-03 | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
-| Computer use tool | 🕒 Backlog | 2025-06-03 | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice via talk feature | 🕒 Backlog | 2025-06-03 | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
-| Dynamic chat titles | 🕒 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
-| MCP tool support | 🕒 Backlog | 2025-06-09 | Enable remote MCP servers via the Responses API. [Learn more](https://platform.openai.com/docs/guides/tools-remote-mcp) |
+| Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
+| File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
+| Code interpreter tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-code-interpreter) |
+| Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
+| Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
+| Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
+| MCP tool support | 🕒 Backlog | 2025-06-09 | Remote MCP servers via Responses API. [More info](https://platform.openai.com/docs/guides/tools-remote-mcp) |
+
 
 ### Other Features
 - **Pseudo-models**: `o3-mini-high` / `o4-mini-high` – alias for `o3-mini` / `o4-mini` with high reasoning effort.
