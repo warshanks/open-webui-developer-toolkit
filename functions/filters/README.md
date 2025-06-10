@@ -39,7 +39,7 @@ Only the methods you implement are called. `priority` controls execution order w
 **Inlet Body Example**:
 
 ```json
-{
+body = {
   "stream": true,
   "model": "openai_responses.o4-mini-high",
   "messages": [
@@ -68,7 +68,7 @@ Only the methods you implement are called. `priority` controls execution order w
 **Outlet Body Example**:
 
 ```json
-{
+body = {
   "model": "openai_responses.gpt-4o",
   "messages": [
     {
