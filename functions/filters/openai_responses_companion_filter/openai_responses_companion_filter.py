@@ -1,5 +1,5 @@
 """
-title: OpenAI Responses Companion
+title: OpenAI Responses Companion Filter
 id: openai_responses_companion_filter
 description: Handles file uploads for the OpenAI Responses manifold.
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git

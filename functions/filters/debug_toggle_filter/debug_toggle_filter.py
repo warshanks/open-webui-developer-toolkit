@@ -78,14 +78,22 @@ class Filter:
         self,
         body: dict[str, Any],
         __metadata__: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        SessionLogger.session_id.set((__metadata__ or {}).get("session_id"))
+        SessionLogger.log_level.set(logging.DEBUG)
+        self.logger.info("Debug filter inlet called")
+
+    async def outlet(
+        self,
+        body: dict[str, Any],
+        __event_emitter__: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
+        __metadata__: Optional[dict[str, Any]] = None,
         __user__: Optional[dict[str, Any]] = None,
         __request__: Optional[Request] = None,
         __files__: Optional[list[dict[str, Any]]] = None,
         __tools__: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        SessionLogger.session_id.set((__metadata__ or {}).get("session_id"))
-        SessionLogger.log_level.set(logging.DEBUG)
-        self.logger.info("Debug filter inlet called")
+        
         self.logger.debug("files=%s tools=%s", bool(__files__), bool(__tools__))
         self._inputs = {
             "body": _safe_json(body),
@@ -95,13 +103,7 @@ class Filter:
             "__files__": _safe_json(__files__ or []),
             "__tools__": _safe_json(__tools__ or {}),
         }
-        return body
 
-    async def outlet(
-        self,
-        body: dict[str, Any],
-        __event_emitter__: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
-    ) -> dict[str, Any]:
         self.logger.info("Debug filter outlet called")
         if __event_emitter__:
             for name, value in self._inputs.items():
@@ -138,10 +140,8 @@ class Filter:
                         },
                     }
                 )
-            SessionLogger.logs.pop(session_id, None)
         SessionLogger.log_level.set(logging.INFO)
         return body
-
 
 def _sanitize_request(request: Request) -> dict[str, Any]:
     headers = {

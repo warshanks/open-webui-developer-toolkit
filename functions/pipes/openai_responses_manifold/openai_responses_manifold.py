@@ -3,7 +3,8 @@ title: OpenAI Responses API Manifold
 id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
-git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
+funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
+git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
 version: 0.8.4
@@ -348,6 +349,9 @@ class Pipe:
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
             return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
+        
+        # Log instructions
+        self.logger.info("Instructions: %s", responses_body.instructions)
 
         # Override input, if chat_id and message_id are provided.
         # Uses specialized helper which rebuilds input history and injects previously persisted OpenAI responses output items (e.g. function_call, encrypted reasoning tokens, etc.) into the input history.

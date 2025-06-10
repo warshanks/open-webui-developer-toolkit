@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Any, AsyncGenerator, Awaitable, Callable
+from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +47,8 @@ class Pipe:
         __files__: list[dict[str, Any]] | None = None,
         __metadata__: dict[str, Any] | None = None,
         __tools__: dict[str, Any] | None = None,
+        __task__: Optional[dict[str, Any]] = None,
+        __task_body__: Optional[dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None] | str:
         """Send citation blocks for each argument and return a short message."""
 
@@ -77,6 +79,8 @@ class Pipe:
         await emit("__request__", _sanitize_request(__request__, self.valves.REDACT_REQUEST))
         await emit("__files__", __files__ or [])
         await emit("__tools__", __tools__ or {})
+        if __task__:
+            await emit("__task__", __task_body__)
 
         return "Input inspection complete. See citations for details."
 
