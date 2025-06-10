@@ -14,13 +14,6 @@ from typing import Optional
 
 
 class Filter:
-    """Companion filter for OpenAI Responses manifold.
-
-    This filter disables the built-in file handler and will later upload files
-    using the OpenAI Responses API. Currently it only returns the request body
-    unchanged.
-    """
-
     class Valves(BaseModel):
         """Configurable settings for file upload handling."""
         pass
@@ -39,7 +32,7 @@ class Filter:
         Process files before they reach the manifold.
         """
 
-        
+
         return body
 
     async def outlet(self, body: dict) -> dict:

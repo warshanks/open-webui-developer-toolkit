@@ -70,6 +70,7 @@ class CompletionsBody(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None                            # tools to use for function calling
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None     # reasoning effort for o-series models
     parallel_tool_calls: Optional[bool] = None                              # allow parallel tool execution
+    user: Optional[str] = None                                              # user ID for the request.  Recommended to improve caching hits.
     seed: Optional[int] = None                                              # deterministic sampling
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -114,6 +115,7 @@ class ResponsesBody(BaseModel):
     truncation: Optional[Literal["auto", "disabled"]] = None
     reasoning: Optional[Dict[str, Any]] = None    # {"effort":"high", ...}
     parallel_tool_calls: Optional[bool] = True
+    user: Optional[str] = None                # user ID for the request.  Recommended to improve caching hits.
     tool_choice: Optional[Literal["none", "auto", "required"]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     include: Optional[List[str]] = None           # extra output keys
@@ -205,17 +207,24 @@ class ResponsesBody(BaseModel):
         """
         responses_input = []
         for msg in completions_messages:
-            role = msg.get("role", "assistant") # typically "user", "assistant", or "system"; default to "assistant" if not specified
+            role = msg.get("role", "assistant")
             if role == "system":
-                continue  # Skip system messages since they are included in the `instructions` field
-            text = msg.get("content", "").strip()
+                continue  # Skip system messages since they're in instructions
             responses_input.append({
                 "type": "message",
                 "role": role,
-                "content": [{
-                    "type": "input_text" if role == "user" else "output_text",
-                    "text": text,
-                }],
+                "content": [
+                    # Add text content as input_text (if user) or output_text (if assistant)
+                    *([{
+                        "type": "input_text" if role == "user" else "output_text",
+                        "text": msg.get("content", "")
+                    }] if msg.get("content", "") else []),
+                    # Add each image as its own entry
+                    *([{
+                        "type": "input_image" if role == "user" else "output_image",
+                        "image_url": file["url"] # Url or base64 encoded image data
+                    } for file in msg.get("files", []) if file.get("type") == "image" and file.get("url")])
+                ],
             })
         return responses_input
 
@@ -240,11 +249,9 @@ class ResponsesBody(BaseModel):
             top_p=completions.top_p,
             instructions=system_message.get("content", "") if system_message else "",
             input=ResponsesBody.transform_messages(completions.messages),
-            tools=ResponsesBody.transform_tools(completions.tools) if completions.tools else None,
-            reasoning=(
-                {"effort": completions.reasoning_effort} 
-                if completions.reasoning_effort else None
-            ),
+            **({"tools": ResponsesBody.transform_tools(completions.tools)} if completions.tools else {}),
+            **({"user":  completions.user} if getattr(completions, "user", None) else {}),
+            **({"reasoning": {"effort": completions.reasoning_effort}} if completions.reasoning_effort else {}),
             **{k: v for k, v in extras.items() if v is not None}
         )
 
@@ -291,6 +298,10 @@ class Pipe:
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
+        ANONYMIZE_USER_ID: bool = Field(
+            default=True,
+            description="Use anonymous user identifiers (UUID) instead of user email addresses in OpenAI API requests. Passing consistent user identifiers improves cache efficiency. Enabled by default for enhanced privacy.",
+        ),
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
@@ -336,6 +347,7 @@ class Pipe:
         """
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         full_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
+        user_identifier = __user__["id"] if valves.ANONYMIZE_USER_ID else __user__["email"] # User identifier for OpenAI API requests (required for cache routing). Defaults to user ID, or email if anonymization is disabled.  
 
         # Set up session logger with session_id and log level
         SessionLogger.session_id.set(__metadata__.get("session_id", None))
@@ -343,7 +355,7 @@ class Pipe:
 
         # Transform request body (Completions API -> Responses API). Populates with default values.
         completions_body = CompletionsBody.model_validate(body)
-        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto") # supports passing custom params (e.g., truncation) which are injected into ResponsesBody
+        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto", user=user_identifier) # supports passing custom params (e.g., truncation) which are injected into ResponsesBody
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
@@ -351,7 +363,7 @@ class Pipe:
             return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
         # Log instructions
-        self.logger.info("Instructions: %s", responses_body.instructions)
+        # self.logger.info("Instructions: %s", responses_body.instructions)
 
         # Override input, if chat_id and message_id are provided.
         # Uses specialized helper which rebuilds input history and injects previously persisted OpenAI responses output items (e.g. function_call, encrypted reasoning tokens, etc.) into the input history.
@@ -361,12 +373,12 @@ class Pipe:
                 __metadata__.get("message_id"),
                 model_id=full_model_id,
             )
-            self.logger.debug("Built input history for ResponsesBody: %s", json.dumps(responses_body.input, indent=2, ensure_ascii=False))
+            # self.logger.debug("Built input history for ResponsesBody: %s", json.dumps(responses_body.input, indent=2, ensure_ascii=False))
 
         # Override tools, if __tools__ provided
         if __tools__:
             responses_body.tools = ResponsesBody.transform_tools(__tools__, strict=True) # __tools__ is always provided if one or more tools are enabled in the UI (unlike body["tools"] which is only present when function calling is enabled)
-            self.logger.debug("Transformed tools: %s", json.dumps(responses_body.tools, indent=2, ensure_ascii=False))
+            # self.logger.debug("Transformed tools: %s", json.dumps(responses_body.tools, indent=2, ensure_ascii=False))
 
         # Add web_search tool, if supported and enabled
         if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
@@ -402,6 +414,10 @@ class Pipe:
         if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
+
+
+        # Log the transformed request body
+        self.logger.debug("Transformed ResponsesBody: %s", json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False))
             
         # Send to OpenAI Responses API
         if responses_body.stream:
@@ -1141,7 +1157,7 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
             "messages": {
             "<message_id>": {
                 "model": "o4-mini",          # stamped once – avoids per-item duplication
-                "created_at": 1719922512,    # unix-seconds the root message arrived
+                "timestamp": 1719922512,    # unix-seconds the root message arrived
 
                 "items": [ /* raw output items in arrival order */ ]
             }
@@ -1170,12 +1186,12 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
         message_id,
         {
             "model": model_id,
-            "created_at": int(datetime.datetime.utcnow().timestamp()),
+            "timestamp": int(datetime.datetime.utcnow().timestamp()),
             "items": [],
         },
     )
     bucket.setdefault("model", model_id)
-    bucket.setdefault("created_at", int(datetime.datetime.utcnow().timestamp()))
+    bucket.setdefault("timestamp", int(datetime.datetime.utcnow().timestamp()))
     bucket.setdefault("items", [])
     bucket["items"].extend(items)
 
@@ -1199,92 +1215,82 @@ def build_responses_history_by_chat_id_and_message_id(
         ...
       ]
     """
-
-    # Precompiled regex for stripping <details> blocks from assistant text
-    DETAILS_RE = re.compile(r"<details\b[^>]*>.*?<\/details>", flags=re.S | re.I)
-
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
-        return []
+        return [] # No previous history found, return empty history
 
     chat_data = chat_model.chat
     if not message_id:
         message_id = chat_data.get("history", {}).get("currentId")
 
-    # Gather chain of messages from root → message_id
-    hist_dict = chat_data.get("history", {}).get("messages", {})
-    chain = get_message_list(hist_dict, message_id)
-    if not chain:
-        return []
+    messages_dict = chat_data.get("history", {}).get("messages", {})
+    pipe_messages = chat_data.get("openai_responses_pipe", {}).get("messages", {})
 
-    # Shortcut to any stored extras
-    pipe_messages = (
-        chat_data
-        .get("openai_responses_pipe", {})
-        .get("messages", {})
-    )
+    # Walk through the full chain of messages in order
+    message_chain = get_message_list(messages_dict, message_id)
 
-    final: List[Dict[str, Any]] = []
+    # Filter out the current [empty] assistant response.
+    if message_chain and message_chain[-1]["role"] == "assistant":
+        message_chain = message_chain[:-1]
 
-    for msg in chain:
-        msg_id = msg["id"]
+    # Build one flat timeline of all events
+    timeline = []
 
-        # 1) Pipe items (function_call, function_call_output, etc.) go first
-        bucket = pipe_messages.get(msg_id, {})
-        extras = []
-        if bucket and (not model_id or bucket.get("model") == model_id):
-            extras = bucket.get("items", [])
-        if extras:
-            final.extend(extras)
+    # Regex to strip <details> from assistant messages
+    DETAILS_RE = re.compile(r"<details\b[^>]*>.*?</details>", flags=re.S | re.I)
 
-        # 2) Then the main message as type=message
+    for msg in message_chain:
+        msg_timestamp = msg.get("timestamp", 0)
         role = msg.get("role", "assistant")
-        raw_content = msg.get("content", "")  # could be str or list
+        content_text = (msg.get("content") or "")
 
-        # Normalize to a list
-        if isinstance(raw_content, str):
-            raw_content = [raw_content]
+        # Remove <details> blocks (reasoning summaries, etc..) for assistant
+        if role == "assistant":
+            content_text = DETAILS_RE.sub("", content_text).strip()
 
-        content_blocks = []
-        for part in raw_content:
-            # If it's a simple string, treat it as text
-            if isinstance(part, str):
-                text = part.strip()
-                if role == "assistant":
-                    text = DETAILS_RE.sub("", text).strip()
-                if text:
-                    content_blocks.append({
-                        "type": "input_text" if role == "user" else "output_text",
-                        "text": text
-                    })
-            # If it's a dict, you can detect e.g. images/files/etc.
-            elif isinstance(part, dict):
-                # Example: handle images
-                if part.get("type") in ("image", "input_image"):
-                    content_blocks.append({
-                        "type": "input_image" if role == "user" else "output_image",
-                        "image_url": part.get("url", "")
-                    })
-                else:
-                    # fallback to text
-                    text_str = part.get("text") or part.get("content", "")
-                    text_str = text_str.strip()
-                    if role == "assistant":
-                        text_str = remove_details_tags_by_type(text_str, ["reasoning","{__name__}.reasoning"]) # Open WebUI uses reasoning. This function appends the function name to differentiate it.
-                    if text_str:
-                        content_blocks.append({
-                            "type": "input_text" if role == "user" else "output_text",
-                            "text": text_str
-                        })
-            # else: skip unknown parts
+        # Add the structured message to the timeline
+        timeline.append({
+            "timestamp": msg_timestamp,  # Temporary field used for sorting; removed later
+            "type": "message",           # Explicitly denote this timeline entry as a message event (recommended by OpenAI docs)
+            "role": role,                # Indicates the sender's role: "user" or "assistant"
+            "content": [
+                # Add text content (if non-empty)
+                *(
+                    [{"type": "input_text" if role == "user" else "output_text", "text": content_text}]
+                    if content_text else []
+                ),
 
-        final.append({
-            "type": "message",
-            "role": role,
-            "content": content_blocks
+                # Add image(s) if type='image' and url is present.  Url may be a URL or base64-encoded data.
+                *(
+                    [
+                        {
+                            "type": "input_image" if role == "user" else "output_image",
+                            "image_url": file["url"], # URL or base64-encoded data
+                        }
+                        for file in msg.get("files", [])
+                        if file.get("type") == "image" and file.get("url")
+                    ]
+                ),
+            ]
         })
 
-    return final
+        # Also add any pipe items (extras) linked to this message
+        extras_bucket = pipe_messages.get(msg["id"], {})
+        extras = extras_bucket.get("items", [])
+        for extra in extras:
+            timeline.append({
+                "timestamp": extra.get("timestamp", msg_timestamp),
+                **extra  # all fields from the pipe item
+            })
+
+    # Sort everything by timestamp so history matches reality
+    timeline.sort(key=lambda event: event["timestamp"])
+
+    # Remove 'timestamp' key before returning to API (for cleanliness)
+    return [
+        {k: v for k, v in event.items() if k != "timestamp"}
+        for event in timeline
+    ]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
