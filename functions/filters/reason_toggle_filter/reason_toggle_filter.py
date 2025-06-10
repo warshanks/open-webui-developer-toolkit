@@ -52,23 +52,6 @@ class Filter:
         if effort != "not set":
             body["reasoning_effort"] = effort
 
-        # Emit the current inlet body as a citation event (useful for debugging)
-        await __event_emitter__(
-            {
-                "type": "citation",
-                "data": {
-                    "document": [json.dumps(body, indent=2)],
-                    "metadata": [
-                        {
-                            "date_accessed": datetime.datetime.utcnow().isoformat(),
-                            "source": "inlet",
-                        }
-                    ],
-                    "source": {"name": "inlet"},
-                },
-            }
-        )
-
         # Log inlet state for easier debugging and tracing
         logger.warning("INLET body state:\n%s", json.dumps(body, indent=2))
 
