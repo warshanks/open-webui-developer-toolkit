@@ -4,7 +4,7 @@ id: reason_filter
 description: Think before responding.
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
 required_open_webui_version: 0.6.10
-version: 0.3.0
+version: 0.2.0
 """
 
 from __future__ import annotations
@@ -29,33 +29,6 @@ class Filter:
             body["reasoning_effort"] = effort
         return body
 
-    async def outlet(
-        self,
-        body: dict,
-        __metadata__: dict | None = None,
-    ) -> dict:
-        """Persist the rerouted model so the UI reflects it."""
-
-        chat_id = (__metadata__ or {}).get("chat_id")
-        message_id = (__metadata__ or {}).get("message_id")
-
-        if chat_id and message_id:
-            try:
-                from open_webui.models.chats import Chats
-
-                Chats.upsert_message_to_chat_by_id_and_message_id(
-                    chat_id,
-                    message_id,
-                    {"model": self.valves.MODEL},
-                )
-            except Exception:
-                pass
-
-        messages = body.get("messages")
-        if isinstance(messages, list) and messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, dict):
-                last_msg["model"] = self.valves.MODEL
-                last_msg.setdefault("modelName", self.valves.MODEL)
-
+    async def outlet(self, body: dict) -> dict:
+        # TODO: Figure out how to update the UI / model in DB so user can see that it used a different model.
         return body
