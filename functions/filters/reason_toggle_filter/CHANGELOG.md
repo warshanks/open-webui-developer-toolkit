@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ## [0.3.1] - 2025-06-10
 - Update metadata with rerouted model information.
 - Remove unused event emitter logic for model switching.
+- Fix model metadata not updating when valve changes.
 
 ## [0.1.0] - 2025-06-07
 - Initial release.
