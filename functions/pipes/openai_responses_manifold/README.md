@@ -45,6 +45,7 @@ The manifold should work with any model that supports the responses API. Confirm
 | gpt-4.1 | ✅ |
 | gpt-4o | ✅ |
 | o3 | ✅ |
+| o3-pro | ✅ |
 
 # How it Works / Design Architecture
 ## Core concepts
