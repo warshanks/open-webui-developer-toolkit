@@ -86,8 +86,6 @@ Only the methods you implement are called. `priority` controls execution order w
         "input_tokens": 510,
         "output_tokens": 173,
         "total_tokens": 683,
-        "turn_count": 1,
-        "function_call_count": 0
       },
       "sources": [],
       "model": "openai_responses.o4-mini-high",
