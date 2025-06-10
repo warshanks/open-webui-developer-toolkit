@@ -1,53 +1,54 @@
 # OpenAI Responses Companion Filter
+The **Companion Filter** works together with the **OpenAI Responses Manifold** (pipe) by disabling Open WebUI’s built-in file handling and prompt injection, ensuring the pipe receives unmodified, original chat data.
 
-This filter disables Open WebUI's built-in file injection and system prompt
-mutations so that the OpenAI Responses manifold can operate on clean
-chat data. It will eventually upload user files directly to OpenAI before
-the request reaches the manifold.
+> **Author:** [Justin Kropp](https://github.com/jrkropp)  
+> **License:** MIT
 
-## Why a separate filter?
+⚠️ **Pre‑production preview.** The filter is still under early testing and will be fully released as `1.0.0`.
 
-- WebUI's middleware automatically reads uploaded files and inserts their
-  content into a RAG system prompt. The Responses API expects raw file
-  references instead of injected text.
-- The middleware logic runs before any pipe. A filter with
-  `file_handler = True` is therefore the only way to intercept the files
-  and bypass the RAG mutation.
-- By keeping the upload logic out of the pipe we allow the same filter to
-  be reused alongside different pipelines.
+## Installation
+1. Copy `openai_responses_companion_filter.py` to your Open WebUI under **Admin Panel ▸ Functions**.  Save it.
+2. Enable the filter.
+3. Navigate **Admin Panel ▸ Settings ▸ Models**
+4. Edit each OpenAI Responses model.  Enable 'OpenAI Responses Companion Filter'.
+   
+## Why this filter is required
 
-## Planned responsibilities
+* **Open WebUI** automatically processes file uploads and modifies prompts **before** pipes run.
+* **Pipes** run too late to disable this built-in behavior.
+* Therefore, a dedicated filter (`file_handler = True`) is required to bypass default behavior.
 
-**Filter**
+---
 
-1. Mark `file_handler = True` to prevent default file injection.
-2. Validate uploads (size and type) and convert images to file objects if
-   needed.
-3. Upload each file to the OpenAI `/files` API and store the returned IDs
-   in the request metadata.
-4. Strip the original file objects from the body to reduce memory usage.
-5. Leave the rest of the request unchanged for the manifold.
+## Responsibilities (Sequential Workflow)
 
-**Pipe**
+Simple Rule: The filter handles tasks before Open WebUI modifies requests; the pipe handles sending requests to OpenAI and processing responses.
 
-- Assemble the final payload for the Responses endpoint using the file
-  IDs produced by the filter.
-- Persist response items and handle streaming, tool calling and history
-  reconstruction.
-- Avoid dealing with raw uploads; it should only consume already-uploaded
-  file references.
+The workflow below clearly defines each responsibility in the order they occur:
 
-Keeping the two concerns separate means future changes—such as new upload
-endpoints or file types—can be handled in the filter without touching the
-manifold logic.
+| Step | Responsibility                                 | Companion Filter                           | Responses Manifold (Pipe) |
+| ---- | ---------------------------------------------- | ------------------------------------------ | ------------------------- |
+| 1    | Disable built-in Open WebUI file injection     | ✅                                          | ❌                         |
+| 2    | Validate file uploads (size, type, format)     | ✅                                          | ❌                         |
+| 3    | Upload files to OpenAI (`/files` endpoint)     | ✅                                          | ❌                         |
+| 4    | Store returned OpenAI file IDs in metadata     | ✅                                          | ❌ (uses IDs only)         |
+| 5    | Remove raw file uploads from request           | ✅                                          | ❌                         |
+| 6    | Construct and send final API request           | ❌                                          | ✅                         |
+| 7    | Handle responses (streaming, tools, events)    | ❌                                          | ✅                         |
+| 8    | Reconstruct chat history from responses        | ❌                                          | ✅                         |
+| 9    | Optional: Modify or post-process response text | ⚠️ (possible via outlet, TBD)               | ✅ (typical approach)      |
 
-## Edge cases and future work
+* **✅ Responsible** | **❌ Not responsible** | ⚠️ **Optional**
 
-- The filter must gracefully handle missing or expired file IDs when
-  rebuilding history.
-- Large uploads may require chunking or asynchronous processing.
-- If the Responses API later accepts inline content, the filter can adapt
-  while the pipe remains stable.
+---
 
-Copy `openai_responses_companion_filter.py` to Open WebUI under
-**Admin ▸ Filters** to enable.
+## Future considerations
+
+* Ensure graceful handling of missing, invalid, or expired file IDs.
+* Consider asynchronous uploads or chunking of large files.
+
+## Installation
+
+Copy `openai_responses_companion_filter.py` into Open WebUI under:
+
+**Admin ▸ Filters**
