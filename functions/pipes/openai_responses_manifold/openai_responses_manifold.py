@@ -38,7 +38,6 @@ import orjson
 from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 
-
 # Open WebUI internals
 from open_webui.models.chats import Chats, ChatModel
 from open_webui.models.models import ModelForm, Models
@@ -625,7 +624,7 @@ class Pipe:
 
             if total_usage:
                 # Emit final usage stats if available
-                await self._emit_completion(event_emitter, usage=total_usage, done=True)
+                await self._emit_completion(event_emitter, usage=total_usage, done=False) # OpenWebUI sends it's own completion event, so we set done=False here to avoid double completion events
 
             # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
             if valves.PERSIST_TOOL_RESULTS and collected_items:
