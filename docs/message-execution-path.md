@@ -135,12 +135,3 @@ Failure of any write returns `None` from these helpers; no rollback is performed
 * Failed model requests raise HTTP 400 errors in `chat_completion`. `process_chat_response` embeds the error into the message record and emits a socket event. On the frontend `handleOpenAIError` reads this payload, sets `message.error` and `message.done`, and displays the text to the user.
 * Streaming tasks are cancelled if the client disconnects (handled in `process_chat_response` lines 2350–2410). When this happens the last received content is persisted and the UI shows an error toast.
 
-## Summary
-
-A single Send action results in:
-1. Local message creation in the browser.
-2. POST `/api/chat/completions` with the chat payload.
-3. Backend pipeline and model invocation.
-4. Incremental socket updates to the client.
-5. Final message persistence via `Chats.upsert_message_to_chat_by_id_and_message_id` and `update_chat_by_id`.
-
