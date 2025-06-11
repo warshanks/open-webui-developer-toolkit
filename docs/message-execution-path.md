@@ -29,11 +29,20 @@ This document explains how a chat message travels from the user interface in `Ch
    - Tools are resolved via `get_tools`; if native function calling is enabled the tool specs are inserted into `form_data["tools"]`, otherwise `chat_completion_tools_handler` runs them server side.
    - `chat_completion_files_handler` attaches file data and retrieval context; citations are collected into an `events` list for later emission.
    - The function returns the mutated `form_data`, the enriched `metadata` (now including `tool_ids`, `files`, etc.) and any pre‑generated events.
-3. **Model dispatch** – `generate_chat_completion` from [`utils/chat.py`](../external/open-webui/backend/open_webui/utils/chat.py#L161-L328) chooses the appropriate model backend (OpenAI, Ollama, or pipe) and issues the completion request. Streaming responses are wrapped in `StreamingResponse` when applicable.
+3. **Model dispatch** – `generate_chat_completion` in [`utils/chat.py`](../external/open-webui/backend/open_webui/utils/chat.py#L161-L286) merges `request.state.metadata` into the payload (lines 171–178) and then selects a backend:
+   - *Direct connection* – when `request.state.direct` is set, `generate_direct_chat_completion` is called with the single model defined on the request (lines 180–197).
+   - *Arena models* – aggregator models marked with `owned_by == "arena"` choose a random submodel (lines 206–252). The chosen ID replaces `form_data["model"]` and is streamed to the client when `stream=True` (lines 229–243).
+   - *Custom pipes* – if the model includes a `pipe` entry, `generate_function_chat_completion` invokes the extension (lines 254–258).
+   - *Ollama models* – payloads are converted via `convert_payload_openai_to_ollama` and sent to `generate_ollama_chat_completion`; streaming results are converted back using `convert_streaming_response_ollama_to_openai` (lines 260–276).
+   - *Default OpenAI* – all remaining models call `generate_openai_chat_completion` (lines 277–283).
+   
+   `form_data` forwarded to the provider contains the target `model`, the message list, `stream` flag and any `tools` or metadata collected earlier.
 
 ## 4. Response handling
 
-1. **Process response** – After the model returns, `process_chat_response` in [`utils/middleware.py`](../external/open-webui/backend/open_webui/utils/middleware.py#L1036-L2410) handles both streaming and non‑streaming flows. It emits socket events (`chat:completion`, `status`) and can run background tasks for title or follow‑up generation.
+1. **Process response** – `process_chat_response` in [`utils/middleware.py`](../external/open-webui/backend/open_webui/utils/middleware.py#L1209-L2440) handles the HTTP result.
+   - *Non‑streaming path* (lines 1209–1313) writes errors and the selected model to the database (lines 1212–1229) and, when content is present, emits a `chat:completion` event followed by `{done: True}` then persists the message (lines 1231–1265). Webhook notifications and optional background tasks are triggered afterwards (lines 1267–1283).
+   - *Streaming path* begins at line 1337 where a task is created and the message record updated with the chosen model (lines 1338–1348). Pre-generated events are emitted and stored (lines 1718–1734). Streaming chunks are filtered and forwarded to clients while `Chats.upsert_message_to_chat_by_id_and_message_id` updates content incrementally when `ENABLE_REALTIME_CHAT_SAVE` is enabled (lines 1736–1994 and 1968–1981). When the stream ends a final `chat:completion` with the full content is sent and saved (lines 2320–2394). The whole handler runs as an async task scheduled via `create_task` (lines 2413–2416).
 2. **Update message** – The helper `Chats.upsert_message_to_chat_by_id_and_message_id` persists incremental message content as events arrive (example around line 2363). Final message data is stored once the stream ends.
 3. **Save chat meta** – Background tasks such as title or tag generation update the chat document via `Chats.update_chat_title_by_id` and related methods.
 
