@@ -141,16 +141,45 @@ Stored comprehensive metadata (in the database):
 
 ```python
 "openai_responses_pipe": {
-  "__v": 2,
-  "messages": {
-    "<message_id>": {
+  "__v": 3,
+
+  /* Immutable event ledger  — append‑only, item‑centric */
+  "items": {
+    /* ULID/KSUID keeps natural chronological order and global uniqueness */
+    "01HX4Y2VW41FV7KQ226QC4CCDY": {
+      "type": "reasoning",                     // passthrough from OpenAI
       "model": "gpt-4o",
       "created_at": 1718073600,
-      "items": [
-        { "type": "reasoning", "encrypted_content": "[ENCRYPTED_REASONING_TOKENS]" },
-        { "type": "function_call", "function_call": { "name": "get_weather", "arguments": { "location": "New York" } } },
-        { "type": "function_call_result", "function_result": { "location": "New York", "temperature": "72°F", "condition": "Sunny" } },
-        { "type": "message", "role": "assistant", "content": "It’s currently 72°F and sunny in New York." }
+      "payload": {
+        "encrypted_content": "..."
+      },
+      "message_id": "msg_9fz4qx7e"
+    },
+
+    "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+      "type": "function_call",
+      "model": "gpt-4o",
+      "created_at": 1718073601,
+      "payload": {
+        "name": "get_weather",
+        "arguments": { "location": "New York" }
+      },
+      "message_id": "msg_9fz4qx7e"
+    },
+
+    /* … further items … */
+  },
+
+  /* Sparse **messages_index** — describes the chat tree */
+  "messages_index": {
+    "msg_9fz4qx7e": {
+      "role": "assistant",
+      "done": true,
+      /* ordered list of item ids that produced the visible message */
+      "item_ids": [
+        "01HX4Y2VW41FV7KQ226QC4CCDY",
+        "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
+        "01HX4Y2VW6B091XE84F5G0Z8NF"  // message content
       ]
     }
   }
@@ -201,24 +230,47 @@ Full chat JSON structure example:
       // Any attached files
     ],
 
-    // —— Custom Extension: Added by openai_responses_pipe ——
-    "openai_responses_pipe": {
-      "__v": 2,
-      "messages": {
-        "<message_id>": {
-          "model": "<model_that_generated_nonmessage_items>",
-          "created_at": <unix_timestamp>,
-          "items": [
-            {
-              "type": "function_call|function_call_result|reasoning|...",
-              "...": "..."
-            }
-          ]
-        }
+  // —— Custom Extension: Added by openai_responses_pipe —————————————————
+  "openai_responses_pipe": {
+    "__v": 3,
+  
+    /* Immutable **items** collection*/
+    "items": {
+      /* ULID/KSUID keeps natural chronological order and global uniqueness */
+      "01HX4Y2VW41FV7KQ226QC4CCDY": {
+        "type": "reasoning",
+        "model": "gpt-4o",
+        "created_at": 1718073600,
+        "payload": { "encrypted_content": "…" },
+        "message_id": "msg_9fz4qx7e"
+      },
+      "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+        "type": "function_call",
+        "model": "gpt-4o",
+        "created_at": 1718073601,
+        "payload": {
+          "name": "get_weather",
+          "arguments": { "location": "New York" }
+        },
+        "message_id": "msg_9fz4qx7e"
+      }
+      /* … */
+    },
+  
+    /* Sparse **messages_index** — describes the chat tree */
+    "messages_index": {
+      "msg_9fz4qx7e": {
+        "role": "assistant",
+        "done": true,
+        "item_ids": [
+          "01HX4Y2VW41FV7KQ226QC4CCDY",
+          "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
+          "01HX4Y2VW6B091XE84F5G0Z8NF"
+        ]
       }
     }
-    // —————————————————
   },
+  // ————————————————————————————————————————————————————————————————————
   "updated_at": <unix_timestamp>,
   "created_at": <unix_timestamp>,
   "share_id": null,
