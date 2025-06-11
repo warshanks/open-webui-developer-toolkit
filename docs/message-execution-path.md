@@ -9,7 +9,6 @@ Here's your perfected and comprehensive version, carefully including all origina
 ---
 
 ## 1 · The Story in 90 Seconds
-
 1. **A user types “Hi!” and clicks Send.**
 2. The browser immediately inserts this new message into its local chat history, making the UI feel responsive and instantaneous.
 3. A `POST /api/chat/completions` request leaves the browser, carrying:
@@ -34,8 +33,7 @@ Here's your perfected and comprehensive version, carefully including all origina
    * and suggested follow-up questions.
    
    These enhancements appear in the UI moments later.
-8. Finally, the completed assistant response is definitively saved (upserted) into the database's `chat` row. This ensures the message persists—if the user refreshes, the chat message remains exactly as it was.
-
+8. Finally, the completed assistant response is definitively saved (upserted) into the database's `chat` row.
 
 ---
 
