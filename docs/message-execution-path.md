@@ -21,7 +21,14 @@ This document explains how a chat message travels from the user interface in `Ch
 ## 3. Backend processing
 
 1. **Route entry** – The backend exposes `POST /api/chat/completions` handled by [`chat_completion`](../external/open-webui/backend/open_webui/main.py#L1274-L1371). Authentication is enforced via `Depends(get_verified_user)`.
-2. **Payload preparation** – Inside `chat_completion`, `process_chat_payload` from [`utils/middleware.py`](../external/open-webui/backend/open_webui/utils/middleware.py#L720-L1034) applies model parameters, sets up event emitters, runs pipeline inlet filters and prepares tool/feature metadata.
+2. **Payload preparation** – `chat_completion` extracts `chat_id`, `id`, `session_id` and other fields into a `metadata` dictionary stored on `request.state`. It then calls `process_chat_payload` from [`utils/middleware.py`](../external/open-webui/backend/open_webui/utils/middleware.py#L720-L1034) which performs several transformations:
+   - `apply_params_to_form_data` merges the request body with model‑specific parameters.
+   - Event helpers (`__event_emitter__`, `__event_call__`) are created and bundled with user info in `extra_params`.
+   - `process_pipeline_inlet_filter` and `process_filter_functions` run any enabled inlet filters which may mutate the request.
+   - Feature handlers add memory, web search or image generation messages when requested.
+   - Tools are resolved via `get_tools`; if native function calling is enabled the tool specs are inserted into `form_data["tools"]`, otherwise `chat_completion_tools_handler` runs them server side.
+   - `chat_completion_files_handler` attaches file data and retrieval context; citations are collected into an `events` list for later emission.
+   - The function returns the mutated `form_data`, the enriched `metadata` (now including `tool_ids`, `files`, etc.) and any pre‑generated events.
 3. **Model dispatch** – `generate_chat_completion` from [`utils/chat.py`](../external/open-webui/backend/open_webui/utils/chat.py#L161-L328) chooses the appropriate model backend (OpenAI, Ollama, or pipe) and issues the completion request. Streaming responses are wrapped in `StreamingResponse` when applicable.
 
 ## 4. Response handling
