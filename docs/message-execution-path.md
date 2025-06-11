@@ -1,6 +1,7 @@
 # Message Execution Path
 
-**Completed and reviewed: 2025-06-10**  
+**Completed and reviewed:** 2025-06-10
+**Open WebUI Version**: v0.6.14
 
 This document explains how a chat message travels from the user interface in `Chat.svelte` through the backend until it is stored in the database. Line numbers refer to the upstream snapshot in `external/open-webui`.
 
