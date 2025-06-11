@@ -111,7 +111,7 @@ How do we store these necessary response elements without revealing them to the 
 
 Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.
 
-```json
+```python
 body = {
   "messages": [
     { "role": "system", "content": "System prompt text..." },
@@ -142,7 +142,7 @@ Embedding full OpenAI response metadata directly into zero-width characters sign
 
 Stored comprehensive metadata (in the database):
 
-```json
+```python
 "openai_responses_pipe": {
   "__v": 2,
   "messages": {
@@ -165,7 +165,7 @@ You can inspect the DB chat item directly in your browser by opening **Developer
 
 Full chat JSON structure example:
 
-```json
+```python
 {
   "id": "<chat_id>",
   "user_id": "<user_id>",
