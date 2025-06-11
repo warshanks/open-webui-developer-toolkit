@@ -4,10 +4,6 @@
 
 This document explains how a chat message travels from the user interface in `Chat.svelte` through the backend until it is stored in the database. Line numbers refer to the upstream snapshot in `external/open-webui`.
 
-Here's your perfected and comprehensive version, carefully including all original information in a clear, intuitive manner:
-
----
-
 ## 1 · The Story in 90 Seconds
 1. **A user types “Hi!” and clicks Send.**
 2. The browser immediately inserts this new message into its local chat history, making the UI feel responsive and instantaneous.
