@@ -56,15 +56,78 @@ The manifold should work with any model that supports the responses API. Confirm
 - **Encrypted reasoning tokens** – specialized reasoning tokens (`encrypted_content`) are persisted to optimize follow‑ups.
 
 
-## Persist OpenAI response items
-Non-message items (function calls, encrypted reasoning tokens and so on) are stored under `openai_responses_pipe` within the chat record. Keeping these items allows the pipe to reconstruct the conversation state precisely, leading to better caching and faster responses.
+Perfect — here’s a polished version of that section with your example embedded and phrasing tightened for clarity and flow:
 
-This design matters for two main reasons:
+---
 
-1. **Improved caching and cost efficiency** – reconstructing the original context lets OpenAI grant cache-based pricing discounts (up to 75 %!).
-2. **Faster replies** – reasoning tokens prevent the model from re-solving earlier steps, so responses are quicker.
+## Persist OpenAI Response Items
 
-You can inspect this data by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
+OpenAI’s API responses also provides critical non-message items (e.g., reasoning tokens, function calls, and tool outputs). These responses item are provided in an ordered sequence that reflects the model's internal decision-making process.  
+
+**For example:**
+
+```json
+[
+  {
+    "id": "rs_6849f90497fc8192a013fb54f888948c0b902dab32480d90",
+    "type": "reasoning",
+    "encrypted_content": "[ENCRYPTED_TOKENS_HERE]"
+  },
+  {
+    "type": "function_call",
+    "function_call": {
+      "name": "get_weather",
+      "arguments": {
+        "location": "New York"
+      }
+    }
+  },
+  {
+    "type": "function_call_result",
+    "function_result": {
+      "location": "New York",
+      "temperature": "72°F",
+      "condition": "Sunny"
+    }
+  },
+  {
+    "type": "message",
+    "role": "assistant",
+    "content": "It’s currently 72°F and sunny in New York."
+  }
+]
+```
+
+Storing only the final assistant message discards the context that produced it. By contrast, appending all response items (in the order they were produced) ensures:
+
+* **Precise context reconstruction**
+* **Reduced latency** (reasoning doesn’t have to be re-generated)
+* **Improved cache utilization** (up to 75% cost savings)
+
+**Thus, we face a challenge:**
+While direct persistence in Open WebUI (e.g., via `Chats.update_chat_by_id()`) can store metadata, this approach bypasses Open WebUI’s extensible filter pipeline. Any filters that modify `body["messages"]` before your pipe runs won’t be reflected if you regenerate context directly from the database.
+
+Ideally, context should be reconstructed from the exact `body["messages"]` structure passed into your pipe—after filters have had a chance to manipulate.
+
+```json
+body = {
+  "messages": [
+    { "role": "system", "content": "System prompt text..." },
+    { "role": "user", "content": "User question..." }
+  ]
+}
+```
+
+These messages contain only `role` and `content`.  To bridge this gap, our solution invisibly encodes metadata references (short IDs) directly into the `content`, using zero-width characters and stores the full unmodified OpenAI response JSON using `Chats.update_chat_by_id()`.  On subsequent API calls, the pipeline decodes the hidden zero-width characters within the messages, retrieves the corresponding metadata from the database, and reconstructs the original conversational history accurately and in the precise order it occurred.
+
+**Why not encode the entire metadata directly?**
+Encoding full OpenAI response items directly into zero-width characters significantly increases storage consumption. Instead, encoding only a short, unique identifier greatly optimizes storage while enabling full metadata retrieval.
+
+This method combines seamless compatibility with Open WebUI's filter pipeline, preserves conversation fidelity, and optimizes storage usage effectively.
+
+
+**Pro Tip**
+You can inspect the DB chat item directly in your browser by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
 
 Full chat JSON structure example:
 
@@ -134,12 +197,3 @@ Full chat JSON structure example:
   "folder_id": null
 }
 ```
-
-Each item is tied to a specific `message_id` and the `model` that generated it. This ensures:
-
-1. **Accurate Context Reconstruction**
-   During replay or follow‑up turns, the pipe can precisely rebuild the state of the conversation, including tools or reasoning results not visible in plain messages.
-2. **Model‑Specific Binding**
-   Some items (especially **encrypted reasoning tokens!**) can only be used with the exact model that produced them. Injecting these into another model’s context may result in **errors** or degraded performance. Binding items to the generating model avoids this.
-
-By storing raw `items` exactly as received from the API, the system remains forward‑compatible with future changes to the Responses API structure.
