@@ -1,16 +1,17 @@
 # Message Execution Path
 
-**Completed and reviewed: 2025-06-10**
+**Completed and reviewed: 2025-06-10**  
+**FINALIZED: 2025-06-11**
 
 This document explains how a chat message travels from the user interface in `Chat.svelte` through the backend until it is stored in the database. Line numbers refer to the upstream snapshot in `external/open-webui`.
 
 ```mermaid
 graph TD
-    A[User<br>Chat.svelte] --> B[sendPromptSocket<br>POST /api/chat/completions]
-    B --> C[chat_completion<br>middleware.py inlet]
-    C --> D[generate_chat_completion]
-    D --> E[process_chat_response<br>middleware.py outlet]
-    E --> F[Chats model<br>database]
+    A[User<br>Chat.svelte<br>(frontend)] --> B[sendPromptSocket<br>POST /api/chat/completions<br>(frontend)]
+    B --> C[chat_completion<br>middleware.py inlet<br>(backend)]
+    C --> D[generate_chat_completion<br>(backend)]
+    D --> E[process_chat_response<br>middleware.py outlet<br>(backend\nstream/non-stream)]
+    E --> F[Chats model<br>database<br>(persistence)]
 ```
 
 ## 1. User submits a prompt
