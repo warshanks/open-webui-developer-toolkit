@@ -6,12 +6,21 @@
 This document explains how a chat message travels from the user interface in `Chat.svelte` through the backend until it is stored in the database. Line numbers refer to the upstream snapshot in `external/open-webui`.
 
 ```mermaid
-graph TD
-    A[User<br>Chat.svelte<br>(frontend)] --> B[sendPromptSocket<br>POST /api/chat/completions<br>(frontend)]
-    B --> C[chat_completion<br>middleware.py inlet<br>(backend)]
-    C --> D[generate_chat_completion<br>(backend)]
-    D --> E[process_chat_response<br>middleware.py outlet<br>(backend\nstream/non-stream)]
-    E --> F[Chats model<br>database<br>(persistence)]
+graph LR
+    subgraph Frontend
+        A("User<br/>Chat.svelte") -->|handleSubmit| B("sendPromptSocket")
+        B -->|POST /api/chat/completions| C("Fetch Helper<br/>openai/index.ts")
+    end
+    subgraph Backend
+        D("Route: chat_completion") --> E("process_chat_payload<br/>(Inlet Filters)")
+        E --> F("generate_chat_completion<br/>(Dispatcher)")
+        F --> G("Provider API<br/>(OpenAI/Ollama/etc.)")
+        G --> H("process_chat_response<br/>(Outlet)")
+        H --> I("Chats Model<br/>SQL / JSONB")
+    end
+    H -->|socket events| J("Browser<br/>live stream")
+    H -->|background_tasks| K("Title / Tags / Follow‑ups")
+    I --> J
 ```
 
 ## 1. User submits a prompt
