@@ -49,20 +49,12 @@ The manifold should work with any model that supports the responses API. Confirm
 | o3 | ✅ |
 | o3-pro | ✅ |
 
-# How it Works / Design Architecture
-## Core concepts
-- **Responses API endpoint** – uses the OpenAI Responses API endpoint than completions, enabling features like visible reasoning summaries and built-in tools (web search, etc..).
-- **Persistent tool results** – tool outputs are stored alongside messages, making them available on later turns.
-- **Encrypted reasoning tokens** – specialized reasoning tokens (`encrypted_content`) are persisted to optimize follow‑ups.
-
-
-Perfect — here’s a polished version of that section with your example embedded and phrasing tightened for clarity and flow:
-
 ---
 
-## Persist OpenAI Response Items
+# The Magic Behind this Pipe
+### Persisting Non-Message Items (function_call, function_call_results, reasoning tokens, etc..)
 
-OpenAI’s API responses also provides critical non-message items (e.g., reasoning tokens, function calls, and tool outputs). These responses item are provided in an ordered sequence that reflects the model's internal decision-making process.  
+The OpenAI Responses API returns essential non-message components (such as reasoning tokens, function calls, and tool outputs). These response items are produced sequentially, reflecting the model’s internal decision-making process.
 
 **For example:**
 
@@ -98,16 +90,18 @@ OpenAI’s API responses also provides critical non-message items (e.g., reasoni
 ]
 ```
 
-Storing only the final assistant message discards the context that produced it. By contrast, appending all response items (in the order they were produced) ensures:
+Storing only the final assistant message discards the context that produced it. Appending all response items (in the order they were produced) ensures:
 
 * **Precise context reconstruction**
 * **Reduced latency** (reasoning doesn’t have to be re-generated)
 * **Improved cache utilization** (up to 75% cost savings)
 
 **Thus, we face a challenge:**
-While direct persistence in Open WebUI (e.g., via `Chats.update_chat_by_id()`) can store metadata, this approach bypasses Open WebUI’s extensible filter pipeline. Any filters that modify `body["messages"]` before your pipe runs won’t be reflected if you regenerate context directly from the database.
+We need to persist these non-message items without making them visible.
 
-Ideally, context should be reconstructed from the exact `body["messages"]` structure passed into your pipe—after filters have had a chance to manipulate.
+Direct persistence via Open WebUI (using methods like Chats.update_chat_by_id()) can store custom JSON responses. However, this approach bypasses the extensible filter pipeline of Open WebUI, meaning any changes made by earlier filters to body["messages"] wouldn't be reflected during context reconstruction.
+
+Ideally, the context should be reconstructed precisely from the final body["messages"] structure after all pipeline filters have been applied:
 
 ```json
 body = {
@@ -117,11 +111,10 @@ body = {
   ]
 }
 ```
-
-These messages contain only `role` and `content`.  To bridge this gap, our solution invisibly encodes metadata references (short IDs) directly into the `content`, using zero-width characters and stores the full unmodified OpenAI response JSON using `Chats.update_chat_by_id()`.  On subsequent API calls, the pipeline decodes the hidden zero-width characters within the messages, retrieves the corresponding metadata from the database, and reconstructs the original conversational history accurately and in the precise order it occurred.
+These messages include only _role_ and _content_. To bridge this gap, the solution encodes metadata references (short IDs) invisibly within the message content using zero-width characters. The complete, unaltered OpenAI response JSON is stored using Chats.update_chat_by_id() separately. When subsequent API calls occur, the pipeline decodes these hidden references from the messages, retrieves the corresponding metadata from storage, and accurately reconstructs the original conversation sequence.
 
 **Why not encode the entire metadata directly?**
-Encoding full OpenAI response items directly into zero-width characters significantly increases storage consumption. Instead, encoding only a short, unique identifier greatly optimizes storage while enabling full metadata retrieval.
+Embedding full OpenAI response metadata directly into zero-width characters significantly increases storage overhead. Instead, encoding a concise, unique identifier optimizes storage while enabling complete metadata retrieval from the database.
 
 This method combines seamless compatibility with Open WebUI's filter pipeline, preserves conversation fidelity, and optimizes storage usage effectively.
 
