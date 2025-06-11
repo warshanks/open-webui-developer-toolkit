@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.4
+version: 0.8.5
 license: MIT
 requirements: orjson
 """
@@ -289,6 +289,10 @@ class Pipe:
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
         )
+        TRUNCATION: Literal["auto", "disabled"] = Field(
+            default="auto",
+            description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
+        )
         MAX_TOOL_CALL_LOOPS: int = Field(
             default=5,
             description="Maximum number of tool calls the model can make in a single request. This is a hard stop safety limit to prevent infinite loops. Defaults to 5.",
@@ -354,7 +358,11 @@ class Pipe:
 
         # Transform request body (Completions API -> Responses API). Populates with default values.
         completions_body = CompletionsBody.model_validate(body)
-        responses_body = ResponsesBody.from_completions(completions_body, truncation="auto", user=user_identifier) # supports passing custom params (e.g., truncation) which are injected into ResponsesBody
+        responses_body = ResponsesBody.from_completions(
+            completions_body,
+            truncation=valves.TRUNCATION,
+            user=user_identifier,
+        )  # supports passing custom params (e.g., truncation) which are injected into ResponsesBody
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
