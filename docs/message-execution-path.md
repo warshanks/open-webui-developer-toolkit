@@ -4,6 +4,15 @@
 
 This document explains how a chat message travels from the user interface in `Chat.svelte` through the backend until it is stored in the database. Line numbers refer to the upstream snapshot in `external/open-webui`.
 
+```mermaid
+graph TD
+    A[User<br>Chat.svelte] --> B[sendPromptSocket<br>POST /api/chat/completions]
+    B --> C[chat_completion<br>middleware.py inlet]
+    C --> D[generate_chat_completion]
+    D --> E[process_chat_response<br>middleware.py outlet]
+    E --> F[Chats model<br>database]
+```
+
 ## 1. User submits a prompt
 
 *Component:* [`Chat.svelte`](../external/open-webui/src/lib/components/chat/Chat.svelte)
@@ -72,8 +81,8 @@ Failure of any write returns `None` from these helpers; no rollback is performed
 
 ## Error handling and edge cases
 
-* Failed model requests raise HTTP 400 errors in `chat_completion`. Errors are embedded into the message record and emitted to clients.
-* Streaming tasks are cancelled if the client disconnects (handled in `process_chat_response` lines 2350–2410).
+* Failed model requests raise HTTP 400 errors in `chat_completion`. `process_chat_response` embeds the error into the message record and emits a socket event. On the frontend `handleOpenAIError` reads this payload, sets `message.error` and `message.done`, and displays the text to the user.
+* Streaming tasks are cancelled if the client disconnects (handled in `process_chat_response` lines 2350–2410). When this happens the last received content is persisted and the UI shows an error toast.
 
 ## Summary
 
