@@ -93,8 +93,8 @@ The OpenAI Responses API returns essential non-message components (such as reaso
 Storing only the final assistant message discards the context that produced it. Appending all response items (in the order they were produced) ensures:
 
 * Accurately reconstructing the exact conversation context from previous interactions.
-* Reducing latency significantly** by avoiding redundant reasoning regeneration.
-* Reduces cost** by improving OpenAI cache hit's which would otherwise have missed (saving up to 50–75% $$).
+* Reducing latency significantly by avoiding redundant reasoning regeneration.
+* Reduces cost by improving OpenAI cache hit's which would otherwise have missed (saving up to 50–75% $$).
 
 
 **And thus, the core challenge...**
