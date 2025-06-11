@@ -422,7 +422,6 @@ class Pipe:
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
 
-
         # Log the transformed request body
         self.logger.debug("Transformed ResponsesBody: %s", json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False))
             
