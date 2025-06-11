@@ -94,7 +94,7 @@ Storing only the final assistant message discards the context that produced it. 
 
 * **Accurately reconstructing the exact conversation context** from previous interactions.
 * **Reducing latency significantly** by avoiding redundant reasoning regeneration.
-* ****Reduces cost** by improving OpenAI cache hit's** which would otherwise have missed (saving up to 50–75% $$).
+* **Reduces cost** by improving OpenAI cache hit's** which would otherwise have missed (saving up to 50–75% $$).
 
 
 **And thus, the core challenge...**
@@ -109,7 +109,7 @@ How do we store these necessary response elements without revealing them to the 
 3. **Compatibility with Open WebUI Filter Pipeline:**
    * Context must be reconstructed exclusively from the `body["messages"]` structure provided by Open WebUI after all pipeline filters have applied their modifications:
 
-Constraint #3 is particularly challenging since the structure only includes two fields: `role` and `content`. There is no provision for additional metadata or chat identifiers directly in the request, complicating the linkage to stored metadata.
+Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.
 
 ```json
 body = {
@@ -159,17 +159,6 @@ Stored comprehensive metadata (in the database):
   }
 }
 ```
-
-
-
-
-
-
-
-
-
-
-
 
 **Pro Tip**
 You can inspect the DB chat item directly in your browser by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
