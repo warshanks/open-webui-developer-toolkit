@@ -4,6 +4,54 @@
 
 This document explains how a chat message travels from the user interface in `Chat.svelte` through the backend until it is stored in the database. Line numbers refer to the upstream snapshot in `external/open-webui`.
 
+Here's your perfected and comprehensive version, carefully including all original information in a clear, intuitive manner:
+
+---
+
+## 1 · The Story in 90 Seconds
+
+1. **A user types “Hi!” and clicks Send.**
+2. The browser immediately inserts this new message into its local chat history, making the UI feel responsive and instantaneous.
+3. A `POST /api/chat/completions` request leaves the browser, carrying:
+   * the complete chat history,
+   * the selected AI model,
+   * any attached files,
+   * and special feature flags (e.g., whether the reply should be streamed).
+4. On arrival, the backend’s **inlet pipeline** enriches the payload by:
+   * injecting relevant memory (past context),
+   * resolving requested tools (e.g., web searches or calculations),
+   * bundling and attaching file references,
+   * and stamping useful metadata (like session and message IDs) onto the request context.
+5. A **dispatcher** examines this enriched payload and decides exactly *where* to send it next:
+   * an external API (e.g., OpenAI),
+   * a local model (like Ollama),
+   * an "arena" aggregator (which dynamically selects among multiple sub-models),
+   * or a custom Python pipeline handler.
+6. The chosen provider generates a response, typically by streaming back incremental chunks. The backend immediately forwards these chunks over a WebSocket to the browser, and optionally persists them incrementally in the database (Postgres).
+7. When the streaming concludes, the backend kicks off background tasks to auto-generate:
+   * a meaningful chat title,
+   * descriptive tags,
+   * and suggested follow-up questions.
+   
+   These enhancements appear in the UI moments later.
+8. Finally, the completed assistant response is definitively saved (upserted) into the database's `chat` row. This ensures the message persists—if the user refreshes, the chat message remains exactly as it was.
+
+
+---
+
+## 2 · Visual Map  
+
+```mermaid
+graph LR
+  classDef front fill:#cfe9ff,stroke:#0d62f3,color:#000
+  classDef back fill:#e7d8ff,stroke:#7d2ae8,color:#000
+  A["Chat.svelte"]:::front --> B["fetch helper"]:::front --> C["/api/chat/completions"]:::back
+  C --> D["inlet filters"]:::back --> E["dispatcher"]:::back --> F["provider API"]:::back
+  F --> G["outlet & sockets"]:::back --> H["Postgres Chats row"]:::back
+  G --> I["Browser stream"]:::front
+  G --> J["background tasks"]:::back
+```
+
 ```mermaid
 graph LR
     subgraph Frontend
