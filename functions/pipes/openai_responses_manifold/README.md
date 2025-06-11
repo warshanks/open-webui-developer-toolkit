@@ -89,13 +89,10 @@ The OpenAI Responses API returns essential non-message components (such as reaso
   }
 ]
 ```
+By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, persisting **all** response items (in their original order):
 
-Storing only the final assistant message discards the context that produced it. Appending all response items (in the order they were produced) ensures:
-
-* Accurately reconstructing the exact conversation context from previous interactions.
-* Reducing latency significantly by avoiding redundant reasoning regeneration.
-* Reduces cost by improving OpenAI cache hit's which would otherwise have missed (saving up to 50–75% $$).
-
+* Significantly reduces latency by eliminating redundant tool calls and reasoning re-generation (especially noticeable with o-series models).
+* Reduces cost through improved OpenAI cache hits (saving approximately 50–75% on input tokens).
 
 **And thus, the core challenge...**
 
