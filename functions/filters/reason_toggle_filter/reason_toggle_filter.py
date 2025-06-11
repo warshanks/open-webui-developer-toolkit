@@ -16,8 +16,6 @@ from pydantic import BaseModel
 from open_webui.models.models import Models
 from open_webui.models.chats import Chats
 
-logger = logging.getLogger(__name__)
-
 class Filter:
     class Valves(BaseModel):
         MODEL: str = "o4-mini"
@@ -44,16 +42,11 @@ class Filter:
         # Set __metadata__ for downstream pipes
         model_info = Models.get_model_by_id(self.valves.MODEL)
         if __metadata__ and model_info:
-            # Attach full model details for downstream context and auditing
             __metadata__["model"] = model_info.model_dump()
 
-        # Optionally set the reasoning effort (e.g., "high", "medium", "low")
         effort = self.valves.REASONING_EFFORT
         if effort != "not set":
             body["reasoning_effort"] = effort
-
-        # Log inlet state for easier debugging and tracing
-        logger.warning("INLET body state:\n%s", json.dumps(body, indent=2))
 
         # Pass the updated request body downstream
         return body
@@ -77,13 +70,8 @@ class Filter:
         if isinstance(messages, list) and messages:
             last_msg = messages[-1]
             if isinstance(last_msg, dict):
-                # Set the model identifier the UI uses to display model details
                 last_msg["model"] = self.valves.MODEL
-                # Provide a human-friendly model name if not already set
                 last_msg.setdefault("modelName", self.valves.MODEL)
-
-        # Log outlet state for confirmation and debugging
-        logger.warning("OUTLET body state:\n%s", json.dumps(body, indent=2))
 
         # Return the finalized response body ready for the UI
         return body
