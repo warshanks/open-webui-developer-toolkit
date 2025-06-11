@@ -121,11 +121,11 @@ body = {
 ```
 
 ### Optimal Solution: Invisible Metadata Encoding
-To address these challenges effectively, the chosen solution involves encoding short, invisible metadata references (short unique IDs) directly within the message content using zero-width characters.  The full, unmodified OpenAI response JSON is stored separately via `Chats.update_chat_by_id()`.
+To address these challenges effectively, we embed encoding short, invisible metadata references (short unique IDs) directly within `body["messages"]["content"]` using zero-width characters. The full, unmodified OpenAI response JSON is persisted separately via `Chats.update_chat_by_id()`.
 
 For example, an assistant message visibly appears as:
-```json
-{ "role": "assistant", "content": "It’s currently 72°F and sunny in New York.\u200b\u200b\u200b\u200b" }
+```python
+body["messages"] = { "role": "assistant", "content": "It’s currently 72°F and sunny in New York.\u200b\u200b\u200b\u200b" }
 ```
 Here, the hidden zero-width encoded identifier (\u200b) is embedded invisibly after the message content.
 
