@@ -48,12 +48,25 @@ This document explains how a chat message travels from the user interface in `Ch
 
 ## 5. Database persistence
 
-The `Chats` model in [`models/chats.py`](../external/open-webui/backend/open_webui/models/chats.py#L150-L188) handles all chat storage. `upsert_message_to_chat_by_id_and_message_id` inserts or updates a message in the JSON chat history (lines 228–248). The entire chat is written back to the SQL database using `update_chat_by_id`.
+The `Chats` model in [`models/chats.py`](../external/open-webui/backend/open_webui/models/chats.py#L24-L40) defines the SQL `chat` table. Key columns include `id`, `user_id`, `title`, a JSON `chat` blob and timestamp fields. When `process_chat_response` stores an assistant reply it calls `Chats.upsert_message_to_chat_by_id_and_message_id` (lines 228–249). This helper updates `chat["history"]["messages"][message_id]` and sets `history["currentId"]` before delegating to `update_chat_by_id` (lines 161–172) which commits the row.
+
+Fields persisted for each message include:
+
+* `role`, `content` and any `files`
+* model identifiers (`model`, `selectedModelId`)
+* metadata such as `followUps` or tool results
+* the timestamp from the original user payload
+
+During streaming, chunks are written incrementally when `ENABLE_REALTIME_CHAT_SAVE` is enabled (lines 1971–1981). Otherwise the final content replaces the placeholder once the stream ends (lines 2361–2367). Each call to `update_chat_by_id` updates the `updated_at` column.
+
+Failure of any write returns `None` from these helpers; no rollback is performed and the latest successful state remains.
 
 ## Side effects and events
 
-* **Socket events** – `get_event_emitter` in [`socket/main.py`](../external/open-webui/backend/open_webui/socket/main.py#L304-L356) broadcasts `chat-events` to every active session for the user. Events such as `chat:start`, `chat:completion` and `status` allow the front‑end to update progress in real time.
-* **Webhook notifications** – When the user is inactive, webhook hooks may be triggered in `process_chat_response` to deliver the message externally (lines 2338–2367).
+* **Socket events** – `get_event_emitter` in [`socket/main.py`](../external/open-webui/backend/open_webui/socket/main.py#L304-L371) broadcasts `chat-events` to all active sessions. When `update_db=True` it also persists `status`, `message` and `replace` events (lines 334–369).
+* **Background tasks** – After the final message is saved, `background_tasks_handler` may invoke `generate_follow_ups`, `generate_title` and `generate_chat_tags` (lines 1008–1194). These update the chat via `Chats.update_chat_title_by_id` (lines 1136–1147) or `Chats.update_chat_tags_by_id` (lines 1183–1192) and emit `chat:title`, `chat:tags` or `chat:message:follow_ups` events.
+* **Webhook notifications** – When the user is inactive a `post_webhook` call notifies them with the final content (lines 2371–2385).
+* **Task scheduling** – Streaming handlers run in an async task created via `create_task` (lines 2413–2416). If cancelled, the last content is persisted (lines 2399–2407).
 
 ## Error handling and edge cases
 
