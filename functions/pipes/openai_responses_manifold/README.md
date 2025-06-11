@@ -96,7 +96,7 @@ By default, Open WebUI only stores the assistant’s final response and discards
 
 **And thus, the core challenge...**
 
-How do we store these necessary response elements without revealing them to the end-user and still ensure compatibility with Open WebUI's extensible filter pipeline?
+How do we store these response elements without revealing them to the end-user and still ensure compatibility with Open WebUI's extensible filter pipeline?
 
 ### Specific Constraints
 1. **Invisibility:**
