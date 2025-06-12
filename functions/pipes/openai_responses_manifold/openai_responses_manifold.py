@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.7
+version: 0.8.8
 license: MIT
 requirements: orjson
 """
@@ -505,7 +505,7 @@ class Pipe:
 
                             # 4) Build a minimal snippet (omit type="reasoning")
                             snippet = (
-                                f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
+                                f"\n<details type=\"{__name__}.reasoning\" done=\"false\">\n"
                                 f"<summary>🧠{latest_title}</summary>\n"
                                 f"{all_text}\n"
                                 "</details>"
@@ -582,8 +582,8 @@ class Pipe:
                                 all_text += "\n\n --- \n\n"
 
                                 final_snippet = (
-                                    f'<details type=\"{__name__}.reasoning\" done="true">\n'
-                                    f"<summary>Done thinking!</summary>\n"
+                                    f"\n<details type=\"{__name__}.reasoning\" done=\"true\">\n"
+                                    "<summary>Done thinking!</summary>\n"
                                     f"{all_text}\n"
                                     "</details>"
                                 )
