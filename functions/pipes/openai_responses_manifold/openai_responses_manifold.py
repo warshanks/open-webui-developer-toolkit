@@ -1540,16 +1540,30 @@ def build_openai_input(
 
     # Second pass: Construct final OpenAI input, maintaining correct order
     for message in body_messages:
-        role = message["role"]
-        content = message["content"]
+        role = message.get("role", "assistant")
+        content = message.get("content", "")
+
+        if role == "system":
+            if content:
+                openai_input.append(
+                    {
+                        "type": "message",
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": content}],
+                    }
+                )
+            continue
 
         if role == "user":
-            openai_input.append({
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": content}]
-            })
-            continue  # No further processing for user messages
+            if content:
+                openai_input.append(
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": content}],
+                    }
+                )
+            continue
 
         # Assistant messages with potential encoded IDs
         if is_encoded(content):
@@ -1563,22 +1577,30 @@ def build_openai_input(
                         openai_input.append(item)
                     else:
                         logging.getLogger(__name__).warning(
-                            "Missing persisted item for ID: %s", item_id
+                            "Missing persisted item for ID: %s",
+                            item_id,
                         )
                 elif segment["type"] == "text":
-                    text = segment["text"].strip()
+                    text = segment["text"]
                     if text:
-                        openai_input.append({
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": text}]
-                        })
+                        openai_input.append(
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "output_text", "text": text}
+                                ],
+                            }
+                        )
         else:
             # Simple assistant messages without encoded IDs
-            openai_input.append({
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": content}]
-            })
+            if content:
+                openai_input.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": content}],
+                    }
+                )
 
     return openai_input
