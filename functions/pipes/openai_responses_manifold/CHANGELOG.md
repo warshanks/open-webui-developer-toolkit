@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Embedded zero-width encoded IDs during streaming and non-streaming flows.
 - Persisted each output item immediately and yielded the encoded reference.
 - Rebuilt chat history using `build_openai_input` for accurate ordering.
+- Stored full model ID for each item and stripped prefix only when filtering.
 
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.

@@ -1464,8 +1464,10 @@ def fetch_items_by_ids(
         item = items_store.get(item_id)
         if not item:
             continue
-        if base_model and item.get("model") != base_model:
-            continue
+        if base_model:
+            item_base = item.get("model", "").removeprefix("openai_responses.")
+            if item_base != base_model:
+                continue
         lookup[item_id] = item.get("payload", {})
     return lookup
 
