@@ -1543,15 +1543,8 @@ def build_openai_input(
         role = message.get("role", "assistant")
         content = message.get("content", "")
 
+        # System prompts are passed separately via the `instructions` field
         if role == "system":
-            if content:
-                openai_input.append(
-                    {
-                        "type": "message",
-                        "role": "system",
-                        "content": [{"type": "input_text", "text": content}],
-                    }
-                )
             continue
 
         if role == "user":
