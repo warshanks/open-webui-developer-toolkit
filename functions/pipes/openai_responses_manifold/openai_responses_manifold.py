@@ -375,15 +375,17 @@ class Pipe:
         # Log instructions
         # self.logger.info("Instructions: %s", responses_body.instructions)
 
-        # Override input, if chat_id and message_id are provided.
-        # Uses specialized helper which rebuilds input history and injects previously persisted OpenAI responses output items (e.g. function_call, encrypted reasoning tokens, etc.) into the input history.
-        if __metadata__.get("chat_id") and __metadata__.get("message_id"):
-            responses_body.input = build_responses_history_by_chat_id_and_message_id(
+        # Override input if ``chat_id`` is provided.
+        # We now reconstruct the history directly from ``body['messages']`` which
+        # already contains zero-width encoded IDs for any persisted OpenAI
+        # response items.
+        if __metadata__.get("chat_id"):
+            responses_body.input = build_openai_input(
+                completions_body.messages,
                 __metadata__.get("chat_id"),
-                __metadata__.get("message_id"),
                 model_id=full_model_id,
             )
-            # self.logger.debug("Built input history for ResponsesBody: %s", json.dumps(responses_body.input, indent=2, ensure_ascii=False))
+            # self.logger.debug("Built input for ResponsesBody: %s", json.dumps(responses_body.input, indent=2, ensure_ascii=False))
 
         # Override tools, if __tools__ provided
         if __tools__:
