@@ -1394,6 +1394,9 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 
 # Pre-compiled regex for performance
 ENCODED_ID_PATTERN = re.compile(f"[{ZERO}{ONE}]+")  # e.g., ZERO="\u200b", ONE="\u200c"
+ULID_LENGTH = 26
+BITS_PER_CHAR = 8
+ENCODED_ULID_LENGTH = ULID_LENGTH * BITS_PER_CHAR
 
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -1433,19 +1436,36 @@ def is_encoded(content: str) -> bool:
     return bool(ENCODED_ID_PATTERN.search(content))
 
 def extract_encoded_ids(content: str) -> List[str]:
-    """Extracts and decodes all encoded IDs found within content."""
-    return [decode_id(match) for match in ENCODED_ID_PATTERN.findall(content)]
+    """Extracts and decodes all encoded IDs found within ``content``.
+
+    Adjacent encoded identifiers are handled as separate IDs. Each ULID is
+    encoded using ``ENCODED_ULID_LENGTH`` zero-width characters.
+    """
+
+    ids: list[str] = []
+    for match in ENCODED_ID_PATTERN.findall(content):
+        # Decode the entire group then split into ULID chunks
+        decoded = decode_id(match)
+        for i in range(0, len(decoded), ULID_LENGTH):
+            chunk = decoded[i : i + ULID_LENGTH]
+            if len(chunk) == ULID_LENGTH:
+                ids.append(chunk)
+    return ids
 
 def split_content_by_encoded_ids(content: str) -> List[Dict[str, str]]:
     """Return ``content`` broken into alternating text and encoded ID pieces."""
-    segments = []
+    segments: list[Dict[str, str]] = []
     parts = re.split(f"({ENCODED_ID_PATTERN.pattern})", content)
 
     for part in parts:
         if not part:
             continue
         if ENCODED_ID_PATTERN.fullmatch(part):
-            segments.append({"type": "encoded_id", "id": decode_id(part)})
+            decoded = decode_id(part)
+            for i in range(0, len(decoded), ULID_LENGTH):
+                chunk = decoded[i : i + ULID_LENGTH]
+                if len(chunk) == ULID_LENGTH:
+                    segments.append({"type": "encoded_id", "id": chunk})
         else:
             segments.append({"type": "text", "text": part})
 
