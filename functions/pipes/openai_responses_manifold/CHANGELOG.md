@@ -4,6 +4,10 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] - 2025-06-15
+- Fixed `<details>` markup for reasoning summaries to match WebUI expectations.
+- `build_openai_input` now filters items using the full `model_id`.
+
 ## [0.8.7] - 2025-06-13
 - Embedded zero-width encoded IDs during streaming and non-streaming flows.
 - Persisted each output item immediately and yielded the encoded reference.
