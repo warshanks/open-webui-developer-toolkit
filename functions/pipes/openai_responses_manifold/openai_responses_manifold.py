@@ -585,7 +585,7 @@ class Pipe:
                                     f'<details type=\"{__name__}.reasoning\" done="true">\n'
                                     f"<summary>Done thinking!</summary>\n"
                                     f"{all_text}\n"
-                                    "</details>"
+                                    "</details>\n"
                                 )
                                 yield final_snippet  # Yield an empty string to release the event loop for responsiveness
                             else:
