@@ -167,7 +167,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We persist to the DB in a special schema we define:
+* We persist to the DB in a special schema we define.  `01HX4Y2VW5VR2Z2HDQ5QY9REHB` is the unique id we generate. 
 
 ```json
 "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
@@ -185,7 +185,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* Immediately streamed as a zero-width encoded ID so it's embedded into body["messages"]["content"].
+* We immediately encode '01HX4Y2VW5VR2Z2HDQ5QY9REHB' into zero-width characters and yield it so it's permanently embedded into body["messages"]["content"].
 
 ---
 
