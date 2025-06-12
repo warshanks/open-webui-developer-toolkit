@@ -1186,6 +1186,53 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
 
     return Chats.update_chat_by_id(chat_id, chat_model.chat)
 
+def add_openai_response_items_and_get_encoded_ids(
+    chat_id: str,
+    message_id: str,
+    items: List[Dict[str, Any]],
+    model_id: str,
+) -> str:
+    """Persist items and return a zero-width encoded reference string.
+
+    This helper stores ``items`` using the ``openai_responses_pipe`` schema and
+    returns the concatenated zero-width encoded item IDs. The encoded string can
+    be embedded directly into ``body['messages'][*]['content']`` so the full
+    metadata can be reconstructed later via :func:`build_openai_input`.
+    """
+
+    if not items:
+        return ""
+
+    chat_model = Chats.get_chat_by_id(chat_id)
+    if not chat_model:
+        return ""
+
+    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
+    items_store = pipe_root.setdefault("items", {})
+    messages_index = pipe_root.setdefault("messages_index", {})
+
+    message_bucket = messages_index.setdefault(
+        message_id,
+        {"role": "assistant", "done": True, "item_ids": []},
+    )
+
+    now = int(datetime.datetime.utcnow().timestamp())
+    encoded_parts: list[str] = []
+    for payload in items:
+        item_id = generate_ulid()
+        items_store[item_id] = {
+            "model": model_id,
+            "created_at": now,
+            "payload": payload,
+            "message_id": message_id,
+        }
+        message_bucket.setdefault("item_ids", []).append(item_id)
+        encoded_parts.append(encode_id(item_id))
+
+    Chats.update_chat_by_id(chat_id, chat_model.chat)
+
+    return "".join(encoded_parts)
+
 def build_responses_history_by_chat_id_and_message_id(
     chat_id: str,
     message_id: Optional[str] = None,
