@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.8
+version: 0.8.7
 license: MIT
 requirements: orjson
 """
@@ -505,7 +505,7 @@ class Pipe:
 
                             # 4) Build a minimal snippet (omit type="reasoning")
                             snippet = (
-                                "<details type=\"reasoning\" done=\"false\">\n"
+                                f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
                                 f"<summary>🧠{latest_title}</summary>\n"
                                 f"{all_text}\n"
                                 "</details>"
@@ -582,8 +582,8 @@ class Pipe:
                                 all_text += "\n\n --- \n\n"
 
                                 final_snippet = (
-                                    '<details type="reasoning" done="true">\n'
-                                    "<summary>Done thinking!</summary>\n"
+                                    f'<details type=\"{__name__}.reasoning\" done="true">\n'
+                                    f"<summary>Done thinking!</summary>\n"
                                     f"{all_text}\n"
                                     "</details>"
                                 )
@@ -1456,14 +1456,18 @@ def fetch_items_by_ids(
     if not chat_model:
         return {}
 
+    base_model = model_id.removeprefix("openai_responses.") if model_id else None
+
     items_store = chat_model.chat.get("openai_responses_pipe", {}).get("items", {})
     lookup: Dict[str, Dict[str, Any]] = {}
     for item_id in item_ids:
         item = items_store.get(item_id)
         if not item:
             continue
-        if model_id and item.get("model") != model_id:
-            continue
+        if base_model:
+            item_base = item.get("model", "").removeprefix("openai_responses.")
+            if item_base != base_model:
+                continue
         lookup[item_id] = item.get("payload", {})
     return lookup
 
