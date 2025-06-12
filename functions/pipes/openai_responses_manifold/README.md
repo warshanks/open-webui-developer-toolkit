@@ -244,7 +244,7 @@ Finally, the assistant sends the human-readable message:
           "parentId": "933ea7dc-d9aa-4981-a447-b06846376136",
           "childrenIds": [],
           "role": "assistant",
-          "content": "The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28.",
+          "content": "<invisible_encoded_01HX4Y2VW5VR2Z2HDQ5QY9REHB><invisible_encoded_01HX4Y2VW6B091XE84F5G0Z8NF>The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28."
           "model": "openai_responses.gpt-4o",
           "modelName": "OpenAI: GPT-4o ★★☆☆",
           "timestamp": 1749686545,
