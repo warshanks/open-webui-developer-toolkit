@@ -167,7 +167,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* Persisted exactly as-is:
+* We persist to the DB in a special schema we define:
 
 ```json
 "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
@@ -191,32 +191,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 
 #### 3️⃣ Tool returns the function call output:
 
-The calculator tool computes and returns:
-
-```json
-{
-  "type": "function_call_output",
-  "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-  "output": "34234*pi = 107549.282902993"
-}
-```
-
-* We stream (yield) the to the DB in a special schema we define:
-
-```json
-"01HX4Y2VW6B091XE84F5G0Z8NF": {
-  "model": "gpt-4o",
-  "created_at": 1718073602,
-  "payload": {
-    "type": "function_call_output",
-    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-    "output": "34234*pi = 107549.282902993"
-  },
-  "message_id": "msg_9fz4qx7e"
-}
-```
-
-* We stream (yield) another zero-width encoded ID so it's embedded into body["messages"]["content"].
+Gather tool result, persist to DB and yield ID (similar to previous step)
 
 ---
 
