@@ -217,139 +217,103 @@ Finally, the assistant sends the human-readable message:
 
 ---
 
-#### 📦 **Final Database Structure (Immutable Ledger)**:
+#### 📦 **Final Chat DB Record**:
 
 ```json
-"openai_responses_pipe": {
-  "__v": 3,
-
-  "items": {
-    "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
-      "model": "gpt-4o",
-      "created_at": 1718073601,
-      "payload": {
-        "type": "function_call",
-        "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
-        "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-        "name": "calculator",
-        "arguments": "{\"expression\":\"34234*pi\"}",
-        "status": "completed"
-      },
-      "message_id": "msg_9fz4qx7e"
-    },
-
-    "01HX4Y2VW6B091XE84F5G0Z8NF": {
-      "model": "gpt-4o",
-      "created_at": 1718073602,
-      "payload": {
-        "type": "function_call_output",
-        "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-        "output": "34234*pi = 107549.282902993"
-      },
-      "message_id": "msg_9fz4qx7e"
-    }
-  },
-
-  "messages_index": {
-    "msg_9fz4qx7e": {
-      "role": "assistant",
-      "done": true,
-      "item_ids": [
-        "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
-        "01HX4Y2VW6B091XE84F5G0Z8NF"
-      ]
-    }
-  }
-}
-```
-
-**Pro Tip**
-You can inspect the DB chat item directly in your browser by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
-
-Full chat JSON structure example:
-
-```python
 {
-  "id": "<chat_id>",
-  "user_id": "<user_id>",
-  "title": "<chat_title>",
+  "id": "61fba20f-2395-40f8-917f-6f80036a5fe9",
+  "user_id": "91216674-177d-4d5b-8a0b-a2d83783eb54",
+  "title": "New Chat",
   "chat": {
-    "id": "<chat_internal_id>",
-    "title": "<chat_title>",
-    "models": ["<model_id>"],
-    "params": {},
+    "id": "",
+    "title": "New Chat",
+    "models": ["openai_responses.gpt-4o"],
     "history": {
       "messages": {
-        "<message_id>": {
-          "id": "<message_id>",
-          "parentId": "<parent_message_id_or_null>",
-          "childrenIds": ["<child_message_id>", "..."],
-          "role": "user|assistant|function",
-          "content": "<message_text_or_null>",
-          "model": "<model_id>",
-          "modelName": "<model_display_name>",
-          "modelIdx": <index>,
-          "timestamp": <unix_ms>,
-          "usage": {},
+        "933ea7dc-d9aa-4981-a447-b06846376136": {
+          "id": "933ea7dc-d9aa-4981-a447-b06846376136",
+          "parentId": null,
+          "childrenIds": ["9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"],
+          "role": "user",
+          "content": "what is 34234*pi",
+          "timestamp": 1749686545,
+          "models": ["openai_responses.gpt-4o"]
+        },
+        "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1": {
+          "id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1",
+          "parentId": "933ea7dc-d9aa-4981-a447-b06846376136",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28.",
+          "model": "openai_responses.gpt-4o",
+          "modelName": "OpenAI: GPT-4o ★★☆☆",
+          "timestamp": 1749686545,
+          "statusHistory": [
+            {
+              "description": "🛠️ Let me try calculator…",
+              "done": false,
+              "hidden": false
+            },
+            {
+              "description": "🛠️ Done—the tool finished!",
+              "done": true,
+              "hidden": false
+            }
+          ],
+          "usage": {
+            "input_tokens": 1657,
+            "output_tokens": 41,
+            "total_tokens": 1698,
+            "turn_count": 2,
+            "function_call_count": 1
+          },
           "done": true
         }
       },
-      "currentId": "<current_message_id>"
+      "currentId": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
     },
-    "messages": [
-      {
-        // Flattened version of messages
-      }
-    ],
-    "tags": ["<optional_tag>", "..."],
-    "timestamp": <unix_ms>,
-    "files": [
-      // Any attached files
-    ],
-
-  // —— Custom Extension: Added by openai_responses_pipe —————————————————
-  "openai_responses_pipe": {
-    "__v": 3,
-  
-    /* Immutable **items** collection*/
-    "items": {
-      /* ULID/KSUID keeps natural chronological order and global uniqueness */
-      "01HX4Y2VW41FV7KQ226QC4CCDY": {
-        "type": "reasoning",
-        "model": "gpt-4o",
-        "created_at": 1718073600,
-        "payload": { "encrypted_content": "…" },
-        "message_id": "msg_9fz4qx7e"
-      },
-      "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
-        "type": "function_call",
-        "model": "gpt-4o",
-        "created_at": 1718073601,
-        "payload": {
-          "name": "get_weather",
-          "arguments": { "location": "New York" }
+    "openai_responses_pipe": {
+      "__v": 3,
+      "items": {
+        "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+          "model": "gpt-4o",
+          "created_at": 1749686551,
+          "payload": {
+            "type": "function_call",
+            "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+            "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+            "name": "calculator",
+            "arguments": "{\"expression\":\"34234*pi\"}",
+            "status": "completed"
+          },
+          "message_id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
         },
-        "message_id": "msg_9fz4qx7e"
+        "01HX4Y2VW6B091XE84F5G0Z8NF": {
+          "model": "gpt-4o",
+          "created_at": 1749686552,
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+            "output": "34234*pi = 107549.282902993"
+          },
+          "message_id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
+        }
+      },
+      "messages_index": {
+        "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1": {
+          "role": "assistant",
+          "done": true,
+          "item_ids": [
+            "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
+            "01HX4Y2VW6B091XE84F5G0Z8NF"
+          ]
+        }
       }
-      /* … */
     },
-  
-    /* Sparse **messages_index** — describes the chat tree */
-    "messages_index": {
-      "msg_9fz4qx7e": {
-        "role": "assistant",
-        "done": true,
-        "item_ids": [
-          "01HX4Y2VW41FV7KQ226QC4CCDY",
-          "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
-          "01HX4Y2VW6B091XE84F5G0Z8NF"
-        ]
-      }
-    }
+    "timestamp": 1749686545104
   },
-  // ————————————————————————————————————————————————————————————————————
-  "updated_at": <unix_timestamp>,
-  "created_at": <unix_timestamp>,
+  "updated_at": 1749686551,
+  "created_at": 1749686545,
   "share_id": null,
   "archived": false,
   "pinned": false,
@@ -357,3 +321,6 @@ Full chat JSON structure example:
   "folder_id": null
 }
 ```
+
+**Pro Tip**
+You can inspect the DB chat item directly in your browser by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
