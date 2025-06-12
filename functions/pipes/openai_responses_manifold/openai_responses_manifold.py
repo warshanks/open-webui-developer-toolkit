@@ -1250,6 +1250,10 @@ def build_responses_history_by_chat_id_and_message_id(
         {"type": "message", "role": "assistant", "content": [...]},
         ...
       ]
+    
+    Only items associated with ``model_id`` are included when the parameter is
+    provided. This prevents mixing response data from different models within
+    the same chat history.
     """
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
@@ -1317,6 +1321,8 @@ def build_responses_history_by_chat_id_and_message_id(
         for item_id in extras_bucket.get("item_ids", []):
             extra = pipe_items.get(item_id)
             if not extra:
+                continue
+            if model_id and extra.get("model") != model_id.removeprefix("openai_responses."):
                 continue
             timeline.append(
                 {
@@ -1445,25 +1451,57 @@ def split_content_by_encoded_ids(content: str) -> List[Dict[str, str]]:
 
     return segments
 
-def fetch_items_by_ids(chat_id: str, item_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Return a mapping of ``item_id`` to its persisted payload."""
+def fetch_items_by_ids(
+    chat_id: str,
+    item_ids: List[str],
+    *,
+    model_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Return a mapping of ``item_id`` to its persisted payload.
+
+    Parameters
+    ----------
+    chat_id : str
+        Chat identifier used to look up stored items.
+    item_ids : List[str]
+        ULIDs previously embedded in the message text.
+    model_id : str, optional
+        Filter results to items originating from ``model_id``. The value should
+        match the OpenAI model ID stored alongside each item. This prevents
+        mixing data from different models when the chat history spans multiple
+        model types.
+    """
+
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
         return {}
+
+    base_model = model_id.removeprefix("openai_responses.") if model_id else None
 
     items_store = chat_model.chat.get("openai_responses_pipe", {}).get("items", {})
     lookup: Dict[str, Dict[str, Any]] = {}
     for item_id in item_ids:
         item = items_store.get(item_id)
-        if item:
-            lookup[item_id] = item.get("payload", {})
+        if not item:
+            continue
+        if base_model and item.get("model") != base_model:
+            continue
+        lookup[item_id] = item.get("payload", {})
     return lookup
 
-def build_openai_input(body_messages: List[Dict[str, str]], chat_id: str) -> List[Dict[str, Any]]:
+def build_openai_input(
+    body_messages: List[Dict[str, str]],
+    chat_id: str,
+    *,
+    model_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Translate ``body['messages']`` back into the Responses API format.
 
     Zero-width encoded identifiers found in assistant message content are
-    resolved to their full payloads in a single database lookup.
+    resolved to their full payloads in a single database lookup. When
+    ``model_id`` is provided, only items originating from that model are
+    considered. This avoids leaking tool outputs from unrelated models into
+    subsequent requests.
     """
     openai_input = []
 
@@ -1474,7 +1512,11 @@ def build_openai_input(body_messages: List[Dict[str, str]], chat_id: str) -> Lis
             required_item_ids.update(extract_encoded_ids(message["content"]))
 
     # Single DB call if there are any IDs to fetch
-    items_lookup = fetch_items_by_ids(chat_id, list(required_item_ids)) if required_item_ids else {}
+    items_lookup = (
+        fetch_items_by_ids(chat_id, list(required_item_ids), model_id=model_id)
+        if required_item_ids
+        else {}
+    )
 
     # Second pass: Construct final OpenAI input, maintaining correct order
     for message in body_messages:
