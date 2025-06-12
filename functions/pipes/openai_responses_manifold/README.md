@@ -135,51 +135,153 @@ On subsequent API calls:
 _**Why encode identifiers and not the entire metadata directly?**_
 Embedding full OpenAI response metadata directly into zero-width characters significantly increases storage overhead. Instead, encoding a concise, unique identifier optimizes storage while enabling complete metadata retrieval from the database.
 
-### Practical Example
+### Practical Example: Embedding OpenAI Function Calls into Assistant Responses
 
-Stored comprehensive metadata (in the database):
+This example demonstrates how the manifold seamlessly embeds hidden metadata IDs directly into assistant responses, preserving **exact OpenAI response items** to ensure accurate context reconstruction.
 
-```python
+---
+
+#### 1️⃣ User asks a question:
+
+```json
+{
+  "role": "user",
+  "content": "Calculate 34234 multiplied by pi."
+}
+```
+
+---
+
+#### 2️⃣ OpenAI initiates a function call:
+
+OpenAI responds with a `function_call` event to invoke a calculator tool:
+
+```json
+{
+  "type": "function_call",
+  "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+  "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+  "name": "calculator",
+  "arguments": "{\"expression\":\"34234*pi\"}",
+  "status": "completed"
+}
+```
+
+* Persisted exactly as-is:
+
+```json
+"01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+  "model": "gpt-4o",
+  "created_at": 1718073601,
+  "payload": {
+    "type": "function_call",
+    "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+    "name": "calculator",
+    "arguments": "{\"expression\":\"34234*pi\"}",
+    "status": "completed"
+  },
+  "message_id": "msg_9fz4qx7e"
+}
+```
+
+* Immediately streamed as a zero-width encoded ID so it's embedded into body["messages"]["content"].
+
+---
+
+#### 3️⃣ Tool returns the function call output:
+
+The calculator tool computes and returns:
+
+```json
+{
+  "type": "function_call_output",
+  "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+  "output": "34234*pi = 107549.282902993"
+}
+```
+
+* We stream (yield) the to the DB in a special schema we define:
+
+```json
+"01HX4Y2VW6B091XE84F5G0Z8NF": {
+  "model": "gpt-4o",
+  "created_at": 1718073602,
+  "payload": {
+    "type": "function_call_output",
+    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+    "output": "34234*pi = 107549.282902993"
+  },
+  "message_id": "msg_9fz4qx7e"
+}
+```
+
+* We stream (yield) another zero-width encoded ID so it's embedded into body["messages"]["content"].
+
+---
+
+#### 4️⃣ Assistant provides the visible response:
+
+Finally, the assistant sends the human-readable message:
+
+```
+"34234 multiplied by π equals approximately 107549.28."
+```
+
+* We stream (yield) the answer.
+
+---
+
+#### 📌 **Final Stream (Invisible IDs + Response)**:
+
+```
+<encoded function_call ID><encoded function_call_output ID>34234 multiplied by π equals approximately 107549.28.
+```
+
+*(Invisible IDs precede the visible text in this example however OpenAI can have additional tool calls / reasonsing at any point.)*
+
+---
+
+#### 📦 **Final Database Structure (Immutable Ledger)**:
+
+```json
 "openai_responses_pipe": {
   "__v": 3,
 
-  /* Immutable event ledger  — append‑only, item‑centric */
   "items": {
-    /* ULID/KSUID keeps natural chronological order and global uniqueness */
-    "01HX4Y2VW41FV7KQ226QC4CCDY": {
-      "type": "reasoning",                     // passthrough from OpenAI
-      "model": "gpt-4o",
-      "created_at": 1718073600,
-      "payload": {
-        "encrypted_content": "..."
-      },
-      "message_id": "msg_9fz4qx7e"
-    },
-
     "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
-      "type": "function_call",
       "model": "gpt-4o",
       "created_at": 1718073601,
       "payload": {
-        "name": "get_weather",
-        "arguments": { "location": "New York" }
+        "type": "function_call",
+        "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+        "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+        "name": "calculator",
+        "arguments": "{\"expression\":\"34234*pi\"}",
+        "status": "completed"
       },
       "message_id": "msg_9fz4qx7e"
     },
 
-    /* … further items … */
+    "01HX4Y2VW6B091XE84F5G0Z8NF": {
+      "model": "gpt-4o",
+      "created_at": 1718073602,
+      "payload": {
+        "type": "function_call_output",
+        "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+        "output": "34234*pi = 107549.282902993"
+      },
+      "message_id": "msg_9fz4qx7e"
+    }
   },
 
-  /* Sparse **messages_index** — describes the chat tree */
   "messages_index": {
     "msg_9fz4qx7e": {
       "role": "assistant",
       "done": true,
-      /* ordered list of item ids that produced the visible message */
       "item_ids": [
-        "01HX4Y2VW41FV7KQ226QC4CCDY",
         "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
-        "01HX4Y2VW6B091XE84F5G0Z8NF"  // message content
+        "01HX4Y2VW6B091XE84F5G0Z8NF"
       ]
     }
   }
