@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Added helper utilities for zero-width encoded item persistence.
 - Implemented database helper functions for new response item schema.
 - Refined item encoding and lookup helpers.
+- Added `add_openai_response_items_and_get_encoded_ids` to return
+  zero-width encoded references when persisting items.
 
 ## [0.8.5] - 2025-06-10
 - Added `TRUNCATION` valve to configure automatic truncation behaviour.
