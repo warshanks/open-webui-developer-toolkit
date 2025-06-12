@@ -1343,3 +1343,100 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     # Example pattern: <details type="reasoning">...</details>
     pattern = rf'<details\b[^>]*\btype=["\'](?:{pattern_types})["\'][^>]*>.*?</details>'
     return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
+
+
+
+#####################
+
+# Rough ideas on functions I'll need to implement to support new persistent item approach
+
+
+# Pre-compiled regex for performance
+ENCODED_ID_PATTERN = re.compile(f"[{ZERO}{ONE}]+")  # e.g., ZERO="\u200b", ONE="\u200c"
+
+def is_encoded(content: str) -> bool:
+    """Quickly checks if the content contains encoded IDs."""
+    return bool(ENCODED_ID_PATTERN.search(content))
+
+def extract_encoded_ids(content: str) -> List[str]:
+    """Extracts and decodes all encoded IDs found within content."""
+    return [decode_id(match) for match in ENCODED_ID_PATTERN.findall(content)]
+
+def split_content_by_encoded_ids(content: str) -> List[Dict[str, str]]:
+    """Splits content into an ordered list of text and encoded ID segments."""
+    segments = []
+    parts = re.split(f"({ENCODED_ID_PATTERN.pattern})", content)
+
+    for part in parts:
+        if not part:
+            continue
+        if ENCODED_ID_PATTERN.fullmatch(part):
+            segments.append({"type": "encoded_id", "id": decode_id(part)})
+        else:
+            segments.append({"type": "text", "text": part})
+
+    return segments
+
+def fetch_items_by_ids(chat_id: str, item_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetches persisted items by IDs from the database, returning a lookup map."""
+    fetched_items = db_fetch_items(chat_id, item_ids)  # Placeholder DB call
+    return {item["item_id"]: item["payload"] for item in fetched_items}
+
+def build_openai_input(body_messages: List[Dict[str, str]], chat_id: str) -> List[Dict[str, Any]]:
+    """
+    Constructs an OpenAI-compatible input array from provided body_messages, resolving encoded IDs
+    to persisted items as needed. Efficiently minimizes database operations.
+    """
+    openai_input = []
+
+    # First pass: Determine all needed item IDs for a single database query
+    required_item_ids = set()
+    for message in body_messages:
+        if message["role"] == "assistant" and is_encoded(message["content"]):
+            required_item_ids.update(extract_encoded_ids(message["content"]))
+
+    # Single DB call if there are any IDs to fetch
+    items_lookup = fetch_items_by_ids(chat_id, list(required_item_ids)) if required_item_ids else {}
+
+    # Second pass: Construct final OpenAI input, maintaining correct order
+    for message in body_messages:
+        role = message["role"]
+        content = message["content"]
+
+        if role == "user":
+            openai_input.append({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": content}]
+            })
+            continue  # No further processing for user messages
+
+        # Assistant messages with potential encoded IDs
+        if is_encoded(content):
+            segments = split_content_by_encoded_ids(content)
+
+            for segment in segments:
+                if segment["type"] == "encoded_id":
+                    item_id = segment["id"]
+                    item = items_lookup.get(item_id)
+                    if item:
+                        openai_input.append(item)
+                    else:
+                        logger.warning("Missing persisted item for ID: %s", item_id)
+                elif segment["type"] == "text":
+                    text = segment["text"].strip()
+                    if text:
+                        openai_input.append({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": text}]
+                        })
+        else:
+            # Simple assistant messages without encoded IDs
+            openai_input.append({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content}]
+            })
+
+    return openai_input
