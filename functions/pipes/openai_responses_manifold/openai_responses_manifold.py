@@ -1149,38 +1149,14 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     items: List[Dict[str, Any]],
     model_id: str,
 ) -> Optional[ChatModel]:
+    """Persist OpenAI response items using the new ``openai_responses_pipe`` schema.
+
+    ``items`` should be a list of raw response objects (e.g. ``function_call``
+    payloads). Each item will be assigned a ULID and stored under
+    ``openai_responses_pipe.items`` while the ID is referenced from
+    ``openai_responses_pipe.messages_index[message_id]``.
     """
-    Helper to persist OpenAI responses safely in Open WebUI DB without impacting other
-    chat data. This allows us to store function call traces, tool outputs, and other
-    special items related to messages in a structured way, enabling easy retrieval
-    and reconstruction of conversations with additional context.
 
-    Schema Overview
-    ---------------
-    Inside each chat document (`chat_model.chat`), we store an `openai_responses_pipe` structure:
-
-        {
-        "openai_responses_pipe": {
-            "__v": 2,                           # version
-
-            "messages": {
-            "<message_id>": {
-                "model": "o4-mini",          # stamped once – avoids per-item duplication
-                "timestamp": 1719922512,    # unix-seconds the root message arrived
-
-                "items": [ /* raw output items in arrival order */ ]
-            }
-            },
-        }
-        }
-
-    When users or the system perform a function call (or any special action)
-    related to a message, we append these "response items" to
-    `openai_responses_pipe.messages[<message_id>]`. Later, when reconstructing
-    the conversation, these items can be inserted above the respective message
-    that triggered them. This allows for easy referencing of function calls,
-    their outputs, or any other extra JSON data in the final conversation flow.
-    """
     if not items:
         return Chats.get_chat_by_id(chat_id)  # nothing to add
 
@@ -1188,21 +1164,25 @@ def add_openai_response_items_to_chat_by_id_and_message_id(
     if not chat_model:
         return None
 
-    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 2})
-    messages_dict = pipe_root.setdefault("messages", {})
+    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
+    items_store = pipe_root.setdefault("items", {})
+    messages_index = pipe_root.setdefault("messages_index", {})
 
-    bucket = messages_dict.setdefault(
+    message_bucket = messages_index.setdefault(
         message_id,
-        {
-            "model": model_id,
-            "timestamp": int(datetime.datetime.utcnow().timestamp()),
-            "items": [],
-        },
+        {"role": "assistant", "done": True, "item_ids": []},
     )
-    bucket.setdefault("model", model_id)
-    bucket.setdefault("timestamp", int(datetime.datetime.utcnow().timestamp()))
-    bucket.setdefault("items", [])
-    bucket["items"].extend(items)
+
+    now = int(datetime.datetime.utcnow().timestamp())
+    for payload in items:
+        item_id = generate_ulid()
+        items_store[item_id] = {
+            "model": model_id,
+            "created_at": now,
+            "payload": payload,
+            "message_id": message_id,
+        }
+        message_bucket.setdefault("item_ids", []).append(item_id)
 
     return Chats.update_chat_by_id(chat_id, chat_model.chat)
 
@@ -1213,8 +1193,8 @@ def build_responses_history_by_chat_id_and_message_id(
     model_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Reconstructs a chain of messages up to `message_id` (or the currentId)
-    and inserts any items from `openai_responses_pipe.messages[<msg-id>]`
+    Reconstructs a chain of messages up to ``message_id`` (or the currentId)
+    and inserts any persisted output items stored in ``openai_responses_pipe``
     before the corresponding message.
 
     Returns a list of items the OpenAI Responses API expects:
@@ -1233,7 +1213,9 @@ def build_responses_history_by_chat_id_and_message_id(
         message_id = chat_data.get("history", {}).get("currentId")
 
     messages_dict = chat_data.get("history", {}).get("messages", {})
-    pipe_messages = chat_data.get("openai_responses_pipe", {}).get("messages", {})
+    pipe_root = chat_data.get("openai_responses_pipe", {})
+    pipe_items = pipe_root.get("items", {})
+    messages_index = pipe_root.get("messages_index", {})
 
     # Walk through the full chain of messages in order
     message_chain = get_message_list(messages_dict, message_id)
@@ -1284,13 +1266,17 @@ def build_responses_history_by_chat_id_and_message_id(
         })
 
         # Also add any pipe items (extras) linked to this message
-        extras_bucket = pipe_messages.get(msg["id"], {})
-        extras = extras_bucket.get("items", [])
-        for extra in extras:
-            timeline.append({
-                "timestamp": extra.get("timestamp", msg_timestamp),
-                **extra  # all fields from the pipe item
-            })
+        extras_bucket = messages_index.get(msg["id"], {})
+        for item_id in extras_bucket.get("item_ids", []):
+            extra = pipe_items.get(item_id)
+            if not extra:
+                continue
+            timeline.append(
+                {
+                    "timestamp": extra.get("created_at", msg_timestamp),
+                    **extra.get("payload", {}),
+                }
+            )
 
     # Sort everything by timestamp so history matches reality
     timeline.sort(key=lambda event: event["timestamp"])
@@ -1355,6 +1341,21 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 
 # Pre-compiled regex for performance
 ENCODED_ID_PATTERN = re.compile(f"[{ZERO}{ONE}]+")  # e.g., ZERO="\u200b", ONE="\u200c"
+
+CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+def _encode_base32(value: int, length: int) -> str:
+    chars = []
+    for _ in range(length):
+        chars.append(CROCKFORD_ALPHABET[value & 31])
+        value >>= 5
+    return "".join(reversed(chars))
+
+def generate_ulid() -> str:
+    """Generate a time-sortable ULID string."""
+    timestamp_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
+    random_part = int.from_bytes(os.urandom(10), "big")
+    return _encode_base32(timestamp_ms, 10) + _encode_base32(random_part, 16)
 
 def encode_id(item_id: str) -> str:
     """Encode a plain identifier into zero-width characters."""
