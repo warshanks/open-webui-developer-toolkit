@@ -210,7 +210,7 @@ Finally, the assistant sends the human-readable message:
 #### 📌 **Final Stream (Invisible IDs + Response)**:
 
 ```
-<encoded function_call ID><encoded function_call_output ID>34234 multiplied by π equals approximately 107549.28.
+<invisible_encoded_01HX4Y2VW5VR2Z2HDQ5QY9REHB><invisible_encoded_01HX4Y2VW6B091XE84F5G0Z8NF>The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28.
 ```
 
 *(Invisible IDs precede the visible text in this example however OpenAI can have additional tool calls / reasonsing at any point.)*
