@@ -122,7 +122,7 @@ To address these challenges effectively, we embed encoding short, invisible meta
 
 For example, an assistant message visibly appears as:
 ```python
-body["messages"] = { "role": "assistant", "content": "<encoded invisible function_call ID><encoded invisible function_call_output ID>34234 multiplied by π equals approximately 107549.28" }
+body["messages"] = { "role": "assistant", "content": "<invisible_encoded_id><invisible_encoded_id>The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28." }
 ```
 Here, the hidden zero-width encoded identifier (\u200b) is embedded invisibly after the message content.
 
