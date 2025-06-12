@@ -191,7 +191,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 
 #### 3️⃣ Tool returns the function call output:
 
-Gather tool result, persist to DB and yield ID (similar to previous step)
+Gather tool result, persist to DB and yield encoded invisible ID (similar to previous step)
 
 ---
 
@@ -203,7 +203,7 @@ Finally, the assistant sends the human-readable message:
 "34234 multiplied by π equals approximately 107549.28."
 ```
 
-* We stream (yield) the answer.
+* We stream (yield) it.
 
 ---
 
