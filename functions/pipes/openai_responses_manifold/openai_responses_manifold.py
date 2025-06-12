@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.6
+version: 0.8.7
 license: MIT
 requirements: orjson
 """
@@ -455,7 +455,6 @@ class Pipe:
 
         reasoning_map: Dict[int, str] = {}
         total_usage: Dict[str, Any] = {}
-        collected_items: List[dict] = []  # For storing function_call, function_call_output, etc.
 
 
 
@@ -563,6 +562,16 @@ class Pipe:
                         if msg:
                             await self._emit_status(event_emitter, msg, done=True, hidden=False)
 
+                        if valves.PERSIST_TOOL_RESULTS:
+                            encoded = add_openai_response_items_and_get_encoded_ids(
+                                metadata.get("chat_id"),
+                                metadata.get("message_id"),
+                                [item],
+                                metadata.get("model").get("id"),
+                            )
+                            if encoded:
+                                yield encoded
+
                         if item_type == "reasoning":
                             # Merge all partial reasoning so far
                             all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
@@ -595,8 +604,6 @@ class Pipe:
                     self.logger.error("Streaming ended without a final response.")
                     break
 
-                # Capture the final output items
-                collected_items.extend(final_response_data.get("output", []))
                 usage = final_response_data.get("usage", {})
                 if usage:
                     usage["turn_count"] = 1
@@ -611,8 +618,17 @@ class Pipe:
                 calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
                 if calls:
                     function_call_outputs = await self._execute_function_calls(calls, tools)
-                    collected_items.extend(function_call_outputs) # Store function call outputs to be persisted in DB later
-                    body.input.extend(function_call_outputs) # Append to input for next iteration
+                    if valves.PERSIST_TOOL_RESULTS:
+                        encoded = add_openai_response_items_and_get_encoded_ids(
+                            metadata.get("chat_id"),
+                            metadata.get("message_id"),
+                            function_call_outputs,
+                            metadata.get("model").get("id"),
+                        )
+                        if encoded:
+                            yield encoded
+
+                    body.input.extend(function_call_outputs)
                 else:
                     self.logger.debug("No pending function calls. Exiting loop.")
                     break # LLM response is complete, no further tool calls
@@ -636,16 +652,7 @@ class Pipe:
                 # Emit final usage stats if available
                 await self._emit_completion(event_emitter, usage=total_usage, done=False) # OpenWebUI sends it's own completion event, so we set done=False here to avoid double completion events
 
-            # If PERSIST_TOOL_RESULTS is enabled, append all collected items (function_call, function_call_output, web_search, image_generation, etc.) to the chat message history
-            if valves.PERSIST_TOOL_RESULTS and collected_items:
-                db_items = [item for item in collected_items if item.get("type") != "message"]
-                if db_items:
-                    add_openai_response_items_to_chat_by_id_and_message_id(
-                        metadata.get("chat_id"),
-                        metadata.get("message_id"),
-                        db_items,
-                        metadata.get("model").get("id"),
-                    ) 
+
 
             # If valves is DEBUG or user_valves is set to something other than "INHERIT"
             if valves.LOG_LEVEL == "DEBUG":
@@ -679,7 +686,6 @@ class Pipe:
         tools = tools or {}
         final_output = StringIO()
         total_usage: Dict[str, Any] = {}
-        collected_items: List[dict] = []
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
@@ -690,15 +696,22 @@ class Pipe:
                 )
 
                 items = response.get("output", [])
-                collected_items.extend(items)
 
-                # append text from any message blocks
+                # Persist non-message items immediately and collect text
                 for item in items:
-                    if item.get("type") != "message":
-                        continue
-                    for content in item.get("content", []):
-                        if content.get("type") == "output_text":
-                            final_output.write(content.get("text", ""))
+                    if item.get("type") == "message":
+                        for content in item.get("content", []):
+                            if content.get("type") == "output_text":
+                                final_output.write(content.get("text", ""))
+                    else:
+                        if valves.PERSIST_TOOL_RESULTS:
+                            encoded = add_openai_response_items_and_get_encoded_ids(
+                                metadata.get("chat_id"),
+                                metadata.get("message_id"),
+                                [item],
+                                metadata.get("model").get("id"),
+                            )
+                            final_output.write(encoded)
 
                 usage = response.get("usage", {})
                 if usage:
@@ -714,7 +727,15 @@ class Pipe:
                 calls = [i for i in items if i.get("type") == "function_call"]
                 if calls:
                     fn_outputs = await self._execute_function_calls(calls, tools)
-                    collected_items.extend(fn_outputs)
+                    if valves.PERSIST_TOOL_RESULTS:
+                        encoded = add_openai_response_items_and_get_encoded_ids(
+                            metadata.get("chat_id"),
+                            metadata.get("message_id"),
+                            fn_outputs,
+                            metadata.get("model").get("id"),
+                        )
+                        final_output.write(encoded)
+
                     body.input.extend(fn_outputs)
                 else:
                     break
@@ -1257,88 +1278,25 @@ def build_responses_history_by_chat_id_and_message_id(
     """
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
-        return [] # No previous history found, return empty history
+        return []
 
     chat_data = chat_model.chat
     if not message_id:
         message_id = chat_data.get("history", {}).get("currentId")
 
     messages_dict = chat_data.get("history", {}).get("messages", {})
-    pipe_root = chat_data.get("openai_responses_pipe", {})
-    pipe_items = pipe_root.get("items", {})
-    messages_index = pipe_root.get("messages_index", {})
 
-    # Walk through the full chain of messages in order
     message_chain = get_message_list(messages_dict, message_id)
 
-    # Filter out the current [empty] assistant response.
     if message_chain and message_chain[-1]["role"] == "assistant":
         message_chain = message_chain[:-1]
 
-    # Build one flat timeline of all events
-    timeline = []
-
-    # Regex to strip <details> from assistant messages
-    DETAILS_RE = re.compile(r"<details\b[^>]*>.*?</details>", flags=re.S | re.I)
-
-    for msg in message_chain:
-        msg_timestamp = msg.get("timestamp", 0)
-        role = msg.get("role", "assistant")
-        content_text = (msg.get("content") or "")
-
-        # Remove <details> blocks (reasoning summaries, etc..) for assistant
-        if role == "assistant":
-            content_text = DETAILS_RE.sub("", content_text).strip()
-
-        # Add the structured message to the timeline
-        timeline.append({
-            "timestamp": msg_timestamp,  # Temporary field used for sorting; removed later
-            "type": "message",           # Explicitly denote this timeline entry as a message event (recommended by OpenAI docs)
-            "role": role,                # Indicates the sender's role: "user" or "assistant"
-            "content": [
-                # Add text content (if non-empty)
-                *(
-                    [{"type": "input_text" if role == "user" else "output_text", "text": content_text}]
-                    if content_text else []
-                ),
-
-                # Add image(s) if type='image' and url is present.  Url may be a URL or base64-encoded data.
-                *(
-                    [
-                        {
-                            "type": "input_image" if role == "user" else "output_image",
-                            "image_url": file["url"], # URL or base64-encoded data
-                        }
-                        for file in msg.get("files", [])
-                        if file.get("type") == "image" and file.get("url")
-                    ]
-                ),
-            ]
-        })
-
-        # Also add any pipe items (extras) linked to this message
-        extras_bucket = messages_index.get(msg["id"], {})
-        for item_id in extras_bucket.get("item_ids", []):
-            extra = pipe_items.get(item_id)
-            if not extra:
-                continue
-            if model_id and extra.get("model") != model_id.removeprefix("openai_responses."):
-                continue
-            timeline.append(
-                {
-                    "timestamp": extra.get("created_at", msg_timestamp),
-                    **extra.get("payload", {}),
-                }
-            )
-
-    # Sort everything by timestamp so history matches reality
-    timeline.sort(key=lambda event: event["timestamp"])
-
-    # Remove 'timestamp' key before returning to API (for cleanliness)
-    return [
-        {k: v for k, v in event.items() if k != "timestamp"}
-        for event in timeline
+    body_messages = [
+        {"role": m.get("role", "assistant"), "content": m.get("content", ""), **({"files": m.get("files", [])} if m.get("files") else {})}
+        for m in message_chain
     ]
+
+    return build_openai_input(body_messages, chat_id, model_id=model_id)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
@@ -1548,14 +1506,21 @@ def build_openai_input(
             continue
 
         if role == "user":
+            contents = []
             if content:
-                openai_input.append(
+                contents.append({"type": "input_text", "text": content})
+            contents.extend(
+                [
                     {
-                        "type": "message",
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": content}],
+                        "type": "input_image",
+                        "image_url": f.get("url"),
                     }
-                )
+                    for f in message.get("files", [])
+                    if f.get("type") == "image" and f.get("url")
+                ]
+            )
+            if contents:
+                openai_input.append({"type": "message", "role": "user", "content": contents})
             continue
 
         # Assistant messages with potential encoded IDs

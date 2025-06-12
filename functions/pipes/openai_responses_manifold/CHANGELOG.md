@@ -4,6 +4,11 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2025-06-13
+- Embedded zero-width encoded IDs during streaming and non-streaming flows.
+- Persisted each output item immediately and yielded the encoded reference.
+- Rebuilt chat history using `build_openai_input` for accurate ordering.
+
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.
 - Implemented database helper functions for new response item schema.
