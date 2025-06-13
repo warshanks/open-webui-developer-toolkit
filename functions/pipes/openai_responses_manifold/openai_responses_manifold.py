@@ -371,10 +371,14 @@ class Pipe:
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
-        ANONYMIZE_USER_ID: bool = Field(
-            default=True,
-            description="Use anonymous user identifiers (UUID) instead of user email addresses in OpenAI API requests. Passing consistent user identifiers improves cache efficiency. Enabled by default for enhanced privacy.",
-        ),
+        USER_ID_FIELD: Literal["id", "email"] = Field(
+            default="id",
+            description=(
+                "Controls which user identifier is sent in the 'user' parameter to OpenAI. "
+                "Passing a unique identifier enables OpenAI response caching (improves speed and reduces cost). "
+                "Choose 'id' to use the OpenWebUI user ID (privacy-friendly), or 'email' to use the user's email address."
+            ),
+        )
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
@@ -420,7 +424,7 @@ class Pipe:
         """
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         openwebui_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
-        user_identifier = __user__["id"] if valves.ANONYMIZE_USER_ID else __user__["email"] # User identifier for OpenAI API requests (required for cache routing). Defaults to user ID, or email if anonymization is disabled.  
+        user_identifier = __user__[valves.USER_ID_FIELD]  # Use 'id' or 'email' as configured
 
         # Set up session logger with session_id and log level
         SessionLogger.session_id.set(__metadata__.get("session_id", None))
