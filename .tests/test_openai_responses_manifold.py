@@ -15,8 +15,8 @@ def test_encode_decode_roundtrip():
     mod = import_module('functions.pipes.openai_responses_manifold.openai_responses_manifold')
 
     sample_id = "01HX4Y2VW5VR2Z2HDQ5QY9REHB"
-    encoded = mod.encode_id(sample_id)
-    assert mod.decode_id(encoded) == sample_id
+    encoded = mod.encode_item_id(sample_id)
+    assert mod.decode_item_id(encoded) == sample_id
 
 
 def test_split_and_extract_ids():
@@ -26,12 +26,12 @@ def test_split_and_extract_ids():
         "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
         "01HX4Y2VW6B091XE84F5G0Z8NF",
     ]
-    encoded = "".join(mod.encode_id(i) for i in ids)
+    encoded = "".join(mod.encode_item_id(i) for i in ids)
     content = f"prefix {encoded} suffix"
 
-    assert mod.extract_encoded_ids(content) == ids
+    assert mod.extract_item_ids(content) == ids
 
-    segments = mod.split_content_by_encoded_ids(content)
+    segments = mod.split_text_by_encoded_item_ids(content)
     assert segments[0]["type"] == "text"
     assert segments[1]["type"] == "encoded_id"
     assert segments[1]["id"] == ids[0]
@@ -61,21 +61,23 @@ def test_item_persistence_roundtrip(monkeypatch):
 
     monkeypatch.setattr(mod, "Chats", DummyChats)
 
-    encoded = mod.add_openai_response_items_and_get_encoded_ids(
+    encoded = mod.persist_openai_response_items(
         "c1",
         "m1",
         [{"type": "function_call", "name": "calc", "arguments": "{}"}],
         "openai_responses.gpt-4o",
     )
     assert encoded  # id encoded
-    stored_id = mod.extract_encoded_ids(encoded)[0]
+    stored_id = mod.extract_item_ids(encoded)[0]
     assert (
         storage["c1"]["openai_responses_pipe"]["items"][stored_id]["model"]
         == "openai_responses.gpt-4o"
     )
 
     messages = [{"role": "assistant", "content": encoded + "result"}]
-    result = mod.build_openai_input(messages, "c1", model_id="openai_responses.gpt-4o")
+    result = mod.ResponsesBody.transform_messages_to_input(
+        messages, chat_id="c1", openwebui_model_id="openai_responses.gpt-4o"
+    )
 
     assert result[0]["type"] == "function_call"
     assert result[1]["type"] == "message"
