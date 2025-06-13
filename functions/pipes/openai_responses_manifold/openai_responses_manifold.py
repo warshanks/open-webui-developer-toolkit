@@ -39,9 +39,8 @@ from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 
 # Open WebUI internals
-from open_webui.models.chats import Chats, ChatModel
+from open_webui.models.chats import Chats
 from open_webui.models.models import ModelForm, Models
-from open_webui.utils.misc import get_message_list, get_system_message
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Constants & Global Configuration
@@ -64,37 +63,26 @@ class CompletionsBody(BaseModel):
     Represents the body of a completions request to OpenAI completions API.
     """
     model: str
-    stream: bool = False
     messages: List[Dict[str, Any]]
-    tools: Optional[List[Dict[str, Any]]] = None                            # tools to use for function calling
-    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None     # reasoning effort for o-series models
-    parallel_tool_calls: Optional[bool] = None                              # allow parallel tool execution
-    user: Optional[str] = None                                              # user ID for the request.  Recommended to improve caching hits.
-    seed: Optional[int] = None                                              # deterministic sampling
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    top_p: Optional[float] = None
+    stream: bool = False
 
     class Config:
-        extra = "allow"
+        extra = "allow" # Pass through additional OpenAI parameters automatically
 
+    # Sanitize the ``model`` field after validation.
     @model_validator(mode='after')
-    def normalize_model(cls, values: "CompletionsBody") -> "CompletionsBody":
-        """Sanitize the ``model`` field after validation.
-
-        The helper removes the ``openai_responses.`` prefix and converts
-        pseudo-model IDs (e.g. ``o4-mini-high``) into their base model while
-        recording the requested reasoning effort.
-        """
+    def normalize_model(self) -> "CompletionsBody":
+        """Normalize model: strip 'openai_responses.' prefix and map '-high' pseudo-models."""
+        
         # Strip prefix if present
-        values.model = values.model.removeprefix("openai_responses.")
+        self.model = self.model.removeprefix("openai_responses.")
 
-        # Handle pseudo-models (e.g., o4-mini-high → o4-mini, effort=high)
-        if values.model in {"o3-mini-high", "o4-mini-high"}:
-            values.model = values.model.replace("-high", "")
-            values.reasoning_effort = "high"
+        # Normalize pseudo-model IDs
+        if self.model in {"o3-mini-high", "o4-mini-high"}:
+            self.model = self.model.removesuffix("-high")
+            self.reasoning_effort = "high"
 
-        return values
+        return self
 
 class ResponsesBody(BaseModel):
     """
@@ -120,138 +108,224 @@ class ResponsesBody(BaseModel):
     include: Optional[List[str]] = None           # extra output keys
 
     class Config:
-        extra = "allow"
+        extra = "allow" # Allow additional OpenAI parameters automatically (future-proofing)
 
     @staticmethod
     def transform_tools(
-        tools: list[dict] | dict[str, Any],
+        openwebui_tools: dict[str, Any],
         strict: bool = False,
     ) -> list[dict]:
         """
-        Normalize tool definitions from Open WebUI (`__tools__`) or OpenAI Completions API (`body["tools"]` when native mode is enabled) formats into the OpenAI Responses API schema.
+        Normalize Open WebUI tool definitions into the OpenAI Responses API schema.
 
-        Parameters
-        ----------
-        tools : dict[str, Any] | list[dict]
-            Tool definitions in either:
-            - **Internal dict format**(`__tools__`): `{tool_name: {"spec": {...}, ...}}`
-            - **Completions API format** (`body["tools"]`): `[{"type": "function", "function": {...}}, ...]`
+        Parameters:
+            openwebui_tools (dict[str, Any]):
+                Tool definitions from Open WebUI in its native schema.
+            strict (bool, optional):
+                When True, enforces a strict JSON schema by marking all parameters as required,
+                explicitly allowing nulls for optional fields, and disallowing additional properties.
+                Defaults to False (relaxed schema).
 
-        strict : bool, default=False
-            If `True`, applies OpenAI strict schema enforcement:
-            - Sets `additionalProperties=False`
-            - Marks all fields as required
-            - Allows `"null"` explicitly for optional fields
+        Returns:
+            list[dict]: Transformed tool definitions ready for the Responses API.
+        """
+        if not openwebui_tools:
+            return []
+
+        def apply_strict_schema(tool_schema: dict) -> dict:
+            parameters = tool_schema.get("parameters", {})
+            properties = parameters.get("properties", {})
+            required_properties = set(parameters.get("required", []))
+
+            for property_name, property_definition in properties.items():
+                if property_name not in required_properties:
+                    prop_type = property_definition.get("type")
+                    if isinstance(prop_type, list):
+                        if "null" not in prop_type:
+                            prop_type.append("null")
+                    elif prop_type is not None:
+                        property_definition["type"] = [prop_type, "null"]
+
+            parameters["required"] = list(properties.keys())
+            parameters["additionalProperties"] = False
+            tool_schema["parameters"] = parameters
+            tool_schema["strict"] = True
+
+            return tool_schema
+
+        transformed_tools = [
+            {
+                "type": "function",
+                "name": tool["spec"].get("name", ""),
+                "description": tool["spec"].get("description", ""),
+                "parameters": tool["spec"].get("parameters", {}),
+            }
+            for tool in openwebui_tools.values()
+        ]
+
+        if strict:
+            transformed_tools = [
+                apply_strict_schema(tool) for tool in transformed_tools
+            ]
+
+        return transformed_tools
+
+
+    @staticmethod
+    def transform_messages_to_input(
+        messages: List[Dict[str, Any]],
+        chat_id: Optional[str] = None,
+        openwebui_model_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Build an OpenAI Responses-API `input` array from Open WebUI-style messages.
+
+        If `chat_id` and `openwebui_model_id` is provided AND messages contain zero-width
+        encoded item references, the function looks up the persisted items from database
+        and embeds them in the correct order.
 
         Returns
         -------
-        list[dict]
-            Tools formatted per OpenAI Responses API.
+        List[dict] : The fully-formed `input` list for the OpenAI Responses API.
         """
-        if not tools:
-            return []
 
-        def normalize_tool(tool: dict) -> dict:
-            if "function" in tool:
-                flattened = {"type": "function"}
-                flattened.update(tool["function"])
-                return flattened
-            if "spec" in tool:
-                spec = tool["spec"] or {}
-                return {
-                    "type": "function",
-                    "name": spec.get("name", ""),
-                    "description": spec.get("description", ""),
-                    "parameters": spec.get("parameters", {}),
-                }
-            return tool
+        if (chat_id is None) != (openwebui_model_id is None):
+            raise ValueError("If either 'chat_id' or 'openwebui_model_id' is provided, both must be specified.")
 
-        def apply_strict(schema: dict) -> dict:
-            params = schema.get("parameters", {})
-            properties = params.get("properties", {})
-            required_fields = set(params.get("required", []))
+        required_item_ids: set[str] = set()
 
-            for prop, definition in properties.items():
-                if prop not in required_fields:
-                    f_type = definition.get("type")
-                    if isinstance(f_type, list):
-                        if "null" not in f_type:
-                            definition["type"].append("null")
-                    elif f_type is not None:
-                        definition["type"] = [f_type, "null"]
+        # Gather all encoded item IDs from assistant messages (if chat_id is provided)
+        if chat_id:
+            for m in messages:
+                if (
+                    m.get("role") == "assistant"
+                    and m.get("content")
+                    and contains_encoded_item_ids(m["content"])
+                ):
+                    required_item_ids.update(extract_item_ids(m["content"]))
 
-            params["required"] = list(properties.keys())
-            params["additionalProperties"] = False
-            schema["parameters"] = params
-            schema["strict"] = True
-            return schema
+        # Fetch persisted items if chat_id is provided and there are encoded item IDs
+        items_lookup: dict[str, dict] = {}
+        if chat_id and required_item_ids:
+            items_lookup = fetch_openai_response_items(
+                chat_id,
+                list(required_item_ids),
+                openwebui_model_id=openwebui_model_id,
+            )
 
-        tools_iter = tools.values() if isinstance(tools, dict) else tools
-        result = [normalize_tool(t) for t in tools_iter]
-
-        if strict:
-            result = [apply_strict(t) for t in result]
-
-        return result
-
-    @staticmethod
-    def transform_messages(
-        completions_messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Translate completion-style messages into Responses input.
-
-        System messages are omitted because the ``instructions`` field carries
-        that information.  Each remaining message is wrapped in the structure
-        expected by the Responses API.
-        """
-        responses_input = []
-        for msg in completions_messages:
+        # Build the OpenAI input array
+        openai_input: list[dict] = []
+        for msg in messages:
             role = msg.get("role", "assistant")
+            content = msg.get("content", "")
+
+            # Skip system messages; they belong in `instructions`
             if role == "system":
-                continue  # Skip system messages since they're in instructions
-            responses_input.append({
-                "type": "message",
-                "role": role,
-                "content": [
-                    # Add text content as input_text (if user) or output_text (if assistant)
-                    *([{
-                        "type": "input_text" if role == "user" else "output_text",
-                        "text": msg.get("content", "")
-                    }] if msg.get("content", "") else []),
-                    # Add each image as its own entry
-                    *([{
-                        "type": "input_image" if role == "user" else "output_image",
-                        "image_url": file["url"] # Url or base64 encoded image data
-                    } for file in msg.get("files", []) if file.get("type") == "image" and file.get("url")])
-                ],
-            })
-        return responses_input
+                continue
 
-    @staticmethod
+            # -------- user message ---------------------------------------- #
+            if role == "user":
+                openai_input.append({
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        # Include plain text content
+                        *([{"type": "input_text", "text": content}] if content else []),
+
+                        # Include base64 encoded images if present
+                        *(
+                            {"type": "input_image", "image_url": f["url"]}
+                            for f in msg.get("files", [])
+                            if f.get("type") == "image" and f.get("url")
+                        ),
+                    ]
+                })
+                continue
+
+            # -------- assistant message ----------------------------------- #
+            if contains_encoded_item_ids(content):
+                for segment in split_text_by_encoded_item_ids(content):
+                    if segment["type"] == "encoded_id":
+                        item = items_lookup.get(segment["id"])
+                        if item:
+                            openai_input.append(item)
+                        else:
+                            logging.warning(f"Missing persisted item for ID: {segment['id']}")
+                    elif segment["type"] == "text" and segment["text"]:
+                        openai_input.append({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": segment["text"]}]
+                        })
+            else:
+                # Plain assistant text (no encoded IDs detected)
+                if content:
+                    openai_input.append(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": content}],
+                        }
+                    )
+
+        return openai_input
+
+    @classmethod
     def from_completions(
-        completions: "CompletionsBody",
-        **extras: Any
+        ResponsesBody, completions_body: "CompletionsBody", chat_id: Optional[str] = None, openwebui_model_id: Optional[str] = None, **extra_params
     ) -> "ResponsesBody":
-        """Create a :class:`ResponsesBody` from a :class:`CompletionsBody`.
-
-        Parameters that share the same meaning are copied directly while any
-        additional keyword arguments are forwarded verbatim.  The helper also
-        extracts the system prompt, flattens tools and converts the message
-        history to the format required by the Responses API.
         """
-        system_message = get_system_message(completions.messages)
+        Convert a CompletionsBody into a ResponsesBody.
+
+        - Removes fields unsupported by the Responses API.
+        - Logs warnings for each unsupported parameter dropped.
+        - Renames max_tokens to max_output_tokens, if present.
+        - Converts messages into Responses API format.
+        - Drops tools (rebuild from __tools__ and provided in extra_params later in script).
+        - Allows overriding fields via kwargs.
+        """
+        # Define fields not supported by the Responses API
+        unsupported_fields = {
+            "frequency_penalty", "presence_penalty", "seed", "logit_bias",
+            "logprobs", "top_logprobs", "n", "stop", "response_format",
+            "functions", "function_call", "prompt", "suffix", "max_tokens"
+        }
+
+        # Log warnings for each unsupported field that's set
+        for field in unsupported_fields:
+            value = getattr(completions_body, field, None)
+            if value is not None:
+                logging.warning(f"Dropping unsupported parameter: '{field}'")
+
+        # Create sanitized completions params excluding messages, tools, and unsupported fields
+        sanitized_completions_params = completions_body.model_dump(
+            exclude={"messages", "tools"} | unsupported_fields,
+            exclude_none=True
+        )
+
+        # Rename max_tokens if provided (Responses API uses max_output_tokens)
+        if getattr(completions_body, "max_tokens", None) is not None:
+            sanitized_completions_params["max_output_tokens"] = completions_body.max_tokens
+
+        # Get last system message from completions_body
+        system_message_content = next(
+            (msg["content"] for msg in reversed(completions_body.messages) if msg["role"] == "system"),
+            None
+        )
+
+        # Remove keys explicitly provided in extra_params from sanitized_completions_params
+        for key in extra_params:
+            sanitized_completions_params.pop(key, None)
 
         return ResponsesBody(
-            model=completions.model,
-            stream=completions.stream,
-            temperature=completions.temperature,
-            top_p=completions.top_p,
-            instructions=system_message.get("content", "") if system_message else "",
-            input=ResponsesBody.transform_messages(completions.messages),
-            **({"tools": ResponsesBody.transform_tools(completions.tools)} if completions.tools else {}),
-            **({"user":  completions.user} if getattr(completions, "user", None) else {}),
-            **({"reasoning": {"effort": completions.reasoning_effort}} if completions.reasoning_effort else {}),
-            **{k: v for k, v in extras.items() if v is not None}
+            input=ResponsesBody.transform_messages_to_input(
+                completions_body.messages,
+                chat_id=chat_id,
+                openwebui_model_id=openwebui_model_id
+            ),
+            **({"instructions": system_message_content} if system_message_content else {}),
+            **sanitized_completions_params,
+            **extra_params # Add extra parameters last so they override any existing ones with the same name
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,49 +419,42 @@ class Pipe:
         """Process a user request and return either a stream or final text.
 
         When ``body['stream']`` is ``True`` the method yields deltas from
-        ``_multi_turn_streaming``.  Otherwise it falls back to
-        ``_multi_turn_non_streaming`` and returns the aggregated response.
+        ``_run_streaming_loop``.  Otherwise it falls back to
+        ``_run_nonstreaming_loop`` and returns the aggregated response.
         """
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
-        full_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
+        openwebui_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
         user_identifier = __user__["id"] if valves.ANONYMIZE_USER_ID else __user__["email"] # User identifier for OpenAI API requests (required for cache routing). Defaults to user ID, or email if anonymization is disabled.  
 
         # Set up session logger with session_id and log level
         SessionLogger.session_id.set(__metadata__.get("session_id", None))
         SessionLogger.log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
 
-        # Transform request body (Completions API -> Responses API). Populates with default values.
+        # Transform request body (Completions API -> Responses API).
         completions_body = CompletionsBody.model_validate(body)
         responses_body = ResponsesBody.from_completions(
-            completions_body,
+            completions_body=completions_body,
+
+            # If chat_id and openwebui_model_id are provided, from_completions() uses them to fetch previously persisted items (function_calls, reasoning, etc.)
+            **({"chat_id": __metadata__["chat_id"]} if __metadata__.get("chat_id") else {}),
+            **({"openwebui_model_id": openwebui_model_id} if openwebui_model_id else {}),
+
+            # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
             user=user_identifier,
-        )  # supports passing custom params (e.g., truncation) which are injected into ResponsesBody
+        )
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
-            return await self._handle_task(responses_body.model_dump(), valves) # Placeholder for task handling logic
+            return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
-        # Log instructions
-        # self.logger.info("Instructions: %s", responses_body.instructions)
-
-        # Override input if ``chat_id`` is provided.
-        # We now reconstruct the history directly from ``body['messages']`` which
-        # already contains zero-width encoded IDs for any persisted OpenAI
-        # response items.
-        if __metadata__.get("chat_id"):
-            responses_body.input = build_openai_input(
-                completions_body.messages,
-                __metadata__.get("chat_id"),
-                model_id=full_model_id,
-            )
-            # self.logger.debug("Built input for ResponsesBody: %s", json.dumps(responses_body.input, indent=2, ensure_ascii=False))
-
-        # Override tools, if __tools__ provided
+        # Add OpenWebUI tools, if provided
         if __tools__:
-            responses_body.tools = ResponsesBody.transform_tools(__tools__, strict=True) # __tools__ is always provided if one or more tools are enabled in the UI (unlike body["tools"] which is only present when function calling is enabled)
-            # self.logger.debug("Transformed tools: %s", json.dumps(responses_body.tools, indent=2, ensure_ascii=False))
+            responses_body.tools = ResponsesBody.transform_tools(
+                openwebui_tools=__tools__,
+                strict=True,  # Use strict schema for Responses API compatibility
+            )
 
         # Add web_search tool, if supported and enabled
         if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
@@ -397,20 +464,25 @@ class Pipe:
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
             })
 
-        # If Open WebUI native function calling is disabled, update model metadata if supported
-        if __tools__ and __metadata__.get("function_calling", None) != "native":
-            if responses_body.model in FEATURE_SUPPORT["function_calling"]:
-                # Model supports function calling, enable it
-                await self._emit_notification(__event_emitter__, content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.", level="info")
-                patch_model_param_field(full_model_id, "function_calling", "native")
-            elif responses_body.model not in FEATURE_SUPPORT["function_calling"]:
-                # Model does not support function calling, warn the user and exit early
+        # Check if tools are enabled but native function calling is disabled
+        # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
+        if __tools__ and __metadata__.get("function_calling") != "native":
+            supports_function_calling = responses_body.model in FEATURE_SUPPORT["function_calling"]
+
+            if supports_function_calling:
+                await self._emit_notification(
+                    __event_emitter__,
+                    content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.",
+                    level="info"
+                )
+                update_openwebui_model_param(openwebui_model_id, "function_calling", "native")
+            else:
                 await self._emit_error(
                     __event_emitter__,
-                    f"Tools are not supported by the selected model: {responses_body.model}. "
-                    f"Please disable tools or choose a model that supports tool use (e.g. {', '.join(FEATURE_SUPPORT['function_calling'])}).",
+                    f"The selected model '{responses_body.model}' does not support tools. "
+                    f"Disable tools or choose a supported model (e.g., {', '.join(FEATURE_SUPPORT['function_calling'])})."
                 )
-                return  # Exit early if function calling is not supported
+                return
             
         # Enable reasoning summary, if supported and enabled
         if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
@@ -430,13 +502,13 @@ class Pipe:
         # Send to OpenAI Responses API
         if responses_body.stream:
             # Return async generator for partial text
-            return self._multi_turn_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            return self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
         else:
             # Return final text (non-streaming)
-            return await self._multi_turn_non_streaming(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            return await self._run_nonstreaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
 
     # 4.3 Core Multi-Turn Handlers
-    async def _multi_turn_streaming(
+    async def _run_streaming_loop(
         self,
         body: ResponsesBody,                                        # The transformed body for OpenAI Responses API
         valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
@@ -452,16 +524,14 @@ class Pipe:
         maximum number of tool-call loops is reached.
         """
 
+        openwebui_model_id = metadata.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
         reasoning_map: Dict[int, str] = {}
         total_usage: Dict[str, Any] = {}
-
-
-
         tools = tools or {}
         final_output = StringIO()
 
         self.logger.debug(
-            "Entering _multi_turn_streaming with up to %d loops",
+            "Entering _run_streaming_loop with up to %d loops",
             valves.MAX_TOOL_CALL_LOOPS,
         )
 
@@ -472,7 +542,7 @@ class Pipe:
                 self.logger.debug(
                     "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
                 )
-                async for event in self._call_llm_sse(body.model_dump(exclude_none=True), api_key=valves.API_KEY, base_url=valves.BASE_URL):
+                async for event in self.send_openai_responses_streaming_request(body.model_dump(exclude_none=True), api_key=valves.API_KEY, base_url=valves.BASE_URL):
                     event_type = event.get("type")
 
                     # Partial text output
@@ -562,11 +632,11 @@ class Pipe:
                             await self._emit_status(event_emitter, msg, done=True, hidden=False)
 
                         if valves.PERSIST_TOOL_RESULTS:
-                            encoded = add_openai_response_items_and_get_encoded_ids(
+                            encoded = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
-                                metadata.get("model").get("id"),
+                                openwebui_model_id,
                             )
                             if encoded:
                                 yield encoded
@@ -609,7 +679,7 @@ class Pipe:
                     usage["function_call_count"] = sum(
                         1 for i in final_response_data["output"] if i["type"] == "function_call"
                     )
-                    update_usage_totals(total_usage, usage)
+                    merge_usage_stats(total_usage, usage)
 
                 body.input.extend(final_response_data.get("output", []))
 
@@ -618,11 +688,11 @@ class Pipe:
                 if calls:
                     function_call_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        encoded = add_openai_response_items_and_get_encoded_ids(
+                        encoded = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             function_call_outputs,
-                            metadata.get("model").get("id"),
+                            openwebui_model_id,
                         )
                         if encoded:
                             yield encoded
@@ -644,14 +714,12 @@ class Pipe:
         
 
         finally:
-            self.logger.debug("Exiting _multi_turn_streaming loop.")
+            self.logger.debug("Exiting _run_streaming_loop loop.")
             # Final cleanup: close the aiohttp session if it was created
 
             if total_usage:
                 # Emit final usage stats if available
                 await self._emit_completion(event_emitter, usage=total_usage, done=False) # OpenWebUI sends it's own completion event, so we set done=False here to avoid double completion events
-
-
 
             # If valves is DEBUG or user_valves is set to something other than "INHERIT"
             if valves.LOG_LEVEL == "DEBUG":
@@ -667,7 +735,7 @@ class Pipe:
             # Clear logs after emitting
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
-    async def _multi_turn_non_streaming(
+    async def _run_nonstreaming_loop(
         self,
         body: ResponsesBody,                                       # The transformed body for OpenAI Responses API
         valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
@@ -682,13 +750,15 @@ class Pipe:
         executed and the final text is accumulated before being returned.
         """
 
+        openwebui_model_id = metadata.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
+
         tools = tools or {}
         final_output = StringIO()
         total_usage: Dict[str, Any] = {}
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
-                response = await self._call_llm_non_stream(
+                response = await self.send_openai_responses_nonstreaming_request(
                     body.model_dump(exclude_none=True),
                     api_key=valves.API_KEY,
                     base_url=valves.BASE_URL,
@@ -696,7 +766,7 @@ class Pipe:
 
                 items = response.get("output", [])
 
-                # Persist non-message items immediately and collect text
+                # Persist non-message items immediately and yield encoded id(s) to the front-end
                 for item in items:
                     if item.get("type") == "message":
                         for content in item.get("content", []):
@@ -704,7 +774,7 @@ class Pipe:
                                 final_output.write(content.get("text", ""))
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
-                            encoded = add_openai_response_items_and_get_encoded_ids(
+                            encoded = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
@@ -718,7 +788,7 @@ class Pipe:
                     usage["function_call_count"] = sum(
                         1 for i in items if i.get("type") == "function_call"
                     )
-                    update_usage_totals(total_usage, usage)
+                    merge_usage_stats(total_usage, usage)
 
                 body.input.extend(items)
 
@@ -727,11 +797,11 @@ class Pipe:
                 if calls:
                     fn_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        encoded = add_openai_response_items_and_get_encoded_ids(
+                        encoded = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             fn_outputs,
-                            metadata.get("model").get("id"),
+                            openwebui_model_id,
                         )
                         final_output.write(encoded)
 
@@ -759,7 +829,7 @@ class Pipe:
         return final_output.getvalue()
     
     # 4.4 Task Model Handling
-    async def _handle_task(
+    async def _run_task_model_request(
         self,
         body: Dict[str, Any],
         valves: Pipe.Valves
@@ -778,7 +848,7 @@ class Pipe:
             "stream": False,
         }
 
-        response = await self._call_llm_non_stream(
+        response = await self.send_openai_responses_nonstreaming_request(
             task_body,
             api_key=valves.API_KEY,
             base_url=valves.BASE_URL,
@@ -797,7 +867,7 @@ class Pipe:
         return message
       
     # 4.5 LLM HTTP Request Helpers
-    async def _call_llm_sse(
+    async def send_openai_responses_streaming_request(
         self,
         request_body: dict[str, Any],
         api_key: str,
@@ -810,7 +880,7 @@ class Pipe:
         payload immediately.
         """
         # Get or create aiohttp session (aiohttp is used for performance).
-        self.session = await self._get_or_create_aiohttp_session()
+        self.session = await self._get_or_init_http_session()
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -851,7 +921,7 @@ class Pipe:
                 if start_idx > 0:
                     del buf[:start_idx]
 
-    async def _call_llm_non_stream(
+    async def send_openai_responses_nonstreaming_request(
         self,
         request_params: dict[str, Any],
         api_key: str,
@@ -859,7 +929,7 @@ class Pipe:
     ) -> Dict[str, Any]:
         """Send a blocking request to the Responses API and return the JSON payload."""
         # Get or create aiohttp session (aiohttp is used for performance).
-        self.session = await self._get_or_create_aiohttp_session()
+        self.session = await self._get_or_init_http_session()
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -871,7 +941,7 @@ class Pipe:
             resp.raise_for_status()
             return await resp.json()
     
-    async def _get_or_create_aiohttp_session(self) -> aiohttp.ClientSession:
+    async def _get_or_init_http_session(self) -> aiohttp.ClientSession:
         """Return a cached ``aiohttp.ClientSession`` instance.
 
         The session is created with connection pooling and sensible timeouts on
@@ -1163,18 +1233,18 @@ current_session_id: ContextVar[str | None] = ContextVar("current_session_id", de
 # 6. Framework Integration Helpers (Open WebUI DB operations)
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility functions that interface with Open WebUI's data models
-def add_openai_response_items_and_get_encoded_ids(
+def persist_openai_response_items(
     chat_id: str,
     message_id: str,
     items: List[Dict[str, Any]],
-    model_id: str,
+    openwebui_model_id: str,
 ) -> str:
     """Persist items and return a zero-width encoded reference string.
 
     This helper stores ``items`` using the ``openai_responses_pipe`` schema and
     returns the concatenated zero-width encoded item IDs. The encoded string can
     be embedded directly into ``body['messages'][*]['content']`` so the full
-    metadata can be reconstructed later via :func:`build_openai_input`.
+    metadata can be reconstructed later via :func:`build_openai_input_from_messages`.
     """
 
     if not items:
@@ -1196,15 +1266,15 @@ def add_openai_response_items_and_get_encoded_ids(
     now = int(datetime.datetime.utcnow().timestamp())
     encoded_parts: list[str] = []
     for payload in items:
-        item_id = generate_ulid()
+        item_id = generate_item_id()
         items_store[item_id] = {
-            "model": model_id,
+            "model": openwebui_model_id,
             "created_at": now,
             "payload": payload,
             "message_id": message_id,
         }
         message_bucket.setdefault("item_ids", []).append(item_id)
-        encoded_parts.append(encode_id(item_id))
+        encoded_parts.append(encode_item_id(item_id))
 
     Chats.update_chat_by_id(chat_id, chat_model.chat)
 
@@ -1214,11 +1284,11 @@ def add_openai_response_items_and_get_encoded_ids(
 # 7. General-Purpose Utility Functions (Data transforms & patches)
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper functions shared by multiple parts of the pipe
-def update_usage_totals(total, new):
+def merge_usage_stats(total, new):
     """Recursively merge nested usage statistics."""
     for k, v in new.items():
         if isinstance(v, dict):
-            total[k] = update_usage_totals(total.get(k, {}), v)
+            total[k] = merge_usage_stats(total.get(k, {}), v)
         elif isinstance(v, (int, float)):
             total[k] = total.get(k, 0) + v
         else:
@@ -1226,9 +1296,9 @@ def update_usage_totals(total, new):
             total[k] = v if v is not None else total.get(k, 0)
     return total
 
-def patch_model_param_field(model_id: str, field: str, value: Any):
+def update_openwebui_model_param(openwebui_model_id: str, field: str, value: Any):
     """Update a model's parameter field if it differs from ``value``."""
-    model = Models.get_model_by_id(model_id)
+    model = Models.get_model_by_id(openwebui_model_id)
     if not model:
         return
 
@@ -1240,7 +1310,7 @@ def patch_model_param_field(model_id: str, field: str, value: Any):
     form_data["params"][field] = value
 
     form = ModelForm(**form_data)
-    Models.update_model_by_id(model_id, form)
+    Models.update_model_by_id(openwebui_model_id, form)
 
 def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     """Strip ``<details>`` blocks matching the specified ``type`` values.
@@ -1282,14 +1352,14 @@ def _encode_base32(value: int, length: int) -> str:
         value >>= 5
     return "".join(reversed(chars))
 
-def generate_ulid() -> str:
+def generate_item_id() -> str:
     """Generate a 26 character ULID using millisecond precision."""
 
     timestamp_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
     random_part = int.from_bytes(os.urandom(10), "big")
     return _encode_base32(timestamp_ms, 10) + _encode_base32(random_part, 16)
 
-def encode_id(item_id: str) -> str:
+def encode_item_id(item_id: str) -> str:
     """Return ``item_id`` encoded as a zero-width string."""
 
     bits = "".join(f"{ord(c):08b}" for c in item_id)
@@ -1297,27 +1367,27 @@ def encode_id(item_id: str) -> str:
     return f"{GUARD}{zw}{GUARD}"
 
 
-def decode_id(block: str) -> str:
+def decode_item_id(block: str) -> str:
     """Guarded zero-width block → ULID."""
     inner = block.strip(GUARD)
     bits  = "".join("0" if ch == BIT0 else "1" for ch in inner)
     return "".join(chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8))
 
-def is_encoded(text: str) -> bool:
+def contains_encoded_item_ids(text: str) -> bool:
     return bool(ENCODED_RE.search(text))
 
-def extract_encoded_ids(text: str) -> list[str]:
+def extract_item_ids(text: str) -> list[str]:
     """Return decoded ULIDs in order of appearance."""
     ids = []
     for match in ENCODED_RE.findall(text):
-        decoded = decode_id(match)
+        decoded = decode_item_id(match)
         for i in range(0, len(decoded), ULID_LENGTH):
             chunk = decoded[i:i+ULID_LENGTH]
             if len(chunk) == ULID_LENGTH:
                 ids.append(chunk)
     return ids
 
-def split_content_by_encoded_ids(text: str) -> list[dict]:
+def split_text_by_encoded_item_ids(text: str) -> list[dict]:
     """
     Split *text* into ordered segments::
         [{"type":"encoded_id","id":...}, {"type":"text","text":...}, …]
@@ -1329,7 +1399,7 @@ def split_content_by_encoded_ids(text: str) -> list[dict]:
         if not part:
             continue
         if ENCODED_RE.fullmatch(part):
-            decoded = decode_id(part)
+            decoded = decode_item_id(part)
             for i in range(0, len(decoded), ULID_LENGTH):
                 chunk = decoded[i:i+ULID_LENGTH]
                 if len(chunk) == ULID_LENGTH:
@@ -1339,11 +1409,11 @@ def split_content_by_encoded_ids(text: str) -> list[dict]:
 
     return segments
 
-def fetch_items_by_ids(
+def fetch_openai_response_items(
     chat_id: str,
     item_ids: List[str],
     *,
-    model_id: Optional[str] = None,
+    openwebui_model_id: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Return a mapping of ``item_id`` to its persisted payload.
 
@@ -1353,8 +1423,8 @@ def fetch_items_by_ids(
         Chat identifier used to look up stored items.
     item_ids : List[str]
         ULIDs previously embedded in the message text.
-    model_id : str, optional
-        Filter results to items originating from ``model_id``. The value should
+    openwebui_model_id : str, optional
+        Filter results to items originating from ``openwebui_model_id``. The value should
         match the OpenAI model ID stored alongside each item. This prevents
         mixing data from different models when the chat history spans multiple
         model types.
@@ -1364,113 +1434,18 @@ def fetch_items_by_ids(
     if not chat_model:
         return {}
 
-    base_model = model_id.removeprefix("openai_responses.") if model_id else None
-
     items_store = chat_model.chat.get("openai_responses_pipe", {}).get("items", {})
     lookup: Dict[str, Dict[str, Any]] = {}
     for item_id in item_ids:
         item = items_store.get(item_id)
         if not item:
             continue
-        if base_model:
-            item_base = item.get("model", "").removeprefix("openai_responses.")
-            if item_base != base_model:
+        # Only include previously persisted items that match the current model ID.
+        # OpenAI requires this to avoid items produced by one model leaking into subsequent requests for a different model.
+        # e.g., Encrypted reasoning tokens from o4-mini are not compatible with gpt-4o.
+        # TODO: Do some more sophisticated filtering here, e.g. check model features and allow items that are compatible with the current model.
+        if openwebui_model_id:
+            if item.get("model", "") != openwebui_model_id:
                 continue
         lookup[item_id] = item.get("payload", {})
     return lookup
-
-def build_openai_input(
-    body_messages: List[Dict[str, str]],
-    chat_id: str,
-    *,
-    model_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Translate ``body['messages']`` back into the Responses API format.
-
-    Zero-width encoded identifiers found in assistant message content are
-    resolved to their full payloads in a single database lookup. When
-    ``model_id`` is provided, only items originating from that model are
-    considered. This avoids leaking tool outputs from unrelated models into
-    subsequent requests.
-    """
-    openai_input = []
-
-    # First pass: Determine all needed item IDs for a single database query
-    required_item_ids = set()
-    for message in body_messages:
-        if message["role"] == "assistant" and is_encoded(message["content"]):
-            required_item_ids.update(extract_encoded_ids(message["content"]))
-
-    # Single DB call if there are any IDs to fetch
-    items_lookup = (
-        fetch_items_by_ids(chat_id, list(required_item_ids), model_id=model_id)
-        if required_item_ids
-        else {}
-    )
-
-    # Second pass: Construct final OpenAI input, maintaining correct order
-    for message in body_messages:
-        role = message.get("role", "assistant")
-        content = message.get("content", "")
-
-        # System prompts are passed separately via the `instructions` field
-        if role == "system":
-            continue
-
-        if role == "user":
-            contents = []
-            if content:
-                contents.append({"type": "input_text", "text": content})
-            contents.extend(
-                [
-                    {
-                        "type": "input_image",
-                        "image_url": f.get("url"),
-                    }
-                    for f in message.get("files", [])
-                    if f.get("type") == "image" and f.get("url")
-                ]
-            )
-            if contents:
-                openai_input.append({"type": "message", "role": "user", "content": contents})
-            continue
-
-        # Assistant messages with potential encoded IDs
-        if is_encoded(content):
-            segments = split_content_by_encoded_ids(content)
-
-            for segment in segments:
-                if segment["type"] == "encoded_id":
-                    item_id = segment["id"]
-                    item = items_lookup.get(item_id)
-                    if item:
-                        openai_input.append(item)
-                    else:
-                        logging.getLogger(__name__).warning(
-                            "Missing persisted item for ID: %s",
-                            item_id,
-                        )
-                elif segment["type"] == "text":
-                    text = segment["text"]
-                    if text:
-                        openai_input.append(
-                            {
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [
-                                    {"type": "output_text", "text": text}
-                                ],
-                            }
-                        )
-        else:
-            # Simple assistant messages without encoded IDs
-            if content:
-                openai_input.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": content}],
-                    }
-                )
-
-    return openai_input
