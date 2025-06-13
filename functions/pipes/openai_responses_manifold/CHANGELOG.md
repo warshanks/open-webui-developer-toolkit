@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Rebuilt chat history using `build_openai_input` for accurate ordering.
 - Stored full model ID for each item and stripped prefix only when filtering.
 
+## [0.8.8] - 2025-06-14
+- Renamed helper functions for clarity and maintainability.
+- Simplified rebuilding of input history.
+- Added support for custom parameters from Open WebUI.
+  - `max_tokens` now maps to `max_output_tokens`.
+  - Additional parameters are passed through for future compatibility.
+
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.
 - Implemented database helper functions for new response item schema.
