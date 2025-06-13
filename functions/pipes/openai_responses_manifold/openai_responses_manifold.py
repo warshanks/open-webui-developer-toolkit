@@ -313,10 +313,6 @@ class ResponsesBody(BaseModel):
             None
         )
 
-        # Remove keys explicitly provided in extra_params from sanitized_completions_params
-        for key in extra_params:
-            sanitized_completions_params.pop(key, None)
-
         return ResponsesBody(
             input=ResponsesBody.transform_messages_to_input(
                 completions_body.messages,
@@ -324,8 +320,8 @@ class ResponsesBody(BaseModel):
                 openwebui_model_id=openwebui_model_id
             ),
             **({"instructions": system_message_content} if system_message_content else {}),
-            **sanitized_completions_params,
-            **extra_params # Add extra parameters last so they override any existing ones with the same name
+            **sanitized_completions_params, # Base parameters from CompletionsBody
+            **extra_params  # Explicit overrides; these take precedence over any existing keys above
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
