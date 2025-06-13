@@ -55,9 +55,6 @@ FEATURE_SUPPORT = {
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 }
 
-# Invisible zero-width characters used for encoding item identifiers
-ZERO, ONE = "\u200b", "\u200c"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Data Models
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1166,49 +1163,6 @@ current_session_id: ContextVar[str | None] = ContextVar("current_session_id", de
 # 6. Framework Integration Helpers (Open WebUI DB operations)
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility functions that interface with Open WebUI's data models
-def add_openai_response_items_to_chat_by_id_and_message_id(
-    chat_id: str,
-    message_id: str,
-    items: List[Dict[str, Any]],
-    model_id: str,
-) -> Optional[ChatModel]:
-    """Persist OpenAI response items using the new ``openai_responses_pipe`` schema.
-
-    ``items`` should be a list of raw response objects (e.g. ``function_call``
-    payloads). Each item will be assigned a ULID and stored under
-    ``openai_responses_pipe.items`` while the ID is referenced from
-    ``openai_responses_pipe.messages_index[message_id]``.
-    """
-
-    if not items:
-        return Chats.get_chat_by_id(chat_id)  # nothing to add
-
-    chat_model = Chats.get_chat_by_id(chat_id)
-    if not chat_model:
-        return None
-
-    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
-    items_store = pipe_root.setdefault("items", {})
-    messages_index = pipe_root.setdefault("messages_index", {})
-
-    message_bucket = messages_index.setdefault(
-        message_id,
-        {"role": "assistant", "done": True, "item_ids": []},
-    )
-
-    now = int(datetime.datetime.utcnow().timestamp())
-    for payload in items:
-        item_id = generate_ulid()
-        items_store[item_id] = {
-            "model": model_id,
-            "created_at": now,
-            "payload": payload,
-            "message_id": message_id,
-        }
-        message_bucket.setdefault("item_ids", []).append(item_id)
-
-    return Chats.update_chat_by_id(chat_id, chat_model.chat)
-
 def add_openai_response_items_and_get_encoded_ids(
     chat_id: str,
     message_id: str,
@@ -1256,50 +1210,6 @@ def add_openai_response_items_and_get_encoded_ids(
 
     return "".join(encoded_parts)
 
-def build_responses_history_by_chat_id_and_message_id(
-    chat_id: str,
-    message_id: Optional[str] = None,
-    *,
-    model_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Reconstructs a chain of messages up to ``message_id`` (or the currentId)
-    and inserts any persisted output items stored in ``openai_responses_pipe``
-    before the corresponding message.
-
-    Returns a list of items the OpenAI Responses API expects:
-      [
-        {"type": "function_call", ...},
-        {"type": "message", "role": "assistant", "content": [...]},
-        ...
-      ]
-    
-    Only items associated with ``model_id`` are included when the parameter is
-    provided. This prevents mixing response data from different models within
-    the same chat history.
-    """
-    chat_model = Chats.get_chat_by_id(chat_id)
-    if not chat_model:
-        return []
-
-    chat_data = chat_model.chat
-    if not message_id:
-        message_id = chat_data.get("history", {}).get("currentId")
-
-    messages_dict = chat_data.get("history", {}).get("messages", {})
-
-    message_chain = get_message_list(messages_dict, message_id)
-
-    if message_chain and message_chain[-1]["role"] == "assistant":
-        message_chain = message_chain[:-1]
-
-    body_messages = [
-        {"role": m.get("role", "assistant"), "content": m.get("content", ""), **({"files": m.get("files", [])} if m.get("files") else {})}
-        for m in message_chain
-    ]
-
-    return build_openai_input(body_messages, chat_id, model_id=model_id)
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1346,14 +1256,16 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     pattern = rf'<details\b[^>]*\btype=["\'](?:{pattern_types})["\'][^>]*>.*?</details>'
     return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
-
-
 #####################
 
 # Helper utilities for persistent item ID encoding/decoding
+BIT0  = "\u200b"         # U+200B ZERO-WIDTH SPACE          → bit 0
+BIT1  = "\u200c"         # U+200C ZERO-WIDTH NON-JOINER     → bit 1
+GUARD = "\u2060"         # U+2060 WORD JOINER (delimiter)
 
-# Pre-compiled regex for performance
-ENCODED_ID_PATTERN = re.compile(f"[{ZERO}{ONE}]+")  # e.g., ZERO="\u200b", ONE="\u200c"
+# Regex: GUARD (≥1 encoded chars) GUARD
+ENCODED_RE = re.compile(f"{GUARD}[{BIT0}{BIT1}]+{GUARD}")
+
 ULID_LENGTH = 26
 BITS_PER_CHAR = 8
 ENCODED_ULID_LENGTH = ULID_LENGTH * BITS_PER_CHAR
@@ -1380,50 +1292,46 @@ def generate_ulid() -> str:
 def encode_id(item_id: str) -> str:
     """Return ``item_id`` encoded as a zero-width string."""
 
-    bits = "".join(f"{ord(ch):08b}" for ch in item_id)
-    return "".join(ZERO if bit == "0" else ONE for bit in bits)
+    bits = "".join(f"{ord(c):08b}" for c in item_id)
+    zw   = "".join(BIT0 if b == "0" else BIT1 for b in bits)
+    return f"{GUARD}{zw}{GUARD}"
 
 
-def decode_id(encoded: str) -> str:
-    """Decode a zero-width encoded identifier back to text."""
+def decode_id(block: str) -> str:
+    """Guarded zero-width block → ULID."""
+    inner = block.strip(GUARD)
+    bits  = "".join("0" if ch == BIT0 else "1" for ch in inner)
+    return "".join(chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8))
 
-    bits = "".join("0" if ch == ZERO else "1" for ch in encoded if ch in (ZERO, ONE))
-    chars = [chr(int(bits[i : i + 8], 2)) for i in range(0, len(bits), 8)]
-    return "".join(chars)
+def is_encoded(text: str) -> bool:
+    return bool(ENCODED_RE.search(text))
 
-def is_encoded(content: str) -> bool:
-    """Quickly checks if the content contains encoded IDs."""
-    return bool(ENCODED_ID_PATTERN.search(content))
-
-def extract_encoded_ids(content: str) -> List[str]:
-    """Extracts and decodes all encoded IDs found within ``content``.
-
-    Adjacent encoded identifiers are handled as separate IDs. Each ULID is
-    encoded using ``ENCODED_ULID_LENGTH`` zero-width characters.
-    """
-
-    ids: list[str] = []
-    for match in ENCODED_ID_PATTERN.findall(content):
-        # Decode the entire group then split into ULID chunks
+def extract_encoded_ids(text: str) -> list[str]:
+    """Return decoded ULIDs in order of appearance."""
+    ids = []
+    for match in ENCODED_RE.findall(text):
         decoded = decode_id(match)
         for i in range(0, len(decoded), ULID_LENGTH):
-            chunk = decoded[i : i + ULID_LENGTH]
+            chunk = decoded[i:i+ULID_LENGTH]
             if len(chunk) == ULID_LENGTH:
                 ids.append(chunk)
     return ids
 
-def split_content_by_encoded_ids(content: str) -> List[Dict[str, str]]:
-    """Return ``content`` broken into alternating text and encoded ID pieces."""
-    segments: list[Dict[str, str]] = []
-    parts = re.split(f"({ENCODED_ID_PATTERN.pattern})", content)
+def split_content_by_encoded_ids(text: str) -> list[dict]:
+    """
+    Split *text* into ordered segments::
+        [{"type":"encoded_id","id":...}, {"type":"text","text":...}, …]
+    """
+    segments = []
+    parts = re.split(f"({ENCODED_RE.pattern})", text)
 
     for part in parts:
         if not part:
             continue
-        if ENCODED_ID_PATTERN.fullmatch(part):
+        if ENCODED_RE.fullmatch(part):
             decoded = decode_id(part)
             for i in range(0, len(decoded), ULID_LENGTH):
-                chunk = decoded[i : i + ULID_LENGTH]
+                chunk = decoded[i:i+ULID_LENGTH]
                 if len(chunk) == ULID_LENGTH:
                     segments.append({"type": "encoded_id", "id": chunk})
         else:
