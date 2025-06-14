@@ -168,3 +168,41 @@ references.
 
 Source: `input_inspector.py` lines 59‑79 and
 `openai_responses_manifold.py` lines 960‑1007.
+
+## 9. `source` vs `citation` events
+
+Earlier Open WebUI releases expected citation blocks to be emitted with the
+event type `citation` and stored on the message under a `citations` field. The
+field was later renamed to `sources`, and emitters now send events with type
+`source`. The frontend still accepts either name for backward compatibility.
+
+The chat event handler merges incoming events of type `source` or `citation` and
+appends them to `message.sources`:
+
+```svelte
+} else if (type === 'source' || type === 'citation') {
+    /* ...merge data as shown above... */
+}
+```
+
+Source: `Chat.svelte` lines 312‑339.
+
+Older conversations may contain a `citations` field instead of `sources`. The UI
+checks both when rendering citations:
+
+```svelte
+{#if (message?.sources || message?.citations) && (model?.info?.meta?.capabilities?.citations ?? true)}
+    <Citations id={message?.id} sources={message?.sources ?? message?.citations} />
+{/if}
+```
+
+Source: `ResponseMessage.svelte` lines 851‑852.
+
+This behaviour stems from changes described in the upstream changelog:
+
+```text
+ - ⚙️ Legacy Event Emitter Support: Reintroduced compatibility with legacy "citation" types for event emitters in tools and functions.
+ - 🗂️ Renamed "Citations" to "Sources": Improved clarity and consistency by renaming the "citations" field to "sources" in messages.
+```
+
+Source: `CHANGELOG.md` lines 850‑867.
