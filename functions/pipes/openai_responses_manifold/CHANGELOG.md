@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
+- Fixed blank line after reasoning block by delaying encoded ID emission.
 
 ## [0.8.7] - 2025-06-13
 - Embedded zero-width encoded IDs during streaming and non-streaming flows.
