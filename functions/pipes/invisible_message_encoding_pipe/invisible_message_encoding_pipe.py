@@ -1,8 +1,24 @@
 """
 title: Invisible Message Encoding
 id: invisible_message_encoding_pipe
-description: Encode user input invisibly in assistant responses and decode it from later messages.
-author: OpenAI Codex
+description:
+    Encode user input invisibly in assistant responses and decode it from later messages.
+
+notes:
+    - Zero-width characters ('\u200b', '\u200c') persist invisibly in text but can unintentionally propagate 
+      into external documents or applications when copied. This can cause confusion, unexpected artifacts, or 
+      unpredictable behaviors in external programs.
+
+    - Zero-width characters placed immediately before markdown syntax (e.g., '#', '-', '*') can prevent 
+      proper markdown rendering, breaking headings, lists, and other formatting elements.
+
+      Examples illustrating markdown formatting disruption:
+          "\u200b# HEADER_HERE - will not render correctly"
+          "\u200c- BULLET_ITEM - fails to render as list item"
+
+    This is more of an interesting example than a production-ready technique. Use with caution.
+
+author: Justin Kropp
 version: 1.0.0
 license: MIT
 """
