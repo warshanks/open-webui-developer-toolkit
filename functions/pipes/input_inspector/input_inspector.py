@@ -3,9 +3,15 @@ title: Input Inspector
 id: input_inspector
 author: OpenAI Codex
 funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
-description: Emit citations showing the data passed to a pipe for debugging.
+description:
+    Emit citation blocks containing the contents of the input arguments passed into a pipe.
 version: 0.1.1
 license: MIT
+notes:
+    - Sensitive headers (such as 'authorization', 'cookie', and similar) are redacted by default
+      to prevent leaking security-sensitive information into debugging logs. You can disable
+      this by setting the `REDACT_REQUEST` valve to `False`.
+    - See https://github.com/jrkropp/open-webui-developer-toolkit/blob/development/docs/pipe_input.md for more details.
 """
 
 from __future__ import annotations
