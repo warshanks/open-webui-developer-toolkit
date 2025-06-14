@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Added support for custom parameters from Open WebUI.
   - `max_tokens` now maps to `max_output_tokens`.
   - Additional parameters are passed through for future compatibility.
+- Refined reasoning block streaming for safe token ordering.
 
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.

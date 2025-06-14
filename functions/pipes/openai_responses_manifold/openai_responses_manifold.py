@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.7
+version: 0.8.8
 license: MIT
 requirements: orjson
 """
@@ -529,6 +529,7 @@ class Pipe:
         total_usage: Dict[str, Any] = {}
         tools = tools or {}
         final_output = StringIO()
+        section = StreamSectionManager()
 
         self.logger.debug(
             "Entering _run_streaming_loop with up to %d loops",
@@ -549,8 +550,15 @@ class Pipe:
                     if event_type == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
-                            #yield delta  # Yield partial text to Open WebUI
-                            final_output.write(delta)  # Accumulate in final_output
+                            if not section.text_started:
+                                section.text_started = True
+
+                                if section.reasoning_done:
+                                    yield "".join(section.pre_text_tokens)
+                                    yield "\n"
+
+                            # yield delta  # partial text
+                            final_output.write(delta)
                             yield delta
 
                         continue # continue to next event
@@ -560,6 +568,7 @@ class Pipe:
                         idx = event.get("summary_index", 0)
                         delta = event.get("delta", "")
                         if delta:
+                            section.reasoning_started = True
                             # 1) Accumulate for this summary_index
                             reasoning_map[idx] = reasoning_map.get(idx, "") + delta
 
@@ -608,7 +617,10 @@ class Pipe:
 
                         if msg:
                             await self._emit_status(event_emitter, msg, done=False, hidden=False)
-                        
+
+                        if item_type == "reasoning":
+                            section.reasoning_started = True
+
                         continue  # continue to next event
 
                     # Output item done (e.g., tool call finished, reasoning done, etc.)
@@ -639,7 +651,7 @@ class Pipe:
                                 openwebui_model_id,
                             )
                             if encoded:
-                                yield encoded
+                                section.store_encoded(encoded)
 
                         if item_type == "reasoning":
                             # Merge all partial reasoning so far
@@ -652,12 +664,15 @@ class Pipe:
                                     f'<details type=\"{__name__}.reasoning\" done="true">\n'
                                     f"<summary>Done thinking!</summary>\n"
                                     f"{all_text}\n"
-                                    "</details>\n"
+                                    "</details>"
                                 )
-                                yield final_snippet  # Yield an empty string to release the event loop for responsiveness
+                                yield final_snippet
                             else:
                                 await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
 
+                            yield "".join(section.pre_text_tokens)
+                            yield "\n"
+                            section.reasoning_done = True
                             reasoning_map.clear()
 
                         continue  # continue to next event
@@ -695,12 +710,15 @@ class Pipe:
                             openwebui_model_id,
                         )
                         if encoded:
-                            yield encoded
+                            section.store_encoded(encoded)
 
                     body.input.extend(function_call_outputs)
                 else:
                     self.logger.debug("No pending function calls. Exiting loop.")
-                    break # LLM response is complete, no further tool calls
+                    if section.post_text_tokens:
+                        yield "".join(section.post_text_tokens)
+                        yield "\n"
+                    break  # LLM response is complete, no further tool calls
 
         except Exception as e:
             await self._emit_error(
@@ -1228,6 +1246,23 @@ class SessionLogger:
 logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
 # Context variable tracking the current message being processed
 current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
+
+
+class StreamSectionManager:
+    """Track where we are in a streamed answer."""
+
+    def __init__(self) -> None:
+        self.reasoning_started = False
+        self.reasoning_done = False
+        self.text_started = False
+        self.pre_text_tokens: list[str] = []
+        self.post_text_tokens: list[str] = []
+
+    def store_encoded(self, encoded: str) -> None:
+        if self.text_started:
+            self.post_text_tokens.append(encoded)
+        else:
+            self.pre_text_tokens.append(encoded)
     
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Framework Integration Helpers (Open WebUI DB operations)
