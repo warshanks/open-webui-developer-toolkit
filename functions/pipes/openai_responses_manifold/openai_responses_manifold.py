@@ -577,6 +577,7 @@ class Pipe:
                         item = event.get("item", {})
                         item_type = item.get("type", "")
 
+                        token = None
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
                             token = persist_openai_response_items(
                                 metadata.get("chat_id"),
@@ -584,9 +585,6 @@ class Pipe:
                                 [item],
                                 openwebui_model,
                             )
-                            if token:
-                                yield token
-                                need_newline = True
 
                         if item_type == "reasoning":
                             parts = "\n\n --- \n\n".join(
@@ -598,7 +596,15 @@ class Pipe:
                             )
                             for chunk in _emit_visible(snippet):
                                 yield chunk
+                            if token:
+                                yield token
+                                need_newline = True
                             reasoning_map.clear()
+                            continue
+
+                        if token:
+                            yield token
+                            need_newline = True
                         continue
 
                     if etype == "response.completed":
