@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Added helper to safely emit visible chunks after encoded IDs.
 - Fixed blank line after reasoning block by delaying encoded ID emission.
 
+## [0.8.10] - 2025-06-16
+- Prevented extra newline after reasoning block by skipping newline injection when emitting its encoded ID.
+
 ## [0.8.7] - 2025-06-13
 - Embedded zero-width encoded IDs during streaming and non-streaming flows.
 - Persisted each output item immediately and yielded the encoded reference.
