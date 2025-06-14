@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.9
+version: 0.8.8
 license: MIT
 requirements: orjson
 """
@@ -526,14 +526,6 @@ class Pipe:
 
         need_newline = False
 
-        def flush_and_yield(text: str):
-            """Yield text after inserting a pending newline if needed."""
-            nonlocal need_newline
-            if need_newline:
-                yield "\n"
-                need_newline = False
-            yield text
-
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
@@ -547,9 +539,11 @@ class Pipe:
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
+                            if need_newline:
+                                yield "\n"
+                                need_newline = False
                             final_output.write(delta)
-                            async for chunk in flush_and_yield(delta):
-                                yield chunk
+                            yield delta
                         continue
 
                     if etype == "response.reasoning_summary_text.delta":
@@ -597,8 +591,7 @@ class Pipe:
                                 f'<details type="{__name__}.reasoning" done="true">\n'
                                 f"<summary>Done thinking!</summary>\n{parts}\n</details>"
                             )
-                            async for chunk in flush_and_yield(snippet):
-                                yield chunk
+                            yield snippet
                             reasoning_map.clear()
                         continue
 

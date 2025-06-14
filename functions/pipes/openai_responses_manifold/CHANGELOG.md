@@ -20,9 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Replaced streaming loop with a single-flag newline injector for
   predictable token placement.
 
-## [0.8.9] - 2025-06-14
-- Fixed newline injection for reasoning snippets to preserve Markdown rendering.
-
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.
 - Implemented database helper functions for new response item schema.
