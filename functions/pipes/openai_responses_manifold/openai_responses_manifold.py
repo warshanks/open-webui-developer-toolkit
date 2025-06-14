@@ -1156,12 +1156,13 @@ def persist_openai_response_items(
     items: List[Dict[str, Any]],
     openwebui_model_id: str,
 ) -> str:
-    """Persist items and return a zero-width encoded reference string.
+    """Persist items and return their encoded reference string.
 
-    This helper stores ``items`` using the ``openai_responses_pipe`` schema and
-    returns the concatenated zero-width encoded item IDs. The encoded string can
-    be embedded directly into ``body['messages'][*]['content']`` so the full
-    metadata can be reconstructed later via :func:`build_openai_input_from_messages`.
+    :param chat_id: Chat identifier used to locate the conversation.
+    :param message_id: Message ID the items belong to.
+    :param items: Sequence of payloads to store.
+    :param openwebui_model_id: Fully qualified model ID the items originate from.
+    :return: Concatenated zero-width encoded item IDs for later retrieval.
     """
 
     if not items:
@@ -1202,7 +1203,12 @@ def persist_openai_response_items(
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper functions shared by multiple parts of the pipe
 def merge_usage_stats(total, new):
-    """Recursively merge nested usage statistics."""
+    """Recursively merge nested usage statistics.
+
+    :param total: Accumulator dictionary to update.
+    :param new: Newly reported usage block to merge in.
+    :return: The updated ``total`` dictionary.
+    """
     for k, v in new.items():
         if isinstance(v, dict):
             total[k] = merge_usage_stats(total.get(k, {}), v)
@@ -1214,7 +1220,13 @@ def merge_usage_stats(total, new):
     return total
 
 def update_openwebui_model_param(openwebui_model_id: str, field: str, value: Any):
-    """Update a model's parameter field if it differs from ``value``."""
+    """Update a model's parameter when the stored value differs.
+
+    :param openwebui_model_id: Identifier of the model to update.
+    :param field: Parameter field name to modify.
+    :param value: New value to store in ``field``.
+    :return: ``None``
+    """
     model = Models.get_model_by_id(openwebui_model_id)
     if not model:
         return
@@ -1236,6 +1248,10 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 
         remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
         # -> "Hello "
+
+    :param text: Source text containing optional ``<details>`` tags.
+    :param removal_types: ``type`` attribute values to remove.
+    :return: ``text`` with matching blocks removed.
     """
     # Safely escape the types in case they have special regex chars
     pattern_types = "|".join(map(re.escape, removal_types))
@@ -1261,7 +1277,12 @@ CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 def _encode_base32(value: int, length: int) -> str:
-    """Return ``value`` encoded in Crockford Base32 with ``length`` characters."""
+    """Return ``value`` encoded in Crockford Base32.
+
+    :param value: Integer to encode.
+    :param length: Number of characters in the encoded output.
+    :return: Base32 encoded string of ``length`` characters.
+    """
 
     chars = []
     for _ in range(length):
@@ -1270,14 +1291,21 @@ def _encode_base32(value: int, length: int) -> str:
     return "".join(reversed(chars))
 
 def generate_item_id() -> str:
-    """Generate a 26 character ULID using millisecond precision."""
+    """Generate a 26-character ULID using millisecond precision.
+
+    :return: Unique identifier suitable for database keys.
+    """
 
     timestamp_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
     random_part = int.from_bytes(os.urandom(10), "big")
     return _encode_base32(timestamp_ms, 10) + _encode_base32(random_part, 16)
 
 def encode_item_id(item_id: str) -> str:
-    """Return ``item_id`` encoded as a zero-width string."""
+    """Encode ``item_id`` as a zero-width string.
+
+    :param item_id: ULID to encode.
+    :return: Encoded string safe to embed in messages.
+    """
 
     bits = "".join(f"{ord(c):08b}" for c in item_id)
     zw   = "".join(BIT0 if b == "0" else BIT1 for b in bits)
@@ -1285,16 +1313,29 @@ def encode_item_id(item_id: str) -> str:
 
 
 def decode_item_id(block: str) -> str:
-    """Guarded zero-width block → ULID."""
+    """Decode an encoded zero-width block back into a ULID.
+
+    :param block: Encoded string wrapped with guard characters.
+    :return: Decoded ULID string.
+    """
     inner = block.strip(GUARD)
     bits  = "".join("0" if ch == BIT0 else "1" for ch in inner)
     return "".join(chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8))
 
 def contains_encoded_item_ids(text: str) -> bool:
+    """Check whether ``text`` contains encoded item references.
+
+    :param text: Message text to inspect.
+    :return: ``True`` if encoded item IDs are present, else ``False``.
+    """
     return bool(ENCODED_RE.search(text))
 
 def extract_item_ids(text: str) -> list[str]:
-    """Return decoded ULIDs in order of appearance."""
+    """Extract decoded ULIDs from ``text`` in order of appearance.
+
+    :param text: Text potentially containing encoded IDs.
+    :return: List of decoded ULIDs.
+    """
     ids = []
     for match in ENCODED_RE.findall(text):
         decoded = decode_item_id(match)
@@ -1305,9 +1346,13 @@ def extract_item_ids(text: str) -> list[str]:
     return ids
 
 def split_text_by_encoded_item_ids(text: str) -> list[dict]:
-    """
-    Split *text* into ordered segments::
-        [{"type":"encoded_id","id":...}, {"type":"text","text":...}, …]
+    """Split ``text`` into ordered segments.
+
+    The returned list preserves the appearance order of plain text and encoded
+    IDs so they can be reconstructed later.
+
+    :param text: Combined text containing zero-width encoded IDs.
+    :return: List of ``{"type": ..., "id"|"text": ...}`` dictionaries.
     """
     segments = []
     parts = re.split(f"({ENCODED_RE.pattern})", text)
@@ -1334,17 +1379,10 @@ def fetch_openai_response_items(
 ) -> Dict[str, Dict[str, Any]]:
     """Return a mapping of ``item_id`` to its persisted payload.
 
-    Parameters
-    ----------
-    chat_id : str
-        Chat identifier used to look up stored items.
-    item_ids : List[str]
-        ULIDs previously embedded in the message text.
-    openwebui_model_id : str, optional
-        Filter results to items originating from ``openwebui_model_id``. The value should
-        match the OpenAI model ID stored alongside each item. This prevents
-        mixing data from different models when the chat history spans multiple
-        model types.
+    :param chat_id: Chat identifier used to look up stored items.
+    :param item_ids: ULIDs previously embedded in the message text.
+    :param openwebui_model_id: Only include items originating from this model.
+    :return: Mapping of ULID to the stored item payload.
     """
 
     chat_model = Chats.get_chat_by_id(chat_id)
