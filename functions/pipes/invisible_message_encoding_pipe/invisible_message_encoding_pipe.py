@@ -4,6 +4,9 @@ id: invisible_message_encoding_pipe
 description:
     Encode user input invisibly in assistant responses and decode it from later messages.
 
+    This allows you to persist hidden data within the conversation without it being seen by users
+    and is retrievable via body['messages'] in future turns.
+
 notes:
     - Zero-width characters ('\u200b', '\u200c') persist invisibly in text but can unintentionally propagate 
       into external documents or applications when copied. This can cause confusion, unexpected artifacts, or 

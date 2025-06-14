@@ -19,9 +19,7 @@ from __future__ import annotations
 import datetime
 import json
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
-
 from pydantic import BaseModel, Field
-
 from fastapi import Request
 
 SENSITIVE_HEADERS = {
