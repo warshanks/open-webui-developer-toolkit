@@ -206,3 +206,36 @@ This behaviour stems from changes described in the upstream changelog:
 ```
 
 Source: `CHANGELOG.md` lines 850‑867.
+
+## 10. Minimal example
+
+The `citations_example` pipe under `functions/pipes/citations_example`
+demonstrates how to emit citation events directly. The pipe sends a
+`chat:completion` frame referencing two sources:
+
+```python
+await __event_emitter__(
+    {
+        "type": "chat:completion",
+        "data": {
+            "content": "This example cites two references [1][2].",
+            "done": True,
+            "sources": [
+                {
+                    "source": {"name": "Example Source 1"},
+                    "document": ["Example document snippet one."],
+                    "metadata": [{"source": "https://example.com/1"}],
+                },
+                {
+                    "source": {"name": "Example Source 2"},
+                    "document": ["Another snippet from a second source."],
+                    "metadata": [{"source": "https://example.com/2"}],
+                },
+            ],
+        },
+    }
+)
+```
+
+Running this pipe produces an assistant message with clickable references
+that open the provided URLs when selected.
