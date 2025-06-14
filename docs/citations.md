@@ -54,6 +54,19 @@ if len(sources) > 0:
 
 Source: `middleware.py` lines 979‑987.
 
+These items are inserted into the Server‑Sent Events stream as JSON frames with
+a `sources` field. `streaming/index.ts` parses them and yields the data to the
+chat event handler before any text tokens arrive.
+
+```typescript
+if (parsedData.sources) {
+    yield { done: false, value: '', sources: parsedData.sources };
+    continue;
+}
+```
+
+Source: `index.ts` lines 60‑76.
+
 `process_chat_response` later emits these extra events alongside the normal `chat:completion` stream so the frontend stores them with the message.
 
 ## 4. Frontend message updates
@@ -68,7 +81,16 @@ if (message?.sources) {
 }
 ```
 
-Source: `Chat.svelte` lines 334‑339.
+The handler is triggered for events of type `source` or `citation` so
+extensions remain compatible with older emitters:
+
+```svelte
+} else if (type === 'source' || type === 'citation') {
+    /* ...merge data as shown above... */
+}
+```
+
+Source: `Chat.svelte` lines 316‑339.
 
 ## 5. Replacing bracket markers
 
