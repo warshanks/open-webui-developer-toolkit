@@ -106,6 +106,7 @@ class Pipe:
         }
 
         # Stream the response word-by-word, emitting citations as encountered
+        emitted_citations: list[dict[str, Any]] = []  # Track emitted citations for later DB save
         for word in response_text.split():
             await asyncio.sleep(0.03)  # simulate realistic streaming delay
             yield word + " "
@@ -113,12 +114,10 @@ class Pipe:
             # Clean word of punctuation to detect citation placeholders
             if word.rstrip(".,!?") in sources:
                 if __event_emitter__:
-                    await __event_emitter__(
-                        {
-                            "type": "citation",
-                            "data": sources[word.rstrip(".,!?")],
-                        }
-                    )
+                    citation = sources[word.rstrip(".,!?")]
+                    emitted_citations.append(citation)
+                    await __event_emitter__({"type": "citation", "data": citation})
+        # End of response streaming
 
         """
         # Alternatively, you can emit the entire response with citations at once at the end using chat:completion.
@@ -158,6 +157,6 @@ class Pipe:
                 chat_id,
                 message_id,
                 {
-                    "sources": sources,
+                    "sources": emitted_citations,
                 },
             )
