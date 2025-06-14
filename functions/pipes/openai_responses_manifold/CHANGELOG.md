@@ -4,6 +4,9 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.9] - 2025-06-15
+- Added helper to safely emit visible chunks after encoded IDs.
+
 ## [0.8.7] - 2025-06-13
 - Embedded zero-width encoded IDs during streaming and non-streaming flows.
 - Persisted each output item immediately and yielded the encoded reference.

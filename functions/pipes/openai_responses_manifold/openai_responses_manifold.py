@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.8
+version: 0.8.9
 license: MIT
 requirements: orjson
 """
@@ -526,6 +526,13 @@ class Pipe:
 
         need_newline = False
 
+        def _emit_visible(chunk: str):
+            nonlocal need_newline
+            if need_newline:
+                yield "\n"
+                need_newline = False
+            yield chunk
+
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
@@ -539,11 +546,9 @@ class Pipe:
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
-                            if need_newline:
-                                yield "\n"
-                                need_newline = False
                             final_output.write(delta)
-                            yield delta
+                            for chunk in _emit_visible(delta):
+                                yield chunk
                         continue
 
                     if etype == "response.reasoning_summary_text.delta":
@@ -591,7 +596,8 @@ class Pipe:
                                 f'<details type="{__name__}.reasoning" done="true">\n'
                                 f"<summary>Done thinking!</summary>\n{parts}\n</details>"
                             )
-                            yield snippet
+                            for chunk in _emit_visible(snippet):
+                                yield chunk
                             reasoning_map.clear()
                         continue
 
