@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
   - `max_tokens` now maps to `max_output_tokens`.
   - Additional parameters are passed through for future compatibility.
 - Refined reasoning block streaming for safe token ordering.
+- Replaced streaming loop with a single-flag newline injector for
+  predictable token placement.
 
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.
