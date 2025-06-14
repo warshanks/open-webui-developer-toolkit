@@ -435,7 +435,7 @@ class Pipe:
         responses_body = ResponsesBody.from_completions(
             completions_body=completions_body,
 
-            # If chat_id and openwebui_model_id are provided, from_completions() uses them to fetch previously persisted items (function_calls, reasoning, etc.)
+            # If chat_id and openwebui_model_id are provided, from_completions() uses them to fetch previously persisted items (function_calls, reasoning, etc.) from DB and reconstruct the input array in the correct order.
             **({"chat_id": __metadata__["chat_id"]} if __metadata__.get("chat_id") else {}),
             **({"openwebui_model_id": openwebui_model_id} if openwebui_model_id else {}),
 
