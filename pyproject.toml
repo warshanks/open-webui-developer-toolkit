@@ -18,7 +18,8 @@ dev = [
   "pytest-asyncio",
   "pytest-cov",
   "nox",
-  "pre-commit"
+  "pre-commit",
+  "orjson"
 ]
 
 [build-system]
