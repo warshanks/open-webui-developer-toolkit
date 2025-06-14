@@ -510,248 +510,133 @@ class Pipe:
     # 4.3 Core Multi-Turn Handlers
     async def _run_streaming_loop(
         self,
-        body: ResponsesBody,                                        # The transformed body for OpenAI Responses API
-        valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
-        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
-        metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
-        tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
+        body: ResponsesBody,
+        valves: Pipe.Valves,
+        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]],
+        metadata: dict[str, Any] = {},
+        tools: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream a conversation loop, handling tools and reasoning events.
+        """Stream a conversation loop while maintaining Markdown integrity."""
 
-        The generator yields partial text deltas as they arrive from the
-        Responses API.  Each iteration checks for function calls, executes them
-        if present and then continues until a final answer is produced or the
-        maximum number of tool-call loops is reached.
-        """
-
-        openwebui_model_id = metadata.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
-        reasoning_map: Dict[int, str] = {}
-        total_usage: Dict[str, Any] = {}
         tools = tools or {}
+        openwebui_model = metadata.get("model", {}).get("id", "")
+        reasoning_map: dict[int, str] = {}
         final_output = StringIO()
-        section = StreamSectionManager()
+        total_usage: dict[str, Any] = {}
 
-        self.logger.debug(
-            "Entering _run_streaming_loop with up to %d loops",
-            valves.MAX_TOOL_CALL_LOOPS,
-        )
+        need_newline = False
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
-                final_response_data: dict[str, Any] | None = None
-                reasoning_map.clear()
-                self.logger.debug(
-                    "Starting loop %d of %d", loop_idx + 1, valves.MAX_TOOL_CALL_LOOPS
-                )
-                async for event in self.send_openai_responses_streaming_request(body.model_dump(exclude_none=True), api_key=valves.API_KEY, base_url=valves.BASE_URL):
-                    event_type = event.get("type")
+                final_response: dict[str, Any] | None = None
+                async for event in self.send_openai_responses_streaming_request(
+                    body.model_dump(exclude_none=True),
+                    api_key=valves.API_KEY,
+                    base_url=valves.BASE_URL,
+                ):
+                    etype = event.get("type")
 
-                    # Partial text output
-                    if event_type == "response.output_text.delta":
+                    if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
-                            if not section.text_started:
-                                section.text_started = True
-
-                                if section.reasoning_done:
-                                    yield "".join(section.pre_text_tokens)
-                                    yield "\n"
-
-                            # yield delta  # partial text
+                            if need_newline:
+                                yield "\n"
+                                need_newline = False
                             final_output.write(delta)
                             yield delta
+                        continue
 
-                        continue # continue to next event
-
-                    # Partial reasoning summary output
-                    elif event_type == "response.reasoning_summary_text.delta":
+                    if etype == "response.reasoning_summary_text.delta":
                         idx = event.get("summary_index", 0)
                         delta = event.get("delta", "")
                         if delta:
-                            section.reasoning_started = True
-                            # 1) Accumulate for this summary_index
                             reasoning_map[idx] = reasoning_map.get(idx, "") + delta
-
-                            # 2) Merge all blocks (sorted), separated by ---
-                            all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-
-                            # 3) Extract latest title, else fallback to 'Thinking...'
-                            matches = re.findall(r"\*\*(.+?)\*\*", all_text, flags=re.DOTALL)
-                            latest_title = matches[-1].strip() if matches else "Thinking..."
-
-                            # 4) Build a minimal snippet (omit type="reasoning")
+                            combined = "\n\n --- \n\n".join(
+                                reasoning_map[i] for i in sorted(reasoning_map)
+                            )
+                            titles = re.findall(r"\*\*(.+?)\*\*", combined)
+                            latest = titles[-1].strip() if titles else "Thinking..."
                             snippet = (
                                 f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
-                                f"<summary>🧠{latest_title}</summary>\n"
-                                f"{all_text}\n"
-                                "</details>"
+                                f"<summary>🧠{latest}</summary>\n"
+                                f"{combined}\n</details>"
                             )
                             if event_emitter:
                                 await event_emitter(
                                     {"type": "chat:completion", "data": {"content": snippet}}
                                 )
-
-                            # 5) Emit to the front end
-                            yield "" # Yield an empty string to release the event loop for responsiveness
-
+                            yield ""
                         continue
 
-                    # Output item added (e.g., tool call started, reasoning started, etc..)
-                    elif event_type == "response.output_item.added":
+                    if etype == "response.output_item.done":
                         item = event.get("item", {})
                         item_type = item.get("type", "")
 
-                        self.logger.debug("output_item.added event received: %s", json.dumps(item, indent=2, ensure_ascii=False))
-
-                        msg: str | None = None
-                        if item_type == "web_search_call":
-                            msg = "🔍 Searching the web..."
-                        elif item_type == "function_call":
-                            msg = f"🛠️ Running {item.get('name', 'a tool')}..."
-                        elif item_type == "file_search_call":
-                            msg = "📂 Searching files..."
-                        elif item_type == "image_generation_call":
-                            msg = "🎨 Generating image..."
-                        elif item_type == "local_shell_call":
-                            msg = "💻 Executing command..."
-
-                        if msg:
-                            await self._emit_status(event_emitter, msg, done=False, hidden=False)
-
-                        if item_type == "reasoning":
-                            section.reasoning_started = True
-
-                        continue  # continue to next event
-
-                    # Output item done (e.g., tool call finished, reasoning done, etc.)
-                    elif event_type == "response.output_item.done":
-                        item = event.get("item", {})
-                        item_type = item.get("type", "")
-
-                        msg: str | None = None
-                        if item_type == "web_search_call":
-                            msg = "🔎 Done searching."
-                        elif item_type == "function_call":
-                            msg = "🛠️ Tool finished."
-                        elif item_type == "file_search_call":
-                            msg = "📂 File search complete."
-                        elif item_type == "image_generation_call":
-                            msg = "🎨 Image ready."
-                        elif item_type == "local_shell_call":
-                            msg = "💻 Command complete."
-
-                        if msg:
-                            await self._emit_status(event_emitter, msg, done=True, hidden=False)
-
-                        if valves.PERSIST_TOOL_RESULTS:
-                            encoded = persist_openai_response_items(
+                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                            token = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
-                                openwebui_model_id,
+                                openwebui_model,
                             )
-                            if encoded:
-                                section.store_encoded(encoded)
+                            if token:
+                                yield token
+                                need_newline = True
 
                         if item_type == "reasoning":
-                            # Merge all partial reasoning so far
-                            all_text = "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-
-                            if all_text:
-                                all_text += "\n\n --- \n\n"
-
-                                final_snippet = (
-                                    f'<details type=\"{__name__}.reasoning\" done="true">\n'
-                                    f"<summary>Done thinking!</summary>\n"
-                                    f"{all_text}\n"
-                                    "</details>"
-                                )
-                                yield final_snippet
-                            else:
-                                await self._emit_status(event_emitter, "Done thinking!", done=True, hidden=False)
-
-                            yield "".join(section.pre_text_tokens)
-                            yield "\n"
-                            section.reasoning_done = True
+                            parts = "\n\n --- \n\n".join(
+                                reasoning_map[i] for i in sorted(reasoning_map)
+                            )
+                            snippet = (
+                                f'<details type="{__name__}.reasoning" done="true">\n'
+                                f"<summary>Done thinking!</summary>\n{parts}\n</details>"
+                            )
+                            yield snippet
                             reasoning_map.clear()
+                        continue
 
-                        continue  # continue to next event
+                    if etype == "response.completed":
+                        final_response = event.get("response", {})
+                        break
 
-                    # Response completed event
-                    elif event_type == "response.completed":
-                        self.logger.debug("Response completed event received.")
-                        final_response_data = event.get("response", {})
-                        yield ""
-                        break # Exit the streaming loop to process the final response
-                
-                if final_response_data is None:
-                    self.logger.error("Streaming ended without a final response.")
+                if need_newline:
+                    yield "\n"
+                    need_newline = False
+
+                if final_response is None:
                     break
 
-                usage = final_response_data.get("usage", {})
+                usage = final_response.get("usage", {})
                 if usage:
                     usage["turn_count"] = 1
                     usage["function_call_count"] = sum(
-                        1 for i in final_response_data["output"] if i["type"] == "function_call"
+                        1 for i in final_response["output"] if i["type"] == "function_call"
                     )
                     merge_usage_stats(total_usage, usage)
 
-                body.input.extend(final_response_data.get("output", []))
+                body.input.extend(final_response.get("output", []))
 
-                # Run function calls if present
-                calls = [i for i in final_response_data.get("output", []) if i["type"] == "function_call"]
+                calls = [i for i in final_response["output"] if i["type"] == "function_call"]
                 if calls:
-                    function_call_outputs = await self._execute_function_calls(calls, tools)
+                    function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        encoded = persist_openai_response_items(
+                        token = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
-                            function_call_outputs,
-                            openwebui_model_id,
+                            function_outputs,
+                            openwebui_model,
                         )
-                        if encoded:
-                            section.store_encoded(encoded)
-
-                    body.input.extend(function_call_outputs)
+                        if token:
+                            yield token
+                            need_newline = True
+                    body.input.extend(function_outputs)
                 else:
-                    self.logger.debug("No pending function calls. Exiting loop.")
-                    if section.post_text_tokens:
-                        yield "".join(section.post_text_tokens)
-                        yield "\n"
-                    break  # LLM response is complete, no further tool calls
-
-        except Exception as e:
-            await self._emit_error(
-                event_emitter,
-                e,
-                show_error_message=True,
-                show_error_log_citation=True,
-                done=True,
-            )
-            return
-        
+                    break
 
         finally:
-            self.logger.debug("Exiting _run_streaming_loop loop.")
-            # Final cleanup: close the aiohttp session if it was created
+            if need_newline:
+                yield "\n"
 
-            if total_usage:
-                # Emit final usage stats if available
-                await self._emit_completion(event_emitter, usage=total_usage, done=False) # OpenWebUI sends it's own completion event, so we set done=False here to avoid double completion events
-
-            # If valves is DEBUG or user_valves is set to something other than "INHERIT"
-            if valves.LOG_LEVEL == "DEBUG":
-                if event_emitter:
-                    logs = SessionLogger.logs.get(SessionLogger.session_id.get(), [])
-                    if logs:
-                        await self._emit_citation(
-                            event_emitter,
-                            "\n".join(logs),
-                            f"{valves.LOG_LEVEL.capitalize()} Logs",
-                        )
-
-            # Clear logs after emitting
-            SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
     async def _run_nonstreaming_loop(
         self,
@@ -1248,21 +1133,6 @@ logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
 current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
 
 
-class StreamSectionManager:
-    """Track where we are in a streamed answer."""
-
-    def __init__(self) -> None:
-        self.reasoning_started = False
-        self.reasoning_done = False
-        self.text_started = False
-        self.pre_text_tokens: list[str] = []
-        self.post_text_tokens: list[str] = []
-
-    def store_encoded(self, encoded: str) -> None:
-        if self.text_started:
-            self.post_text_tokens.append(encoded)
-        else:
-            self.pre_text_tokens.append(encoded)
     
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Framework Integration Helpers (Open WebUI DB operations)
