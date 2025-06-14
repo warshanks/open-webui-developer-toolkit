@@ -113,3 +113,36 @@ Source: `ResponseMessage.svelte` lines 818‑831.
 Below each assistant message `Citations.svelte` lists unique sources as numbered buttons. Clicking one opens `CitationsModal.svelte`, displaying the full text snippet, metadata such as page numbers and any relevance scores.
 
 Unknown metadata keys are kept with the message but are not shown in the modal, allowing extensions to attach hidden data to citations.
+
+## 8. Emitting your own citations
+
+Extensions can emit citation blocks directly from tools or pipes using
+`__event_emitter__`. The event should use the `citation` (or `source`) type so
+`Chat.svelte` merges it with the message's source list.
+
+Example from `input_inspector.py`:
+
+```python
+await __event_emitter__(
+    {
+        "type": "citation",
+        "data": {
+            "document": [json.dumps(serial, indent=2)],
+            "metadata": [
+                {
+                    "date_accessed": datetime.datetime.utcnow().isoformat(),
+                    "source": name,
+                }
+            ],
+            "source": {"name": name},
+        },
+    }
+)
+```
+
+`openai_responses_manifold.py` exposes a helper `_emit_citation` that emits the
+same structure when the manifold attaches debug logs or other text as
+references.
+
+Source: `input_inspector.py` lines 59‑79 and
+`openai_responses_manifold.py` lines 960‑1007.
