@@ -75,19 +75,38 @@ class Pipe:
     async def pipe(
         self,
         body: dict[str, Any],
-        __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
-        __event_call__: Callable[[dict[str, Any]], Awaitable[None]],
+        __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        __event_call__: Callable[[dict[str, Any]], Awaitable[bool]] | None,
         __metadata__: dict[str, Any],
         *_,
     ) -> AsyncGenerator[str, None]:
-        """Emit two assistant bubbles in sequence."""
+        """Emit two assistant bubbles in sequence after confirmation."""
 
         # Bubble #1 using the provided emitter
-        await __event_emitter__(
-            {"type": "message", "data": {"content": "👋 Hi! Bubble #1 streaming...\n"}}
-        )
-        await asyncio.sleep(0.5)
-        await __event_emitter__({"type": "status", "data": {"done": True}})
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "message",
+                    "data": {"content": "👋 Hi! Bubble #1 streaming...\n"},
+                }
+            )
+            await asyncio.sleep(0.5)
+            await __event_emitter__({"type": "status", "data": {"done": True}})
+
+        proceed = True
+        if __event_call__:
+            proceed = await __event_call__(
+                {
+                    "type": "confirmation",
+                    "data": {
+                        "title": "Continue?",
+                        "message": "Display a second assistant bubble?",
+                    },
+                }
+            )
+        if not proceed:
+            yield ""
+            return
 
         chat_id = __metadata__["chat_id"]
         parent_id = __metadata__["message_id"]
