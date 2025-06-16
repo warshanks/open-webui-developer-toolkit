@@ -88,3 +88,5 @@ class Pipe:
             "Send another message to decode it.\n"
             f"{hidden_link}"
         )
+
+        yield "\n[](topSecret1)\n# test"
