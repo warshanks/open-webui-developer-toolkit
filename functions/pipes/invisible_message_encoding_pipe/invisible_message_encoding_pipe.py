@@ -1,64 +1,37 @@
 """
-title: Invisible Message Encoding
+title: Invisible Message Encoding (v2 – minimal link)
 id: invisible_message_encoding_pipe
-description:
-    Encode user input invisibly in assistant responses and decode it from later messages.
-
-    This allows you to persist hidden data within the conversation without it being seen by users
-    and is retrievable via body['messages'] in future turns.
-
-notes:
-    - Zero-width characters ('\u200b', '\u200c') persist invisibly in text but can unintentionally propagate 
-      into external documents or applications when copied. This can cause confusion, unexpected artifacts, or 
-      unpredictable behaviors in external programs.
-
-    - Zero-width characters placed immediately before markdown syntax (e.g., '#', '-', '*') can prevent 
-      proper markdown rendering, breaking headings, lists, and other formatting elements.
-
-      Examples illustrating markdown formatting disruption:
-          "\u200b# HEADER_HERE - will not render correctly"
-          "\u200c- BULLET_ITEM - fails to render as list item"
-
-    This is more of an interesting example than a production-ready technique. Use with caution.
-
+description: |
+    Stores a hidden string in an empty-text Markdown link: `[](mySecret)`.
+    The link is invisible, and safe for Markdown layout (unlike using invisible width characters which break markdown).
 author: Justin Kropp
-version: 1.0.0
+version: 2.3.0
 license: MIT
 """
 
-import json, re
-from typing import Any, Awaitable, Callable
+import re
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
-# Zero-width characters (invisible)
-ZERO, ONE = "\u200b", "\u200c"
+# ——— helpers ——————————————————————————————————
 
-def encode_invisible(message: str) -> str:
-    """Encodes a plain text string into invisible zero-width characters."""
-    bits = "".join(f"{ord(c):08b}" for c in message)
-    return "".join(ZERO if bit == '0' else ONE for bit in bits)
+LINK_RE = re.compile(r"\[\]\(([^)\s]+)\)")
 
-def decode_invisible(encoded: str) -> str:
-    """Decodes invisible zero-width characters back into a plain text string."""
-    bits = "".join('0' if ch == ZERO else '1' for ch in encoded if ch in (ZERO, ONE))
-    chars = [chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8)]
-    return "".join(chars)
+def encode_hidden_link(secret: str) -> str:
+    """Return an invisible link line carrying *secret*."""
+    return f"[]({secret})\n"          # one newline → no extra spacer
 
-def extract_invisible(text: str) -> str:
-    """Extract invisible encoded message from visible text."""
-    return "".join(ch for ch in text if ch in (ZERO, ONE))
+def decode_hidden_link(md: str) -> str | None:
+    """Extract the first hidden-link payload in *md*."""
+    m = LINK_RE.search(md)
+    return m.group(1) if m else None
 
-def find_encoded(messages):
-    """Searches previous messages for encoded invisible messages."""
+def find_secret(messages) -> str | None:
     for msg in reversed(messages):
-        content = msg.get('content', '')
-        if content:
-            hidden = extract_invisible(content)
-            if hidden:
-                try:
-                    return decode_invisible(hidden)
-                except:
-                    continue
+        if secret := decode_hidden_link(msg.get("content", "")):
+            return secret
     return None
+
+# ——— Pipe ———————————————————————————————————
 
 class Pipe:
     async def pipe(
@@ -66,28 +39,35 @@ class Pipe:
         body: dict[str, Any],
         __metadata__: dict[str, Any],
         __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]] | None,
-        __event_call__: Callable[[dict[str, Any]], Awaitable[None]] | None,
-        *__,
-    ):
-        previous_messages = body.get('messages', [])
-        decoded_message = find_encoded(previous_messages)
+        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]] | None,
+        *_,
+    ) -> AsyncGenerator[str, None]:
 
-        if decoded_message:
-            yield f"🔓 **Decoded Message:** '{decoded_message}'"
-        else:
-            user_input = await __event_call__(
-                {
-                    "type": "input",
-                    "data": {
-                        "title": "Enter a secret message",
-                        "message": "Type something you'd like to hide invisibly.",
-                        "placeholder": "Your hidden message...",
-                    },
-                }
-            )
+        # 1 — decode if a previous secret exists
+        if (secret := find_secret(body.get("messages", []))) is not None:
+            yield f"🔓 **Decoded message:** `{secret}`"
+            return
 
-            if user_input:
-                invisible_encoded = encode_invisible(user_input)
-                yield f"✨ Your message has been encoded invisibly in this response. Please send another message to decode it.{invisible_encoded}"
-            else:
-                yield "⚠️ No message provided!"
+        # 2 — prompt user for a new secret
+        user_input = await __event_call__(
+            {
+                "type": "input",
+                "data": {
+                    "title": "Enter a secret message",
+                    "message": "Type something you'd like to hide invisibly.",
+                    "placeholder": "Your hidden message…",
+                },
+            }
+        )
+
+        if not user_input:
+            yield "⚠️ No message provided!"
+            return
+
+        # 3 — confirm and embed the invisible link
+        hidden_link = encode_hidden_link(user_input)
+        yield (
+            "✨ Your message has been **encoded invisibly** in this response. "
+            "Send another message to decode it.\n"
+            f"{hidden_link}"
+        )
