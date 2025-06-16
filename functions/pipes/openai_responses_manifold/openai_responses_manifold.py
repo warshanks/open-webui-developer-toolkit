@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.9
+version: 0.8.10
 license: MIT
 requirements: orjson
 """
@@ -180,7 +180,7 @@ class ResponsesBody(BaseModel):
         """
         Build an OpenAI Responses-API `input` array from Open WebUI-style messages.
 
-        If `chat_id` and `openwebui_model_id` is provided AND messages contain zero-width
+        If `chat_id` and `openwebui_model_id` is provided AND messages contain empty-link
         encoded item references, the function looks up the persisted items from database
         and embeds them in the correct order.
 
@@ -1162,7 +1162,7 @@ def persist_openai_response_items(
     :param message_id: Message ID the items belong to.
     :param items: Sequence of payloads to store.
     :param openwebui_model_id: Fully qualified model ID the items originate from.
-    :return: Concatenated zero-width encoded item IDs for later retrieval.
+    :return: Concatenated empty-link encoded item IDs for later retrieval.
     """
 
     if not items:
@@ -1262,16 +1262,14 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 #####################
 
 # Helper utilities for persistent item ID encoding/decoding
-BIT0  = "\u200b"         # U+200B ZERO-WIDTH SPACE          → bit 0
-BIT1  = "\u200c"         # U+200C ZERO-WIDTH NON-JOINER     → bit 1
-GUARD = "\u2060"         # U+2060 WORD JOINER (delimiter)
 
-# Regex: GUARD (≥1 encoded chars) GUARD
-ENCODED_RE = re.compile(f"{GUARD}[{BIT0}{BIT1}]+{GUARD}")
+# IDs are persisted in messages using an empty Markdown link of the form
+# ``[](01HX4Y2VW5VR2Z2HDQ5QY9REHB)``.  Each link stores a single ULID which can
+# later be looked up in the database.
+
+ENCODED_RE = re.compile(r"\[\]\(([A-Za-z0-9]{26})\)")
 
 ULID_LENGTH = 26
-BITS_PER_CHAR = 8
-ENCODED_ULID_LENGTH = ULID_LENGTH * BITS_PER_CHAR
 
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -1301,26 +1299,23 @@ def generate_item_id() -> str:
     return _encode_base32(timestamp_ms, 10) + _encode_base32(random_part, 16)
 
 def encode_item_id(item_id: str) -> str:
-    """Encode ``item_id`` as a zero-width string.
+    """Encode ``item_id`` as an invisible Markdown link.
 
     :param item_id: ULID to encode.
     :return: Encoded string safe to embed in messages.
     """
 
-    bits = "".join(f"{ord(c):08b}" for c in item_id)
-    zw   = "".join(BIT0 if b == "0" else BIT1 for b in bits)
-    return f"{GUARD}{zw}{GUARD}"
+    return f"[]({item_id})"
 
 
 def decode_item_id(block: str) -> str:
-    """Decode an encoded zero-width block back into a ULID.
+    """Decode an encoded empty-link block back into a ULID.
 
-    :param block: Encoded string wrapped with guard characters.
-    :return: Decoded ULID string.
+    :param block: Encoded string ``[](ULID)``.
+    :return: Decoded ULID string or ``""`` if parsing fails.
     """
-    inner = block.strip(GUARD)
-    bits  = "".join("0" if ch == BIT0 else "1" for ch in inner)
-    return "".join(chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8))
+    match = ENCODED_RE.fullmatch(block.strip())
+    return match.group(1) if match else ""
 
 def contains_encoded_item_ids(text: str) -> bool:
     """Check whether ``text`` contains encoded item references.
@@ -1336,14 +1331,7 @@ def extract_item_ids(text: str) -> list[str]:
     :param text: Text potentially containing encoded IDs.
     :return: List of decoded ULIDs.
     """
-    ids = []
-    for match in ENCODED_RE.findall(text):
-        decoded = decode_item_id(match)
-        for i in range(0, len(decoded), ULID_LENGTH):
-            chunk = decoded[i:i+ULID_LENGTH]
-            if len(chunk) == ULID_LENGTH:
-                ids.append(chunk)
-    return ids
+    return ENCODED_RE.findall(text)
 
 def split_text_by_encoded_item_ids(text: str) -> list[dict]:
     """Split ``text`` into ordered segments.
@@ -1351,23 +1339,18 @@ def split_text_by_encoded_item_ids(text: str) -> list[dict]:
     The returned list preserves the appearance order of plain text and encoded
     IDs so they can be reconstructed later.
 
-    :param text: Combined text containing zero-width encoded IDs.
+    :param text: Combined text containing empty-link encoded IDs.
     :return: List of ``{"type": ..., "id"|"text": ...}`` dictionaries.
     """
     segments = []
-    parts = re.split(f"({ENCODED_RE.pattern})", text)
-
-    for part in parts:
-        if not part:
-            continue
-        if ENCODED_RE.fullmatch(part):
-            decoded = decode_item_id(part)
-            for i in range(0, len(decoded), ULID_LENGTH):
-                chunk = decoded[i:i+ULID_LENGTH]
-                if len(chunk) == ULID_LENGTH:
-                    segments.append({"type": "encoded_id", "id": chunk})
-        else:
-            segments.append({"type": "text", "text": part})
+    last = 0
+    for match in ENCODED_RE.finditer(text):
+        if match.start() > last:
+            segments.append({"type": "text", "text": text[last:match.start()]})
+        segments.append({"type": "encoded_id", "id": match.group(1)})
+        last = match.end()
+    if last < len(text):
+        segments.append({"type": "text", "text": text[last:]})
 
     return segments
 
