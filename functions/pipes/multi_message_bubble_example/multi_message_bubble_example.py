@@ -24,8 +24,15 @@ except Exception:  # noqa: PERF203
         return _noop
 
 
-def _add_assistant_row(chat_id: str, parent_id: str, model_id: str) -> str:
-    """Create a blank assistant message row and return its ID."""
+async def _add_assistant_row(
+    chat_id: str,
+    parent_id: str,
+    model_id: str,
+    user_id: str,
+    session_id: str | None,
+) -> str:
+    """Create a blank assistant message row and notify the UI."""
+
     msg_id = str(uuid.uuid4())
     now = int(time.time())
 
@@ -42,10 +49,25 @@ def _add_assistant_row(chat_id: str, parent_id: str, model_id: str) -> str:
             "done": False,
         },
     )
-    Chats.upsert_message_to_chat_by_id_and_message_id(
-        chat_id, parent_id, {"childrenIds": [msg_id]}
+    Chats.upsert_message_to_chat_by_id_and_message_id(chat_id, parent_id, {"childrenIds": [msg_id]})
+
+    emitter = get_event_emitter(
+        {
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "session_id": session_id,
+        },
+        update_db=False,
     )
-    Chats.update_chat_by_id(chat_id, {"currentId": msg_id})
+
+    await emitter(
+        {
+            "type": "chat:message",
+            "data": {"chat_id": chat_id, "message_id": msg_id, "content": ""},
+        }
+    )
+
     return msg_id
 
 
@@ -74,7 +96,9 @@ class Pipe:
         session_id = __metadata__.get("session_id")
 
         # Bubble #2 with a fresh row and emitter
-        second_msg_id = _add_assistant_row(chat_id, parent_id, model_id)
+        second_msg_id = await _add_assistant_row(
+            chat_id, parent_id, model_id, user_id, session_id
+        )
         emitter2 = get_event_emitter(
             {
                 "user_id": user_id,
