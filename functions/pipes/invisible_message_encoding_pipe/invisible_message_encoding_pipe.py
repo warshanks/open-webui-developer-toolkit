@@ -1,11 +1,28 @@
 """
-title: Invisible Message Encoding (v2 – minimal link)
+title: Invisible Message Encoding
 id: invisible_message_encoding_pipe
-description: |
-    Stores a hidden string in an empty-text Markdown link: `[](mySecret)`.
-    The link is invisible, and safe for Markdown layout (unlike using invisible width characters which break markdown).
+description:
+    Hides a secret with an empty-text Markdown link, e.g. [](secret).
+    The link renders as a zero-sized <a> tag, so nothing appears on-screen.
+    • No extra blank line: the collapsed anchor's margins merge with the block
+      that follows.
+    • Never breaks headings or lists (a risk with zero-width characters).
+    • Easy to process: one regex  r"\[\]\(([^)\s]+)\)"  finds or strips it.
+notes:
+    USE-CASES
+      • Heading      – link collapses, heading renders:
+            [](topSecret1)
+            # Quarterly Results
+      • Many secrets – stack links, still invisible:
+            [](topSecret1)
+            [](topSecret2)
+            [](topSecret3)
+            ## Roadmap
+      • Inline text  – link adds no spacing:
+            Please review [](topSecret1) ASAP.
+    Clipboard: the raw  [](topSecret1)  string is copied; strip with r"\[\]\([^)]+\)" if you need a clean export.
 author: Justin Kropp
-version: 2.3.0
+version: 2.5.0
 license: MIT
 """
 
