@@ -654,6 +654,7 @@ class Pipe:
         tools = tools or {}
         final_output = StringIO()
         total_usage: Dict[str, Any] = {}
+        reasoning_map: dict[int, str] = {}
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
@@ -665,12 +666,40 @@ class Pipe:
 
                 items = response.get("output", [])
 
-                # Persist non-message items immediately and yield markers to the front-end
+                # Persist non-message items immediately and insert invisible markers
                 for item in items:
-                    if item.get("type") == "message":
+                    item_type = item.get("type")
+
+                    if item_type == "message":
                         for content in item.get("content", []):
                             if content.get("type") == "output_text":
                                 final_output.write(content.get("text", ""))
+
+                    elif item_type == "reasoning_summary_text":
+                        idx = item.get("summary_index", 0)
+                        text = item.get("text", "")
+                        if text:
+                            reasoning_map[idx] = reasoning_map.get(idx, "") + text
+
+                    elif item_type == "reasoning":
+                        parts = "\n\n --- \n\n".join(
+                            reasoning_map[i] for i in sorted(reasoning_map)
+                        )
+                        snippet = (
+                            f'<details type="{__name__}.reasoning" done="true">\n'
+                            f"<summary>Done thinking!</summary>\n{parts}</details>"
+                        )
+                        final_output.write(snippet)
+                        reasoning_map.clear()
+                        if valves.PERSIST_TOOL_RESULTS:
+                            marker = persist_openai_response_items(
+                                metadata.get("chat_id"),
+                                metadata.get("message_id"),
+                                [item],
+                                metadata.get("model", {}).get("id"),
+                            )
+                            final_output.write(marker)
+
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
                             marker = persist_openai_response_items(

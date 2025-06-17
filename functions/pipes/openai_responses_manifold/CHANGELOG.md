@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [0.8.11] - 2025-06-17
 - Fixed crash in non-streaming loop when metadata lacked a model ID.
+- Added invisible link persistence for non-streaming responses.
 
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
