@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.10
+version: 0.8.11
 license: MIT
 requirements: orjson
 """
@@ -677,7 +677,7 @@ class Pipe:
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
-                                metadata.get("model").get("id"),
+                                metadata.get("model", {}).get("id"),
                             )
                             final_output.write(marker)
 

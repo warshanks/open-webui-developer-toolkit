@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Replaced zero-width item ID encoding with empty Markdown links.
 - Introduced v1 markers with model metadata and removed legacy helpers.
 
+## [0.8.11] - 2025-06-17
+- Fixed crash in non-streaming loop when metadata lacked a model ID.
+
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
 - Fixed blank line after reasoning block by delaying encoded ID emission.
