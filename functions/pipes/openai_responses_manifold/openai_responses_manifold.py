@@ -524,15 +524,6 @@ class Pipe:
         final_output = StringIO()
         total_usage: dict[str, Any] = {}
 
-        need_newline = False
-
-        def _emit_visible(chunk: str):
-            nonlocal need_newline
-            if need_newline:
-                yield "\n"
-                need_newline = False
-            yield chunk
-
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
@@ -547,8 +538,7 @@ class Pipe:
                         delta = event.get("delta", "")
                         if delta:
                             final_output.write(delta)
-                            for chunk in _emit_visible(delta):
-                                yield chunk
+                            yield delta
                         continue
 
                     if etype == "response.reasoning_summary_text.delta":
@@ -592,28 +582,21 @@ class Pipe:
                             )
                             snippet = (
                                 f'<details type="{__name__}.reasoning" done="true">\n'
-                                f"<summary>Done thinking!</summary>\n{parts}\n</details>"
+                                f"<summary>Done thinking!</summary>\n{parts}</details>"
                             )
-                            for chunk in _emit_visible(snippet):
-                                yield chunk
+                            yield snippet
                             if token:
-                                yield token
-                                need_newline = True
+                                yield f"\n\n[]({token})\n\n" # Persisted tool results as a hidden markdown link.  Added new lines to not break markdown formatting that may follow.
                             reasoning_map.clear()
                             continue
 
                         if token:
-                            yield token
-                            need_newline = True
+                            yield f"\n\n[]({token})\n\n" # Persisted tool results as a hidden markdown link
                         continue
 
                     if etype == "response.completed":
                         final_response = event.get("response", {})
                         break
-
-                if need_newline:
-                    yield "\n"
-                    need_newline = False
 
                 if final_response is None:
                     break
@@ -639,16 +622,13 @@ class Pipe:
                             openwebui_model,
                         )
                         if token:
-                            yield token
-                            need_newline = True
+                            yield f"\n\n[]({token})\n\n" # Persisted tool results as a hidden markdown link.
                     body.input.extend(function_outputs)
                 else:
                     break
 
         finally:
-            if need_newline:
-                yield "\n"
-
+            pass
 
     async def _run_nonstreaming_loop(
         self,
@@ -1155,7 +1135,7 @@ def persist_openai_response_items(
     message_id: str,
     items: List[Dict[str, Any]],
     openwebui_model_id: str,
-) -> str:
+) -> List[str]:
     """Persist items and return their encoded reference string.
 
     :param chat_id: Chat identifier used to locate the conversation.
@@ -1166,14 +1146,14 @@ def persist_openai_response_items(
     """
 
     if not items:
-        return ""
+        return []
 
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
-        return ""
+        return []
 
-    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
-    items_store = pipe_root.setdefault("items", {})
+    pipe_root      = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
+    items_store    = pipe_root.setdefault("items", {})
     messages_index = pipe_root.setdefault("messages_index", {})
 
     message_bucket = messages_index.setdefault(
@@ -1182,21 +1162,21 @@ def persist_openai_response_items(
     )
 
     now = int(datetime.datetime.utcnow().timestamp())
-    encoded_parts: list[str] = []
+    persisted_ids: List[str] = []
+
     for payload in items:
         item_id = generate_item_id()
         items_store[item_id] = {
-            "model": openwebui_model_id,
+            "model":      openwebui_model_id,
             "created_at": now,
-            "payload": payload,
+            "payload":    payload,
             "message_id": message_id,
         }
-        message_bucket.setdefault("item_ids", []).append(item_id)
-        encoded_parts.append(encode_item_id(item_id))
+        message_bucket["item_ids"].append(item_id)
+        persisted_ids.append(item_id)
 
     Chats.update_chat_by_id(chat_id, chat_model.chat)
-
-    return "".join(encoded_parts)
+    return persisted_ids
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
