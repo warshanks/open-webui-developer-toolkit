@@ -611,7 +611,8 @@ class Pipe:
                     usage["function_call_count"] = sum(
                         1 for i in final_response["output"] if i["type"] == "function_call"
                     )
-                    merge_usage_stats(total_usage, usage)
+                    total_usage = merge_usage_stats(total_usage, usage)
+                    await self._emit_completion(event_emitter, content="", usage=total_usage, done=False)
 
                 body.input.extend(final_response.get("output", []))
 
@@ -716,7 +717,8 @@ class Pipe:
                     usage["function_call_count"] = sum(
                         1 for i in items if i.get("type") == "function_call"
                     )
-                    merge_usage_stats(total_usage, usage)
+                    total_usage = merge_usage_stats(total_usage, usage)
+                    await self._emit_completion(event_emitter, content="", usage=total_usage, done=False)
 
                 body.input.extend(items)
 
@@ -737,6 +739,10 @@ class Pipe:
                 else:
                     break
 
+            # Finalize output
+            final_text = final_output.getvalue().strip()
+            return final_text
+
         except Exception as e:  # pragma: no cover - network errors
             await self._emit_error(
                 event_emitter,
@@ -745,21 +751,10 @@ class Pipe:
                 show_error_log_citation=True,
                 done=True,
             )
-            return ""
         finally:
-            final_text = final_output.getvalue()
-            await self._emit_completion(
-                event_emitter,
-                content=final_text,
-                usage=total_usage if total_usage else None,
-                done=True,
-            )
-
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
-
-        return final_text
     
     # 4.4 Task Model Handling
     async def _run_task_model_request(
@@ -1294,21 +1289,17 @@ _RE = re.compile(
 ULID_LENGTH = 26
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-
 def _ulid() -> str:
     ts = int(time.time() * 1000) & 0xFFFFFFFFFFFF
     rd = secrets.randbits(80)
     return "".join(CROCKFORD_ALPHABET[(ts >> i) & 31] for i in range(45, -1, -5)) + \
         "".join(CROCKFORD_ALPHABET[(rd >> i) & 31] for i in range(75, -1, -5))
 
-
 def _qs(d: dict[str, str]) -> str:
     return "&".join(f"{k}={v}" for k, v in d.items()) if d else ""
 
-
 def _parse_qs(q: str) -> dict[str, str]:
     return dict(p.split("=", 1) for p in q.split("&")) if q else {}
-
 
 def _encode_base32(value: int, length: int) -> str:
     chars = []
@@ -1317,12 +1308,10 @@ def _encode_base32(value: int, length: int) -> str:
         value >>= 5
     return "".join(reversed(chars))
 
-
 def generate_item_id() -> str:
     ts_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
     rd = int.from_bytes(os.urandom(10), "big")
     return _encode_base32(ts_ms, 10) + _encode_base32(rd, 16)
-
 
 def create_marker(
     item_type: str,
@@ -1339,14 +1328,11 @@ def create_marker(
     base = f"openai_responses:v1:{item_type}:{ulid or _ulid()}"
     return f"{base}?{_qs(meta)}" if meta else base
 
-
 def wrap_marker(marker: str) -> str:
     return f"\n\n[]({marker})\n\n"
 
-
 def contains_marker(text: str) -> bool:
     return _SENTINEL in text
-
 
 def parse_marker(marker: str) -> dict:
     if not marker.startswith("openai_responses:v1:"):
@@ -1354,7 +1340,6 @@ def parse_marker(marker: str) -> dict:
     _, _, kind, rest = marker.split(":", 3)
     uid, _, q = rest.partition("?")
     return {"version": "v1", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
-
 
 def extract_markers(text: str, *, parsed: bool = False) -> list:
     found = []
@@ -1364,7 +1349,6 @@ def extract_markers(text: str, *, parsed: bool = False) -> list:
             raw += f"?{m.group('query')}"
         found.append(parse_marker(raw) if parsed else raw)
     return found
-
 
 def split_text_by_markers(text: str) -> list[dict]:
     segments = []
