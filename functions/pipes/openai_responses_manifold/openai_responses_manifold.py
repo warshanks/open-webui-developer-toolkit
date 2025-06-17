@@ -233,17 +233,26 @@ class ResponsesBody(BaseModel):
 
             # -------- user message ---------------------------------------- #
             if role == "user":
+                blocks = msg.get("content", [])
+
+                # 🔒 auto-wrap plain text messages to avoid crashes
+                if isinstance(blocks, str):
+                    blocks = [{"type": "text", "text": blocks}]
+
                 openai_input.append({
                     "type": "message",
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_text" if block["type"] == "text" else "input_image",
-                            **({"text": block["text"]} if block["type"] == "text" else {}),
-                            **({"image_url": block["image_url"]["url"]} if block["type"] == "image_url" else {}),
+                            "type": "input_text" if block.get("type") == "text" else "input_image",
+                            **(
+                                {"text": block.get("text")}
+                                if block.get("type") == "text"
+                                else {"image_url": block.get("image_url", {}).get("url")}
+                            ),
                         }
-                        for block in msg.get("content", [])
-                        if block["type"] in ("text", "image_url")
+                        for block in blocks
+                        if block and block.get("type") in ("text", "image_url")
                     ]
                 })
                 continue
@@ -541,7 +550,7 @@ class Pipe:
         if body.model in FEATURE_SUPPORT["reasoning"]:
             snippet = (
                 f'<details type="{__name__}.reasoning" done="false">\n'
-                "<summary>🧠Thinking…</summary>\n"
+                "<summary>🧠Thinking…</summary>\nHmm… just a moment while I gather my thoughts…"
                 "</details>"
             )
             if event_emitter:
@@ -613,22 +622,14 @@ class Pipe:
                                 done=False,
                             )
                             status_emitted = True
-                            continue
+                            
+                        yield ""  # Yield empty string to keep the stream alive
+                        continue # Continue to the next event
 
                     # ─── when a tool FINISHES ──────────────────────────────────────────────
                     if etype == "response.output_item.done":
                         item = event.get("item", {})
                         item_type = item.get("type", "")
-
-                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
-                            hidden_uid_marker = persist_openai_response_items(
-                                metadata.get("chat_id"),
-                                metadata.get("message_id"),
-                                [item],
-                                openwebui_model,
-                            )
-                            if hidden_uid_marker:
-                                yield hidden_uid_marker
 
                         if item_type == "reasoning":
                             parts = (
@@ -641,9 +642,21 @@ class Pipe:
                             )
                             yield snippet
                             reasoning_map.clear()
-                            continue
 
-                        continue
+                            if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                                hidden_uid_marker = persist_openai_response_items(
+                                    metadata.get("chat_id"),
+                                    metadata.get("message_id"),
+                                    [item],
+                                    openwebui_model,
+                                )
+                                if hidden_uid_marker:
+                                    yield hidden_uid_marker
+
+                        else:
+                            yield "" # Yield empty string to keep the stream alive
+
+                        continue # Continue to the next event
 
                     if etype == "response.completed":
                         final_response = event.get("response", {})
@@ -680,7 +693,6 @@ class Pipe:
                     break
 
         finally:
-
             if status_emitted:
                 # Emit final status to indicate completion
                 await self._emit_status(
