@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.12
+version: 0.8.13
 license: MIT
 requirements: orjson
 """
@@ -537,6 +537,16 @@ class Pipe:
         final_output = StringIO()
         total_usage: dict[str, Any] = {}
         status_emitted = False
+
+        if body.model in FEATURE_SUPPORT["reasoning"]:
+            snippet = (
+                f'<details type="{__name__}.reasoning" done="false">\n'
+                "<summary>🧠Thinking…</summary>\n"
+                "</details>"
+            )
+            if event_emitter:
+                await event_emitter({"type": "chat:completion", "data": {"content": snippet}})
+            yield ""
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
