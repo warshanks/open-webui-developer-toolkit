@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Fixed crash in non-streaming loop when metadata lacked a model ID.
 - Added invisible link persistence for non-streaming responses.
 
+## [0.8.12] - 2025-06-18
+- Fixed missing final message when streaming disabled by emitting the
+  complete text via `chat:completion`.
+
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
 - Fixed blank line after reasoning block by delaying encoded ID emission.

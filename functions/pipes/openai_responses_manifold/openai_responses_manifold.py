@@ -7,7 +7,7 @@ funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.11
+version: 0.8.12
 license: MIT
 requirements: orjson
 """
@@ -747,14 +747,19 @@ class Pipe:
             )
             return ""
         finally:
-            if total_usage:
-                await self._emit_completion(event_emitter, usage=total_usage, done=True)
+            final_text = final_output.getvalue()
+            await self._emit_completion(
+                event_emitter,
+                content=final_text,
+                usage=total_usage if total_usage else None,
+                done=True,
+            )
 
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
-        return final_output.getvalue()
+        return final_text
     
     # 4.4 Task Model Handling
     async def _run_task_model_request(
