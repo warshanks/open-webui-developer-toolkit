@@ -546,7 +546,6 @@ class Pipe:
             )
             if event_emitter:
                 await event_emitter({"type": "chat:completion", "data": {"content": snippet}})
-            yield ""
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
