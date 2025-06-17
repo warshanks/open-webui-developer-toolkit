@@ -56,6 +56,11 @@ FEATURE_SUPPORT = {
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 }
 
+DETAILS_RE = re.compile(
+    r"<details\b[^>]*>.*?</details>|!\[.*?]\(.*?\)",
+    re.S | re.I,
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Data Models
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,7 +225,7 @@ class ResponsesBody(BaseModel):
         openai_input: list[dict] = []
         for msg in messages:
             role = msg.get("role", "assistant")
-            content = msg.get("content", "")
+            raw_content = msg.get("content", "")
 
             # Skip system messages; they belong in `instructions`
             if role == "system":
@@ -232,20 +237,26 @@ class ResponsesBody(BaseModel):
                     "type": "message",
                     "role": "user",
                     "content": [
-                        # Include plain text content
-                        *([{"type": "input_text", "text": content}] if content else []),
-
-                        # Include base64 encoded images if present
-                        *(
-                            {"type": "input_image", "image_url": f["url"]}
-                            for f in msg.get("files", [])
-                            if f.get("type") == "image" and f.get("url")
-                        ),
+                        (
+                            # Transform text blocks
+                            {"type": "input_text", "text": block["text"]}
+                            if block["type"] == "text"
+                            # Transform image blocks
+                            else {"type": "input_image", "image_url": block["image_url"]["url"]}
+                        )
+                        for block in msg.get("content", [])
+                        if block["type"] in ("text", "image_url")
                     ]
                 })
                 continue
 
             # -------- assistant message ----------------------------------- #
+            # Assistant messages might contain <details> or embedded images that need stripping
+            if "<details" in raw_content or "![" in raw_content:
+                content = DETAILS_RE.sub("", raw_content).strip()
+            else:
+                content = raw_content
+
             if contains_marker(content):
                 for segment in split_text_by_markers(content):
                     if segment["type"] == "marker":
@@ -527,6 +538,7 @@ class Pipe:
         reasoning_map: dict[int, str] = {}
         final_output = StringIO()
         total_usage: dict[str, Any] = {}
+        status_emitted = False
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
@@ -567,35 +579,63 @@ class Pipe:
                             yield ""
                         continue
 
+                    # ─── when a tool STARTS ──────────────────────────────────────────────
+                    # Write status emitting for tool start
+                    if etype == "response.output_item.added":
+                        item       = event.get("item", {})
+                        item_type  = item.get("type", "")
+
+                        # 1️⃣ map each type to a plain string template
+                        started: dict[str, str] = {
+                            "web_search_call"       : "🔍 Hmm, let me quickly check online…",
+                            "function_call"         : "🛠️ Running the {fn} tool…",
+                            "file_search_call"      : "📂 Let me skim those files…",
+                            "image_generation_call" : "🎨 Let me create that image…",
+                            "local_shell_call"      : "💻 Let me run that command…",
+                        }
+
+                        template = started.get(item_type)
+                        if template:
+                            # 2️⃣ Plug the function name in when it exists (ignored for other templates)
+                            description = template.format(fn=item.get("name", "a tool"))
+
+                            # 3️⃣ Emit the live-status message
+                            await self._emit_status(
+                                event_emitter,
+                                description=description,
+                                done=False,
+                            )
+                            status_emitted = True
+                            continue
+
+                    # ─── when a tool FINISHES ──────────────────────────────────────────────
                     if etype == "response.output_item.done":
                         item = event.get("item", {})
                         item_type = item.get("type", "")
 
-                        marker = None
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
-                            marker = persist_openai_response_items(
+                            hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
                                 openwebui_model,
                             )
+                            if hidden_uid_marker:
+                                yield hidden_uid_marker
 
                         if item_type == "reasoning":
-                            parts = "\n\n --- \n\n".join(
-                                reasoning_map[i] for i in sorted(reasoning_map)
+                            parts = (
+                                "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
+                                if reasoning_map else "Done thinking!" # TODO: handle empty reasoning case more intelligently
                             )
                             snippet = (
                                 f'<details type="{__name__}.reasoning" done="true">\n'
                                 f"<summary>Done thinking!</summary>\n{parts}</details>"
                             )
                             yield snippet
-                            if marker:
-                                yield marker
                             reasoning_map.clear()
                             continue
 
-                        if marker:
-                            yield marker
                         continue
 
                     if etype == "response.completed":
@@ -620,20 +660,44 @@ class Pipe:
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        marker = persist_openai_response_items(
+                        hidden_uid_marker = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             function_outputs,
                             openwebui_model,
                         )
-                        if marker:
-                            yield marker
+                        if hidden_uid_marker:
+                            yield hidden_uid_marker
                     body.input.extend(function_outputs)
                 else:
                     break
 
         finally:
-            pass
+
+            if status_emitted:
+                # Emit final status to indicate completion
+                await self._emit_status(
+                    event_emitter,
+                    description="",
+                    done=True,
+                    hidden=False,
+                )
+                status_emitted = False
+
+            if valves.LOG_LEVEL != "INHERIT":
+                if event_emitter:
+                    session_id = SessionLogger.session_id.get()
+                    logs = SessionLogger.logs.get(session_id, [])
+                    if logs:
+                        await self._emit_citation(
+                            event_emitter,
+                            "\n".join(logs),
+                            "Logs",
+                        )
+
+            # Clear logs
+            logs_by_msg_id.clear()
+            SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
     async def _run_nonstreaming_loop(
         self,
@@ -693,23 +757,23 @@ class Pipe:
                         final_output.write(snippet)
                         reasoning_map.clear()
                         if valves.PERSIST_TOOL_RESULTS:
-                            marker = persist_openai_response_items(
+                            hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
                                 metadata.get("model", {}).get("id"),
                             )
-                            final_output.write(marker)
+                            final_output.write(hidden_uid_marker)
 
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
-                            marker = persist_openai_response_items(
+                            hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
                                 metadata.get("model", {}).get("id"),
                             )
-                            final_output.write(marker)
+                            final_output.write(hidden_uid_marker)
 
                 usage = response.get("usage", {})
                 if usage:
@@ -727,13 +791,13 @@ class Pipe:
                 if calls:
                     fn_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        marker = persist_openai_response_items(
+                        hidden_uid_marker = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             fn_outputs,
                             openwebui_model_id,
                         )
-                        final_output.write(marker)
+                        final_output.write(hidden_uid_marker)
 
                     body.input.extend(fn_outputs)
                 else:
@@ -1195,7 +1259,7 @@ def persist_openai_response_items(
     )
 
     now = int(datetime.datetime.utcnow().timestamp())
-    markers: List[str] = []
+    hidden_uid_markers: List[str] = []
 
     for payload in items:
         item_id = generate_item_id()
@@ -1206,13 +1270,13 @@ def persist_openai_response_items(
             "message_id": message_id,
         }
         message_bucket["item_ids"].append(item_id)
-        marker = wrap_marker(
+        hidden_uid_marker = wrap_marker(
             create_marker(payload.get("type", "unknown"), ulid=item_id, model_id=openwebui_model_id)
         )
-        markers.append(marker)
+        hidden_uid_markers.append(hidden_uid_marker)
 
     Chats.update_chat_by_id(chat_id, chat_model.chat)
-    return "".join(markers)
+    return "".join(hidden_uid_markers)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
