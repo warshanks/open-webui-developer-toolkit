@@ -11,33 +11,35 @@ def test_importable():
     assert hasattr(mod, 'Pipe')
 
 
-def test_encode_decode_roundtrip():
+def test_marker_roundtrip():
     mod = import_module('functions.pipes.openai_responses_manifold.openai_responses_manifold')
 
-    sample_id = "01HX4Y2VW5VR2Z2HDQ5QY9REHB"
-    encoded = mod.encode_item_id(sample_id)
-    assert mod.decode_item_id(encoded) == sample_id
+    marker = mod.create_marker('function_call', ulid='01HX4Y2VW5VR2Z2HDQ5QY9REHB', model_id='gpt-4o')
+    parsed = mod.parse_marker(marker)
+    assert parsed['ulid'] == '01HX4Y2VW5VR2Z2HDQ5QY9REHB'
+    assert parsed['item_type'] == 'function_call'
+    assert parsed['metadata']['model'] == 'gpt-4o'
+    wrapped = mod.wrap_marker(marker)
+    assert '\n\n[](' in wrapped and wrapped.endswith('\n\n')
 
 
-def test_split_and_extract_ids():
+def test_split_and_extract_markers():
     mod = import_module('functions.pipes.openai_responses_manifold.openai_responses_manifold')
 
     ids = [
         "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
         "01HX4Y2VW6B091XE84F5G0Z8NF",
     ]
-    encoded = "".join(mod.encode_item_id(i) for i in ids)
+    encoded = "".join(mod.wrap_marker(mod.create_marker('function_call', ulid=i)) for i in ids)
     content = f"prefix {encoded} suffix"
 
-    assert mod.extract_item_ids(content) == ids
+    extracted = mod.extract_markers(content)
+    assert all(id in m for id, m in zip(ids, extracted))
 
-    segments = mod.split_text_by_encoded_item_ids(content)
+    segments = mod.split_text_by_markers(content)
     assert segments[0]["type"] == "text"
-    assert segments[1]["type"] == "encoded_id"
-    assert segments[1]["id"] == ids[0]
-    assert segments[2]["type"] == "encoded_id"
-    assert segments[2]["id"] == ids[1]
-    assert segments[3]["type"] == "text"
+    assert segments[1]["type"] == "marker"
+    assert 'openai_responses:v1:function_call' in segments[1]['marker']
 
 
 def test_item_persistence_roundtrip(monkeypatch):
@@ -67,8 +69,8 @@ def test_item_persistence_roundtrip(monkeypatch):
         [{"type": "function_call", "name": "calc", "arguments": "{}"}],
         "openai_responses.gpt-4o",
     )
-    assert encoded  # id encoded
-    stored_id = mod.extract_item_ids(encoded)[0]
+    assert encoded
+    stored_id = mod.extract_markers(encoded, parsed=True)[0]["ulid"]
     assert (
         storage["c1"]["openai_responses_pipe"]["items"][stored_id]["model"]
         == "openai_responses.gpt-4o"

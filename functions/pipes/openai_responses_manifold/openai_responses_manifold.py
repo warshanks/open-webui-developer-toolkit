@@ -28,6 +28,8 @@ import logging
 import os
 import re
 import sys
+import secrets
+import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
@@ -194,15 +196,16 @@ class ResponsesBody(BaseModel):
 
         required_item_ids: set[str] = set()
 
-        # Gather all encoded item IDs from assistant messages (if chat_id is provided)
+        # Gather all markers from assistant messages (if chat_id is provided)
         if chat_id:
             for m in messages:
                 if (
                     m.get("role") == "assistant"
                     and m.get("content")
-                    and contains_encoded_item_ids(m["content"])
+                    and contains_marker(m["content"])
                 ):
-                    required_item_ids.update(extract_item_ids(m["content"]))
+                    for mk in extract_markers(m["content"], parsed=True):
+                        required_item_ids.add(mk["ulid"])
 
         # Fetch persisted items if chat_id is provided and there are encoded item IDs
         items_lookup: dict[str, dict] = {}
@@ -243,19 +246,20 @@ class ResponsesBody(BaseModel):
                 continue
 
             # -------- assistant message ----------------------------------- #
-            if contains_encoded_item_ids(content):
-                for segment in split_text_by_encoded_item_ids(content):
-                    if segment["type"] == "encoded_id":
-                        item = items_lookup.get(segment["id"])
+            if contains_marker(content):
+                for segment in split_text_by_markers(content):
+                    if segment["type"] == "marker":
+                        mk = parse_marker(segment["marker"])
+                        item = items_lookup.get(mk["ulid"])
                         if item:
                             openai_input.append(item)
                         else:
-                            logging.warning(f"Missing persisted item for ID: {segment['id']}")
-                    elif segment["type"] == "text" and segment["text"]:
+                            logging.warning(f"Missing persisted item for ID: {mk['ulid']}")
+                    elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "type": "message",
                             "role": "assistant",
-                            "content": [{"type": "output_text", "text": segment["text"]}]
+                            "content": [{"type": "output_text", "text": segment["text"].strip()}]
                         })
             else:
                 # Plain assistant text (no encoded IDs detected)
@@ -567,9 +571,9 @@ class Pipe:
                         item = event.get("item", {})
                         item_type = item.get("type", "")
 
-                        token = None
+                        marker = None
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
-                            token = persist_openai_response_items(
+                            marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
@@ -585,13 +589,13 @@ class Pipe:
                                 f"<summary>Done thinking!</summary>\n{parts}</details>"
                             )
                             yield snippet
-                            if token:
-                                yield f"\n\n[]({token})\n\n" # Persisted tool results as a hidden markdown link.  Added new lines to not break markdown formatting that may follow.
+                            if marker:
+                                yield marker
                             reasoning_map.clear()
                             continue
 
-                        if token:
-                            yield f"\n\n[]({token})\n\n" # Persisted tool results as a hidden markdown link
+                        if marker:
+                            yield marker
                         continue
 
                     if etype == "response.completed":
@@ -615,14 +619,14 @@ class Pipe:
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        token = persist_openai_response_items(
+                        marker = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             function_outputs,
                             openwebui_model,
                         )
-                        if token:
-                            yield f"\n\n[]({token})\n\n" # Persisted tool results as a hidden markdown link.
+                        if marker:
+                            yield marker
                     body.input.extend(function_outputs)
                 else:
                     break
@@ -661,7 +665,7 @@ class Pipe:
 
                 items = response.get("output", [])
 
-                # Persist non-message items immediately and yield encoded id(s) to the front-end
+                # Persist non-message items immediately and yield markers to the front-end
                 for item in items:
                     if item.get("type") == "message":
                         for content in item.get("content", []):
@@ -669,13 +673,13 @@ class Pipe:
                                 final_output.write(content.get("text", ""))
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
-                            encoded = persist_openai_response_items(
+                            marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
                                 metadata.get("model").get("id"),
                             )
-                            final_output.write(encoded)
+                            final_output.write(marker)
 
                 usage = response.get("usage", {})
                 if usage:
@@ -692,13 +696,13 @@ class Pipe:
                 if calls:
                     fn_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        encoded = persist_openai_response_items(
+                        marker = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             fn_outputs,
                             openwebui_model_id,
                         )
-                        final_output.write(encoded)
+                        final_output.write(marker)
 
                     body.input.extend(fn_outputs)
                 else:
@@ -1135,8 +1139,8 @@ def persist_openai_response_items(
     message_id: str,
     items: List[Dict[str, Any]],
     openwebui_model_id: str,
-) -> List[str]:
-    """Persist items and return their encoded reference string.
+) -> str:
+    """Persist items and return their wrapped marker string.
 
     :param chat_id: Chat identifier used to locate the conversation.
     :param message_id: Message ID the items belong to.
@@ -1146,11 +1150,11 @@ def persist_openai_response_items(
     """
 
     if not items:
-        return []
+        return ""
 
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
-        return []
+        return ""
 
     pipe_root      = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
     items_store    = pipe_root.setdefault("items", {})
@@ -1162,7 +1166,7 @@ def persist_openai_response_items(
     )
 
     now = int(datetime.datetime.utcnow().timestamp())
-    persisted_ids: List[str] = []
+    markers: List[str] = []
 
     for payload in items:
         item_id = generate_item_id()
@@ -1173,10 +1177,13 @@ def persist_openai_response_items(
             "message_id": message_id,
         }
         message_bucket["item_ids"].append(item_id)
-        persisted_ids.append(item_id)
+        marker = wrap_marker(
+            create_marker(payload.get("type", "unknown"), ulid=item_id, model_id=openwebui_model_id)
+        )
+        markers.append(marker)
 
     Chats.update_chat_by_id(chat_id, chat_model.chat)
-    return persisted_ids
+    return "".join(markers)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
@@ -1241,97 +1248,103 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 
 #####################
 
-# Helper utilities for persistent item ID encoding/decoding
+# Helper utilities for persistent item markers
 
-# IDs are persisted in messages using an empty Markdown link of the form
-# ``[](01HX4Y2VW5VR2Z2HDQ5QY9REHB)``.  Each link stores a single ULID which can
-# later be looked up in the database.
-
-ENCODED_RE = re.compile(r"\[\]\(([A-Za-z0-9]{26})\)")
+_SENTINEL = "[](openai_responses:"
+_RE = re.compile(
+    r"\[\]\(openai_responses:v1:(?P<kind>[a-z0-9_]{2,30}):"
+    r"(?P<ulid>[A-Z0-9]{26})(?:\?(?P<query>[^)]+))?\)",
+    re.I,
+)
 
 ULID_LENGTH = 26
-
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
+def _ulid() -> str:
+    ts = int(time.time() * 1000) & 0xFFFFFFFFFFFF
+    rd = secrets.randbits(80)
+    return "".join(CROCKFORD_ALPHABET[(ts >> i) & 31] for i in range(45, -1, -5)) + \
+        "".join(CROCKFORD_ALPHABET[(rd >> i) & 31] for i in range(75, -1, -5))
+
+
+def _qs(d: dict[str, str]) -> str:
+    return "&".join(f"{k}={v}" for k, v in d.items()) if d else ""
+
+
+def _parse_qs(q: str) -> dict[str, str]:
+    return dict(p.split("=", 1) for p in q.split("&")) if q else {}
+
+
 def _encode_base32(value: int, length: int) -> str:
-    """Return ``value`` encoded in Crockford Base32.
-
-    :param value: Integer to encode.
-    :param length: Number of characters in the encoded output.
-    :return: Base32 encoded string of ``length`` characters.
-    """
-
     chars = []
     for _ in range(length):
         chars.append(CROCKFORD_ALPHABET[value & 31])
         value >>= 5
     return "".join(reversed(chars))
 
+
 def generate_item_id() -> str:
-    """Generate a 26-character ULID using millisecond precision.
-
-    :return: Unique identifier suitable for database keys.
-    """
-
-    timestamp_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
-    random_part = int.from_bytes(os.urandom(10), "big")
-    return _encode_base32(timestamp_ms, 10) + _encode_base32(random_part, 16)
-
-def encode_item_id(item_id: str) -> str:
-    """Encode ``item_id`` as an invisible Markdown link.
-
-    :param item_id: ULID to encode.
-    :return: Encoded string safe to embed in messages.
-    """
-
-    return f"[]({item_id})"
+    ts_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
+    rd = int.from_bytes(os.urandom(10), "big")
+    return _encode_base32(ts_ms, 10) + _encode_base32(rd, 16)
 
 
-def decode_item_id(block: str) -> str:
-    """Decode an encoded empty-link block back into a ULID.
+def create_marker(
+    item_type: str,
+    *,
+    ulid: str | None = None,
+    model_id: str | None = None,
+    metadata: dict[str, str] | None = None,
+) -> str:
+    if not re.fullmatch(r"[a-z0-9_]{2,30}", item_type):
+        raise ValueError("item_type must be 2–30 chars of [a-z0-9_]")
+    meta = {**(metadata or {})}
+    if model_id:
+        meta["model"] = model_id
+    base = f"openai_responses:v1:{item_type}:{ulid or _ulid()}"
+    return f"{base}?{_qs(meta)}" if meta else base
 
-    :param block: Encoded string ``[](ULID)``.
-    :return: Decoded ULID string or ``""`` if parsing fails.
-    """
-    match = ENCODED_RE.fullmatch(block.strip())
-    return match.group(1) if match else ""
 
-def contains_encoded_item_ids(text: str) -> bool:
-    """Check whether ``text`` contains encoded item references.
+def wrap_marker(marker: str) -> str:
+    return f"\n\n[]({marker})\n\n"
 
-    :param text: Message text to inspect.
-    :return: ``True`` if encoded item IDs are present, else ``False``.
-    """
-    return bool(ENCODED_RE.search(text))
 
-def extract_item_ids(text: str) -> list[str]:
-    """Extract decoded ULIDs from ``text`` in order of appearance.
+def contains_marker(text: str) -> bool:
+    return _SENTINEL in text
 
-    :param text: Text potentially containing encoded IDs.
-    :return: List of decoded ULIDs.
-    """
-    return ENCODED_RE.findall(text)
 
-def split_text_by_encoded_item_ids(text: str) -> list[dict]:
-    """Split ``text`` into ordered segments.
+def parse_marker(marker: str) -> dict:
+    if not marker.startswith("openai_responses:v1:"):
+        raise ValueError("not a v1 marker")
+    _, _, kind, rest = marker.split(":", 3)
+    uid, _, q = rest.partition("?")
+    return {"version": "v1", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
 
-    The returned list preserves the appearance order of plain text and encoded
-    IDs so they can be reconstructed later.
 
-    :param text: Combined text containing empty-link encoded IDs.
-    :return: List of ``{"type": ..., "id"|"text": ...}`` dictionaries.
-    """
+def extract_markers(text: str, *, parsed: bool = False) -> list:
+    found = []
+    for m in _RE.finditer(text):
+        raw = f"openai_responses:v1:{m.group('kind')}:{m.group('ulid')}"
+        if m.group("query"):
+            raw += f"?{m.group('query')}"
+        found.append(parse_marker(raw) if parsed else raw)
+    return found
+
+
+def split_text_by_markers(text: str) -> list[dict]:
     segments = []
     last = 0
-    for match in ENCODED_RE.finditer(text):
-        if match.start() > last:
-            segments.append({"type": "text", "text": text[last:match.start()]})
-        segments.append({"type": "encoded_id", "id": match.group(1)})
-        last = match.end()
+    for m in _RE.finditer(text):
+        if m.start() > last:
+            segments.append({"type": "text", "text": text[last:m.start()]})
+        raw = f"openai_responses:v1:{m.group('kind')}:{m.group('ulid')}"
+        if m.group("query"):
+            raw += f"?{m.group('query')}"
+        segments.append({"type": "marker", "marker": raw})
+        last = m.end()
     if last < len(text):
         segments.append({"type": "text", "text": text[last:]})
-
     return segments
 
 def fetch_openai_response_items(
