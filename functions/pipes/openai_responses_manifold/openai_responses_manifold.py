@@ -237,13 +237,11 @@ class ResponsesBody(BaseModel):
                     "type": "message",
                     "role": "user",
                     "content": [
-                        (
-                            # Transform text blocks
-                            {"type": "input_text", "text": block["text"]}
-                            if block["type"] == "text"
-                            # Transform image blocks
-                            else {"type": "input_image", "image_url": block["image_url"]["url"]}
-                        )
+                        {
+                            "type": "input_text" if block["type"] == "text" else "input_image",
+                            **({"text": block["text"]} if block["type"] == "text" else {}),
+                            **({"image_url": block["image_url"]["url"]} if block["type"] == "image_url" else {}),
+                        }
                         for block in msg.get("content", [])
                         if block["type"] in ("text", "image_url")
                     ]
