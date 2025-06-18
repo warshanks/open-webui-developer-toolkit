@@ -3,13 +3,12 @@ title: OpenAI Responses API Manifold
 id: openai_responses
 author: Justin Kropp
 author_url: https://github.com/jrkropp
-funding_url: https://github.com/jrkropp/open-webui-developer-toolkit
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
+requirements: orjson
 version: 0.8.13
 license: MIT
-requirements: orjson
 """
 
 from __future__ import annotations
