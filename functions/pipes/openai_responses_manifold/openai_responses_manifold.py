@@ -478,12 +478,21 @@ class Pipe:
                 strict=True,  # Use strict schema for Responses API compatibility
             )
 
-        # Add web_search tool, if supported and enabled
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH:
+        # Add web_search tool, if supported and enabled.
+        # Enable if valves is enable or __metadata__["features"]["openai_responses.web_search"] is True
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH or __metadata__.get("features", {}).get("openai_responses.web_search")):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search",
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
+
+                # Temp hardcode until I implement a more elegant way to handle this.
+                "user_location": {
+                    "type": "approximate",
+                    "country": "CA",
+                    "city": "Langley",
+                    "region": "BC",
+                }
             })
 
         # Check if tools are enabled but native function calling is disabled

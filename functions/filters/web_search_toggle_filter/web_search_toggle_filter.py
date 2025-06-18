@@ -9,17 +9,17 @@ version: 0.1.0
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Awaitable, Callable, Optional
 from datetime import datetime
 import re
 from pydantic import BaseModel
 
 # Models that natively support OpenAI's web_search tool
 WEB_SEARCH_MODELS = {
-    "openai_responses.gpt-4.1",
-    "openai_responses.gpt-4.1-mini",
-    "openai_responses.gpt-4o",
-    "openai_responses.gpt-4o-mini",
+    #"openai_responses.gpt-4.1",
+    #"openai_responses.gpt-4.1-mini",
+    #"openai_responses.gpt-4o",
+    #"openai_responses.gpt-4o-mini",
 }
 
 
@@ -39,79 +39,39 @@ class Filter:
             "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICA8Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIvPgogIDxsaW5lIHgxPSIyIiB5MT0iMTIiIHgyPSIyMiIgeTI9IjEyIi8+CiAgPHBhdGggZD0iTTEyIDJhMTUgMTUgMCAwIDEgMCAyMCAxNSAxNSAwIDAgMSAwLTIweiIvPgo8L3N2Zz4="
         )
 
-    def _add_web_search_tool(self, body: dict) -> None:
-        """Append the web_search tool to ``body['tools']`` if missing."""
-
-        entry = {
-            "type": "web_search",
-            "web_search": {
-                "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
-            },
-        }
-
-        tools = body.setdefault("tools", [])
-        if not any(t.get("type") == "web_search" for t in tools):
-            tools.append(entry)
-
     async def inlet(
         self,
         body: dict,
         __event_emitter__: Optional[callable] = None,
         __metadata__: Optional[dict] = None,
-        __tools__: Optional[dict] = None,
     ) -> dict:
         """
         Main entry point: Modify the request body to enable or route web search.
         - If the selected model supports web_search natively, inject the tool.
         - If not, reroute to the gpt-4o-search-preview model and configure search options.
         """
-        body.setdefault("features", {})[
-            "web_search"
-        ] = False  # Ensure built-in Open-WebUI web search feature is disabled.
-        model = body.get("model")
 
-        if model not in WEB_SEARCH_MODELS:
-            # Model does NOT natively support web_search.
-            # Reroute to gpt-4o-search-preview, and provide search context/options.
+        # SUBJECT TO CHANGE.
+        # This is a temp workaround until I can figure out a more elegant way to handle this.
 
-            # Optionally notify UI of the reroute action
-            if __event_emitter__:
-                await __event_emitter__(
-                    {
-                        "type": "status",
-                        "data": {
-                            "description": "🔍 Web search detected — rerouting to GPT-4o Search Preview...",
-                            "done": False,
-                            "hidden": False,
-                        },
-                    }
-                )
+        # Set web search feature flags in __metadata__ for downstream processing
+        if __metadata__:
+            __metadata__.setdefault("features", {})
+            __metadata__["features"]["web_search"] = False  # Disable built-in Open WebUI Search
+            __metadata__["features"]["openai_responses.web_search"] = True  # Enable downstream web_search tool
 
-            # Set up reroute: override model and inject search options
-            body.update(
-                {
-                    "model": "gpt-4o-search-preview",
-                    "web_search_options": {
-                        "user_location": {
-                            "type": "approximate",
-                            "approximate": {
-                                "country": "CA",
-                                "timezone": (__metadata__ or {})
-                                .get("variables", {})
-                                .get("{{CURRENT_TIMEZONE}}", "America/Vancouver"),
-                            },
-                        },
-                        "search_context_size": self.valves.SEARCH_CONTEXT_SIZE.lower(),
-                    },
-                }
-            )
-            # Remove 'tools' (if present) as this route does not use them
-            if "tools" in body:
-                del body["tools"]
+        body["tool_choice"] = "required"  # Force web_search tool to be used
 
-        else:
-            # Model supports web_search: add the web_search tool if needed
-            self._add_web_search_tool(body)
+        # Append to messages to encourage model to use web search
+        body.setdefault("messages", [])
+        body["messages"].append(
+            {
+                "role": "developer",
+                "content": (
+                    "Web Search: Enabled \nPlease answer the question using the web_search tool to find the most up-to-date information."
+                ),
+            }
+        )
 
         return body
 
@@ -120,7 +80,6 @@ class Filter:
         Post-processing for responses:
         - If not using a native web_search model, emit citation events for any URLs found in the last message.
         - Emit a summary status message for the UI.
-        """
         if body.get("model") in WEB_SEARCH_MODELS:
             # Native web_search models handle citations/events themselves
             return body
@@ -156,7 +115,7 @@ class Filter:
 
     @staticmethod
     async def _emit_citation(emitter: callable | None, url: str) -> None:
-        """Emit a citation event for a given URL."""
+
         if emitter is None:
             return
 
@@ -180,7 +139,6 @@ class Filter:
     async def _emit_status(
         emitter: callable | None, description: str, *, done: bool = False
     ) -> None:
-        """Emit a status event to the UI (or logs)."""
         if emitter is None:
             return
 
@@ -190,3 +148,5 @@ class Filter:
                 "data": {"description": description, "done": done, "hidden": False},
             }
         )
+
+        """
