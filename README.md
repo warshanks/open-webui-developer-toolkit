@@ -1,6 +1,6 @@
 # Open-WebUI Developer Toolkit
 
-A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](https://github.com/open-webui/open-webui). Every module lives in its own folder so you can copy it directly into a WebUI instance.
+A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](https://github.com/open-webui/open-webui).
 
 ## Repository Layout
 
@@ -11,25 +11,42 @@ A collection of **pipes**, **filters** and **tools** for extending [Open WebUI](
 
 Each subdirectory has a small README explaining its contents.
 
+## Available Extensions
+
+| Name | Description | Links |
+| --- | --- | --- |
+| Input Inspector | Shows pipe input arguments as citations for debugging. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/input_inspector) (main)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/input_inspector) (alpha-preview) |
+| OpenAI Responses Manifold | OpenAI Reasponse API pipe. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold) (main)<br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/pipes/openai_responses_manifold) (alpha-preview) |
+| Reason Toggle Filter | Filter toggle that temporarily routes a request to another model. | [Stable](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/filters/reason_toggle_filter) (main) <br>[Preview](https://github.com/jrkropp/open-webui-developer-toolkit/tree/alpha-preview/functions/filters/reason_toggle_filter) (alpha-preview) |
+
 ## Branching Model
 
-This repo uses three long‑lived branches:
+This repository uses three primary branches:
 
-1. **`development`** – active development and experiments; may break.
-2. **`alpha-preview`** – next release candidate. More stable than `development`.
-3. **`main`** – production‑ready code pulled from `alpha-preview`.
+1. **`main`**
+   Production-ready and stable code.
 
-Feature work typically happens in short‑lived branches, merged into `development` via pull requests.
+2. **`alpha-preview`**
+   Next release candidate. Tested, pre-production code.
 
-Changes flow from `development` → `alpha-preview` → `main` after testing.
+3. **`development`**
+   Active development, experimentation, and potentially unstable changes.
 
-## Installing Toolkit Locally (for developers)
+  ```
+   development (continuous changes) → alpha-preview (2–3 weeks testing) → main (stable)
+  ```
+
+## Local Development Setup (Developers Only)
+
+For local development and testing:
+
 ```bash
-# local development
 pip install -e '.[dev]'
 nox -s lint tests
 ```
 
-Installing with the `dev` extras provides `ruff`, `pytest` and `nox`. The `nox` sessions reuse your current Python environment and run the test suite with coverage enabled.
+The `dev` extras include developer tools (`ruff`, `pytest`, and `nox`) used for linting and testing.
 
-The `external/` directory mirrors a read-only version of upstream Open WebUI repo for reference. Handy for local testing.
+**Note:**
+
+* The `external/` directory includes a read-only copy of the upstream Open WebUI repository for local reference and testing convenience.
