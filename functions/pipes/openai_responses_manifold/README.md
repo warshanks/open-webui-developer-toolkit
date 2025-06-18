@@ -4,7 +4,7 @@
 > **Author:** [Justin Kropp](https://github.com/jrkropp)  
 > **License:** MIT
 
-⚠️ **Version 0.7.0 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.13 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
 1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
