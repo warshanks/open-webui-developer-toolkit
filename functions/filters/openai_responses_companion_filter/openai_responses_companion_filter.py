@@ -4,30 +4,47 @@ id: openai_responses_companion_filter
 description: Handles file uploads for the OpenAI Responses manifold.
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
 required_open_webui_version: 0.6.3
-version: 0.1.0
+version: 0.1.1
 """
 
 from __future__ import annotations
-from ast import Dict, List
-from collections import defaultdict, deque
-from contextvars import ContextVar
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Imports
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard library imports
 import datetime
 import logging
 import os
 import sys
+from collections import defaultdict, deque
+from contextvars import ContextVar
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
 
+# Third-party imports
 import aiohttp
 from pydantic import BaseModel, Field
-from typing import Any, Awaitable, Callable, Literal, Optional
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Constants & Global Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Data Models
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Main Controller: Filter
+# ─────────────────────────────────────────────────────────────────────────────
 class Filter:
     class Valves(BaseModel):
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
-        pass
 
     class UserValves(BaseModel):
         """Per-user valve overrides."""
