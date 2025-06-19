@@ -124,8 +124,18 @@ class ResponsesBody(BaseModel):
         strict: bool = False,
     ) -> list[dict]:
         """
-        Merge *openwebui_tools* (__tools__) and *body_tools* (body['tools'])
-        into a single list of **canonical Responses‑API** tool definitions.
+        Normalise and merge:
+
+            __tools__  = {"id": {"spec": {"name": "calc", ...}}}
+            body.tools = [
+                {"name": "foo", ...},                     # completions API style
+                {"type":"function","name":"bar", ...}     # responses
+            ]
+
+        → [{"type":"function","name":"calc", ...}, ...]   # responses shape
+
+        Later duplicate names override earlier; __tools__ beats body.tools.
+        strict=True  ⇒ every prop required, extras banned, optionals nullable.
         """
 
         if not openwebui_tools and not body_tools:
