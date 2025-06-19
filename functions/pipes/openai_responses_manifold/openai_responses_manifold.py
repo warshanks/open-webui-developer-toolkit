@@ -309,7 +309,8 @@ class ResponsesBody(BaseModel):
         unsupported_fields = {
             "frequency_penalty", "presence_penalty", "seed", "logit_bias",
             "logprobs", "top_logprobs", "n", "stop", "response_format",
-            "functions", "function_call", "prompt", "suffix", "max_tokens"
+            "functions", "function_call", "prompt", "suffix", "max_tokens",
+            "stream_options"
         }
 
         # Log warnings for each unsupported field that's set
