@@ -348,13 +348,20 @@ class ResponsesBody(BaseModel):
         """
         completions_dict = completions_body.model_dump(exclude_none=True)
 
-        # Step 1: Remove unsupported fields (and/or fields that require remapping)
+        # Step 1: Remove unsupported fields
         unsupported_fields = {
+            # Fields that are not supported by OpenAI Responses API
             "frequency_penalty", "presence_penalty", "seed", "logit_bias",
-            "logprobs", "top_logprobs", "n", "stop", "response_format",
-            "functions", "function_call", "prompt", "suffix",
-            "stream_options", "reasoning_effort", "max_tokens",
-            "messages", "tools"
+            "logprobs", "top_logprobs", "n", "stop",
+            "response_format", # Replaced with 'text' in Responses API
+            "suffix", # Responses API does not support suffix
+            "stream_options", # Responses API does not support stream options
+            "audio", # Responses API does not support audio input
+            "function_call", # Deprecated in favor of 'tool_choice'.
+            "functions", # Deprecated in favor of 'tools'.
+
+            # Fields that are dropped and manually handled in step 2.
+            "messages", "tools", "reasoning_effort", "max_tokens"
         }
         sanitized_params = {}
         for key, value in completions_dict.items():
@@ -398,7 +405,7 @@ class ResponsesBody(BaseModel):
         # Build the final ResponsesBody directly
         return ResponsesBody(
             **sanitized_params,
-            **extra_params  # Explicit overrides always win
+            **extra_params  # Overrides any parameters in sanitized_params with the same name since they are passed last
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1087,7 +1094,7 @@ class Pipe:
                 return asyncio.to_thread(fn, **args)
 
         tasks   = [_make_task(call) for call in calls]       # ← fire & forget
-        results = await asyncio.gather(*tasks)               # ← runs in parallel
+        results = await asyncio.gather(*tasks)               # ← runs in parallel. TODO: asyncio.gather(*tasks) cancels all tasks if one tool raises.
 
         return [
             {
