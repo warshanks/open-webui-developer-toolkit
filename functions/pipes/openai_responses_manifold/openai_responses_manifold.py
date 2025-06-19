@@ -234,25 +234,29 @@ class ResponsesBody(BaseModel):
             if role == "user":
                 blocks = msg.get("content", [])
 
-                # 🔒 auto-wrap plain text messages to avoid crashes
+                # 🔒 1. normalise: wrap bare strings so `blocks` is always a list of dicts
                 if isinstance(blocks, str):
                     blocks = [{"type": "text", "text": blocks}]
+                elif blocks is None:
+                    blocks = []
+
+                # 2. map WebUI blocks → OpenAI “input_*” records
+                #    Extend by adding new lambdas to the table.
+                xform: dict[str, callable] = {
+                    "text":       lambda b: {"type": "input_text",  "text": b.get("text", "")},
+                    "image_url":  lambda b: {"type": "input_image", "image_url": b.get("image_url", {}).get("url")},
+                    "input_file": lambda b: {"type": "input_file",  "file_id": b.get("file_id")},
+                    # "pdf":     lambda b: {...},   # ← easy future addition
+                }
 
                 openai_input.append({
-                    "type": "message",
-                    "role": "user",
+                    "type":    "message",
+                    "role":    "user",
                     "content": [
-                        {
-                            "type": "input_text" if block.get("type") == "text" else "input_image",
-                            **(
-                                {"text": block.get("text")}
-                                if block.get("type") == "text"
-                                else {"image_url": block.get("image_url", {}).get("url")}
-                            ),
-                        }
+                        (xform[block["type"]](block) if block.get("type") in xform else block)
                         for block in blocks
-                        if block and block.get("type") in ("text", "image_url")
-                    ]
+                        if block                                    # drop empty entries
+                    ],
                 })
                 continue
 
@@ -672,7 +676,7 @@ class Pipe:
                         break
 
                 if final_response is None:
-                    break
+                    raise ValueError("No final response received from OpenAI Responses API.")
 
                 usage = final_response.get("usage", {})
                 if usage:
@@ -701,6 +705,11 @@ class Pipe:
                 else:
                     break
 
+        # Catch any exceptions during the streaming loop and emit an error
+        except Exception as e:  # pragma: no cover - network errors
+            await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
+            yield "" # Yield empty string to keep the stream alive
+
         finally:
             if status_emitted:
                 # Emit final status to indicate completion
@@ -722,6 +731,9 @@ class Pipe:
                             "\n".join(logs),
                             "Logs",
                         )
+
+            # Emit completion (middleware.py also does this so this just covers if there is a downstream error)
+            await self._emit_completion(event_emitter, content="", usage=total_usage, done=True) # There must be an empty content to avoid breaking the UI
 
             # Clear logs
             logs_by_msg_id.clear()
