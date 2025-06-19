@@ -19,6 +19,7 @@ from __future__ import annotations
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
 import asyncio
+from copy import deepcopy
 import datetime
 import inspect
 from io import StringIO
@@ -118,63 +119,96 @@ class ResponsesBody(BaseModel):
 
     @staticmethod
     def transform_tools(
-        openwebui_tools: dict[str, Any],
+        openwebui_tools: dict[str, Any] | None = None,
+        body_tools: list[dict[str, Any]] | None = None,
         strict: bool = False,
     ) -> list[dict]:
         """
-        Normalize Open WebUI tool definitions into the OpenAI Responses API schema.
-
-        Parameters:
-            openwebui_tools (dict[str, Any]):
-                Tool definitions from Open WebUI in its native schema.
-            strict (bool, optional):
-                When True, enforces a strict JSON schema by marking all parameters as required,
-                explicitly allowing nulls for optional fields, and disallowing additional properties.
-                Defaults to False (relaxed schema).
-
-        Returns:
-            list[dict]: Transformed tool definitions ready for the Responses API.
+        Merge *openwebui_tools* (__tools__) and *body_tools* (body['tools'])
+        into a single list of **canonical Responses‑API** tool definitions.
         """
-        if not openwebui_tools:
+
+        if not openwebui_tools and not body_tools:
             return []
 
-        def apply_strict_schema(tool_schema: dict) -> dict:
-            parameters = tool_schema.get("parameters", {})
-            properties = parameters.get("properties", {})
-            required_properties = set(parameters.get("required", []))
+        # ------------------------------------------------------------------
+        # 1. Collect and normalise every incoming tool dict
+        # ------------------------------------------------------------------
+        raw_tools: list[dict] = []
 
-            for property_name, property_definition in properties.items():
-                if property_name not in required_properties:
-                    prop_type = property_definition.get("type")
-                    if isinstance(prop_type, list):
-                        if "null" not in prop_type:
-                            prop_type.append("null")
-                    elif prop_type is not None:
-                        property_definition["type"] = [prop_type, "null"]
+        # a) Open WebUI mapping  → already flat but buried in 'spec'
+        if openwebui_tools:
+            for meta in openwebui_tools.values():
+                spec = meta.get("spec", {})
+                raw_tools.append(
+                    {
+                        "type": "function",
+                        "name": spec.get("name", ""),
+                        "description": spec.get("description", ""),
+                        "parameters": spec.get("parameters", {}),
+                    }
+                )
 
-            parameters["required"] = list(properties.keys())
-            parameters["additionalProperties"] = False
-            tool_schema["parameters"] = parameters
-            tool_schema["strict"] = True
+        # b) Caller‑supplied array  → could be three variants
+        if body_tools:
+            for item in body_tools:
+                # --- New OpenAI style: {"type": "function", "function": {...}}
+                if "function" in item:
+                    fn = item["function"]
+                    raw_tools.append(
+                        {
+                            "type": "function",
+                            "name": fn.get("name", ""),
+                            "description": fn.get("description", ""),
+                            "parameters": fn.get("parameters", {}),
+                        }
+                    )
 
-            return tool_schema
+                # --- Already flat Responses‑API style
+                elif "type" in item:
+                    raw_tools.append(dict(item))  # shallow copy
 
-        transformed_tools = [
-            {
-                "type": "function",
-                "name": tool["spec"].get("name", ""),
-                "description": tool["spec"].get("description", ""),
-                "parameters": tool["spec"].get("parameters", {}),
-            }
-            for tool in openwebui_tools.values()
-        ]
+                # --- Old Completions‑API style (no "type")
+                else:
+                    raw_tools.append(
+                        {
+                            "type": "function",
+                            "name": item.get("name", ""),
+                            "description": item.get("description", ""),
+                            "parameters": item.get("parameters", {}),
+                        }
+                    )
 
+        # ------------------------------------------------------------------
+        # 2. Deduplicate (later tools overwrite earlier ones)
+        # ------------------------------------------------------------------
+        canonical: dict[str, dict] = {}
+        for tool in raw_tools:
+            key = tool.get("name") if tool.get("type") == "function" else tool.get("type")
+            canonical[key] = tool
+
+        # ------------------------------------------------------------------
+        # 3. Optional strict‑mode hardening
+        # ------------------------------------------------------------------
         if strict:
-            transformed_tools = [
-                apply_strict_schema(tool) for tool in transformed_tools
-            ]
+            for tool in canonical.values():
+                params = tool.setdefault("parameters", {})
+                props = params.setdefault("properties", {})
+                params["required"] = list(props)
+                params["additionalProperties"] = False
+                for schema in props.values():
+                    t = schema.get("type")
+                    if isinstance(t, list):
+                        if "null" not in t:
+                            t.append("null")
+                    elif t is not None:
+                        schema["type"] = [t, "null"]
+                tool["strict"] = True
 
-        return transformed_tools
+        # ------------------------------------------------------------------
+        # 4. Return list in deterministic order
+        # ------------------------------------------------------------------
+        return list(canonical.values())
 
 
     @staticmethod
@@ -232,27 +266,25 @@ class ResponsesBody(BaseModel):
 
             # -------- user message ---------------------------------------- #
             if role == "user":
-                blocks = msg.get("content", [])
+                # Convert string content to a block list (["Hello"] → [{"type": "text", "text": "Hello"}])
+                content_blocks = msg.get("content") or []
+                if isinstance(content_blocks, str):
+                    content_blocks = [{"type": "text", "text": content_blocks}]
 
-                # 🔒 auto-wrap plain text messages to avoid crashes
-                if isinstance(blocks, str):
-                    blocks = [{"type": "text", "text": blocks}]
+                # Only transform known types; leave all others unchanged
+                block_transform = {
+                    "text":       lambda b: {"type": "input_text",  "text": b.get("text", "")},
+                    "image_url":  lambda b: {"type": "input_image", "image_url": b.get("image_url", {}).get("url")},
+                    "input_file": lambda b: {"type": "input_file",  "file_id": b.get("file_id")},
+                }
 
                 openai_input.append({
                     "type": "message",
                     "role": "user",
                     "content": [
-                        {
-                            "type": "input_text" if block.get("type") == "text" else "input_image",
-                            **(
-                                {"text": block.get("text")}
-                                if block.get("type") == "text"
-                                else {"image_url": block.get("image_url", {}).get("url")}
-                            ),
-                        }
-                        for block in blocks
-                        if block and block.get("type") in ("text", "image_url")
-                    ]
+                        block_transform.get(block.get("type"), lambda b: b)(block)
+                        for block in content_blocks if block
+                    ],
                 })
                 continue
 
@@ -475,6 +507,7 @@ class Pipe:
         if __tools__:
             responses_body.tools = ResponsesBody.transform_tools(
                 openwebui_tools=__tools__,
+                body_tools=body["tools"],  # Existing tools from ResponsesBody
                 strict=True,  # Use strict schema for Responses API compatibility
             )
 
@@ -672,7 +705,7 @@ class Pipe:
                         break
 
                 if final_response is None:
-                    break
+                    raise ValueError("No final response received from OpenAI Responses API.")
 
                 usage = final_response.get("usage", {})
                 if usage:
@@ -701,6 +734,11 @@ class Pipe:
                 else:
                     break
 
+        # Catch any exceptions during the streaming loop and emit an error
+        except Exception as e:  # pragma: no cover - network errors
+            await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
+            yield "" # Yield empty string to keep the stream alive
+
         finally:
             if status_emitted:
                 # Emit final status to indicate completion
@@ -722,6 +760,9 @@ class Pipe:
                             "\n".join(logs),
                             "Logs",
                         )
+
+            # Emit completion (middleware.py also does this so this just covers if there is a downstream error)
+            await self._emit_completion(event_emitter, content="", usage=total_usage, done=True) # There must be an empty content to avoid breaking the UI
 
             # Clear logs
             logs_by_msg_id.clear()
