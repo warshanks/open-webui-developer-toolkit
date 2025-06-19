@@ -129,12 +129,12 @@ class ResponsesBody(BaseModel):
             __tools__  = {"id": {"spec": {"name": "calc", ...}}}
             body.tools = [
                 {"name": "foo", ...},                     # completions API style
-                {"type":"function","name":"bar", ...}     # responses
+                {"type":"function","name":"bar", ...}     # responses API style (already formatted correctly)
             ]
 
-        → [{"type":"function","name":"calc", ...}, ...]   # responses shape
+        Output: [{"type":"function","name":"calc", ...}, ...]   # responses API style
 
-        Later duplicate names override earlier; __tools__ beats body.tools.
+        Later duplicate names override earlier; __tools__ beats body.tools. # TODO Consider reversing this order.  Maybe body.tools should override __tools__?
         strict=True  ⇒ every prop required, extras banned, optionals nullable.
         """
 
@@ -694,24 +694,25 @@ class Pipe:
                             )
                             yield snippet
                             reasoning_map.clear()
-
-                            if valves.PERSIST_TOOL_RESULTS and item_type != "message":
-                                hidden_uid_marker = persist_openai_response_items(
-                                    metadata.get("chat_id"),
-                                    metadata.get("message_id"),
-                                    [item],
-                                    openwebui_model,
-                                )
-                                if hidden_uid_marker:
-                                    yield hidden_uid_marker
-
                         else:
                             yield "" # Yield empty string to keep the stream alive
+
+                        # persist the item if it is not a message (function_call, reasoning, etc.)
+                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                            hidden_uid_marker = persist_openai_response_items(
+                                metadata.get("chat_id"),
+                                metadata.get("message_id"),
+                                [item],
+                                openwebui_model,
+                            )
+                            if hidden_uid_marker:
+                                yield hidden_uid_marker
 
                         continue # Continue to the next event
 
                     if etype == "response.completed":
                         final_response = event.get("response", {})
+                        body.input.extend(final_response.get("output", []))
                         break
 
                 if final_response is None:
@@ -725,8 +726,6 @@ class Pipe:
                     )
                     total_usage = merge_usage_stats(total_usage, usage)
                     await self._emit_completion(event_emitter, content="", usage=total_usage, done=False)
-
-                body.input.extend(final_response.get("output", []))
 
                 calls = [i for i in final_response["output"] if i["type"] == "function_call"]
                 if calls:
