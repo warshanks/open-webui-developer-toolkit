@@ -338,54 +338,74 @@ class ResponsesBody(BaseModel):
         ResponsesBody, completions_body: "CompletionsBody", chat_id: Optional[str] = None, openwebui_model_id: Optional[str] = None, **extra_params
     ) -> "ResponsesBody":
         """
-        Convert a CompletionsBody into a ResponsesBody.
+        Convert CompletionsBody → ResponsesBody.
 
-        - Removes fields unsupported by the Responses API.
-        - Logs warnings for each unsupported parameter dropped.
-        - Renames max_tokens to max_output_tokens, if present.
-        - Converts messages into Responses API format.
-        - Drops tools (rebuild from __tools__ and provided in extra_params later in script).
-        - Allows overriding fields via kwargs.
+        - Drops unsupported fields (clearly logged).
+        - Converts max_tokens → max_output_tokens.
+        - Converts reasoning_effort → reasoning.effort (without overwriting).
+        - Builds messages in Responses API format.
+        - Allows explicit overrides via kwargs.
         """
-        # Define fields not supported by the Responses API
+        completions_dict = completions_body.model_dump(exclude_none=True)
+
+        # Step 1: Remove unsupported fields
         unsupported_fields = {
+            # Fields that are not supported by OpenAI Responses API
             "frequency_penalty", "presence_penalty", "seed", "logit_bias",
-            "logprobs", "top_logprobs", "n", "stop", "response_format",
-            "functions", "function_call", "prompt", "suffix", "max_tokens",
-            "stream_options"
+            "logprobs", "top_logprobs", "n", "stop",
+            "response_format", # Replaced with 'text' in Responses API
+            "suffix", # Responses API does not support suffix
+            "stream_options", # Responses API does not support stream options
+            "audio", # Responses API does not support audio input
+            "function_call", # Deprecated in favor of 'tool_choice'.
+            "functions", # Deprecated in favor of 'tools'.
+
+            # Fields that are dropped and manually handled in step 2.
+            "messages", "tools", "reasoning_effort", "max_tokens"
         }
+        sanitized_params = {}
+        for key, value in completions_dict.items():
+            if key in unsupported_fields:
+                logging.warning(f"Dropping unsupported parameter: '{key}'")
+            else:
+                sanitized_params[key] = value
 
-        # Log warnings for each unsupported field that's set
-        for field in unsupported_fields:
-            value = getattr(completions_body, field, None)
-            if value is not None:
-                logging.warning(f"Dropping unsupported parameter: '{field}'")
+        # Step 2: Apply transformations
+        # Rename max_tokens → max_output_tokens
+        if "max_tokens" in completions_dict:
+            sanitized_params["max_output_tokens"] = completions_dict["max_tokens"]
 
-        # Create sanitized completions params excluding messages, tools, and unsupported fields
-        sanitized_completions_params = completions_body.model_dump(
-            exclude={"messages", "tools"} | unsupported_fields,
-            exclude_none=True
-        )
+        # reasoning_effort → reasoning.effort (without overwriting existing effort)
+        effort = completions_dict.get("reasoning_effort")
+        if effort:
+            reasoning = sanitized_params.get("reasoning", {})
+            reasoning.setdefault("effort", effort)
+            sanitized_params["reasoning"] = reasoning
 
-        # Rename max_tokens if provided (Responses API uses max_output_tokens)
-        if getattr(completions_body, "max_tokens", None) is not None:
-            sanitized_completions_params["max_output_tokens"] = completions_body.max_tokens
+        # Extract the last system message (if any)
+        instructions = next((msg["content"] for msg in reversed(completions_dict.get("messages", [])) if msg["role"] == "system"), None)
+        if instructions:
+            sanitized_params["instructions"] = instructions
 
-        # Get last system message from completions_body
-        system_message_content = next(
-            (msg["content"] for msg in reversed(completions_body.messages) if msg["role"] == "system"),
-            None
-        )
-
-        return ResponsesBody(
-            input=ResponsesBody.transform_messages_to_input(
-                completions_body.messages,
+        # Transform input messages to OpenAI Responses API format
+        if "messages" in completions_dict:
+            sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
+                completions_dict.get("messages", []),
                 chat_id=chat_id,
                 openwebui_model_id=openwebui_model_id
-            ),
-            **({"instructions": system_message_content} if system_message_content else {}),
-            **sanitized_completions_params, # Base parameters from CompletionsBody
-            **extra_params  # Explicit overrides; these take precedence over any existing keys above
+            )
+
+        # Transform tools to OpenAI Responses API format
+        if "tools" in completions_dict:
+            sanitized_params["tools"] = ResponsesBody.transform_tools(
+                body_tools=completions_dict.get("tools", []),
+                strict=True,  # Use strict schema for Responses API compatibility
+            )
+
+        # Build the final ResponsesBody directly
+        return ResponsesBody(
+            **sanitized_params,
+            **extra_params  # Overrides any parameters in sanitized_params with the same name since they are passed last
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,13 +431,13 @@ class Pipe:
             default=None,
             description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
-        ENABLE_WEB_SEARCH: bool = Field(
+        ENABLE_AUTO_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  Note this adds the tool to each call which may slow down responses. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
-            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH=True.",
+            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_AUTO_WEB_SEARCH_TOOL=True.",
         )
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
@@ -523,7 +543,7 @@ class Pipe:
 
         # Add web_search tool, if supported and enabled.
         # Enable if valves is enable or __metadata__["features"]["openai_responses.web_search"] is True
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH or __metadata__.get("features", {}).get("openai_responses.web_search")):
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or __metadata__.get("features", {}).get("openai_responses.web_search")):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search",
@@ -1074,7 +1094,7 @@ class Pipe:
                 return asyncio.to_thread(fn, **args)
 
         tasks   = [_make_task(call) for call in calls]       # ← fire & forget
-        results = await asyncio.gather(*tasks)               # ← runs in parallel
+        results = await asyncio.gather(*tasks)               # ← runs in parallel. TODO: asyncio.gather(*tasks) cancels all tasks if one tool raises.
 
         return [
             {
