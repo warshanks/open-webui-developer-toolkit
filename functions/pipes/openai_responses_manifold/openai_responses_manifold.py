@@ -338,54 +338,67 @@ class ResponsesBody(BaseModel):
         ResponsesBody, completions_body: "CompletionsBody", chat_id: Optional[str] = None, openwebui_model_id: Optional[str] = None, **extra_params
     ) -> "ResponsesBody":
         """
-        Convert a CompletionsBody into a ResponsesBody.
+        Convert CompletionsBody → ResponsesBody.
 
-        - Removes fields unsupported by the Responses API.
-        - Logs warnings for each unsupported parameter dropped.
-        - Renames max_tokens to max_output_tokens, if present.
-        - Converts messages into Responses API format.
-        - Drops tools (rebuild from __tools__ and provided in extra_params later in script).
-        - Allows overriding fields via kwargs.
+        - Drops unsupported fields (clearly logged).
+        - Converts max_tokens → max_output_tokens.
+        - Converts reasoning_effort → reasoning.effort (without overwriting).
+        - Builds messages in Responses API format.
+        - Allows explicit overrides via kwargs.
         """
-        # Define fields not supported by the Responses API
+        completions_dict = completions_body.model_dump(exclude_none=True)
+
+        # Step 1: Remove unsupported fields (and/or fields that require remapping)
         unsupported_fields = {
             "frequency_penalty", "presence_penalty", "seed", "logit_bias",
             "logprobs", "top_logprobs", "n", "stop", "response_format",
-            "functions", "function_call", "prompt", "suffix", "max_tokens",
-            "stream_options"
+            "functions", "function_call", "prompt", "suffix",
+            "stream_options", "reasoning_effort", "max_tokens",
+            "messages", "tools"
         }
+        sanitized_params = {}
+        for key, value in completions_dict.items():
+            if key in unsupported_fields:
+                logging.warning(f"Dropping unsupported parameter: '{key}'")
+            else:
+                sanitized_params[key] = value
 
-        # Log warnings for each unsupported field that's set
-        for field in unsupported_fields:
-            value = getattr(completions_body, field, None)
-            if value is not None:
-                logging.warning(f"Dropping unsupported parameter: '{field}'")
+        # Step 2: Apply transformations
+        # Rename max_tokens → max_output_tokens
+        if "max_tokens" in completions_dict:
+            sanitized_params["max_output_tokens"] = completions_dict["max_tokens"]
 
-        # Create sanitized completions params excluding messages, tools, and unsupported fields
-        sanitized_completions_params = completions_body.model_dump(
-            exclude={"messages", "tools"} | unsupported_fields,
-            exclude_none=True
-        )
+        # reasoning_effort → reasoning.effort (without overwriting existing effort)
+        effort = completions_dict.get("reasoning_effort")
+        if effort:
+            reasoning = sanitized_params.get("reasoning", {})
+            reasoning.setdefault("effort", effort)
+            sanitized_params["reasoning"] = reasoning
 
-        # Rename max_tokens if provided (Responses API uses max_output_tokens)
-        if getattr(completions_body, "max_tokens", None) is not None:
-            sanitized_completions_params["max_output_tokens"] = completions_body.max_tokens
+        # Extract the last system message (if any)
+        instructions = next((msg["content"] for msg in reversed(completions_dict.get("messages", [])) if msg["role"] == "system"), None)
+        if instructions:
+            sanitized_params["instructions"] = instructions
 
-        # Get last system message from completions_body
-        system_message_content = next(
-            (msg["content"] for msg in reversed(completions_body.messages) if msg["role"] == "system"),
-            None
-        )
-
-        return ResponsesBody(
-            input=ResponsesBody.transform_messages_to_input(
-                completions_body.messages,
+        # Transform input messages to OpenAI Responses API format
+        if "messages" in completions_dict:
+            sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
+                completions_dict.get("messages", []),
                 chat_id=chat_id,
                 openwebui_model_id=openwebui_model_id
-            ),
-            **({"instructions": system_message_content} if system_message_content else {}),
-            **sanitized_completions_params, # Base parameters from CompletionsBody
-            **extra_params  # Explicit overrides; these take precedence over any existing keys above
+            )
+
+        # Transform tools to OpenAI Responses API format
+        if "tools" in completions_dict:
+            sanitized_params["tools"] = ResponsesBody.transform_tools(
+                body_tools=completions_dict.get("tools", []),
+                strict=True,  # Use strict schema for Responses API compatibility
+            )
+
+        # Build the final ResponsesBody directly
+        return ResponsesBody(
+            **sanitized_params,
+            **extra_params  # Explicit overrides always win
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
