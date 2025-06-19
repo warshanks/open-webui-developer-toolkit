@@ -90,21 +90,27 @@ jobs:
           WEBUI_URL: ${{ env.WEBUI_URL }}
           WEBUI_KEY: ${{ secrets.WEBUI_KEY }}   # secret stored per-environment
         run: |
-          jq -r '.[]' <<< '${{ steps.changed.outputs.all_changed_files }}' \
-            | while IFS= read -r file; do
-              echo "Publishing $file to '${{ matrix.environment_name }}'…"
-                # Determine plugin type from path
-                if [[ "$file" == functions/pipes/* ]]; then
-                  type=pipe
-                elif [[ "$file" == functions/filters/* ]]; then
-                  type=filter
-                elif [[ "$file" == tools/* ]]; then
-                  type=tool
-                else
-                  type=pipe
-                fi
-                python .scripts/publish_to_webui.py "$file" --type "$type"
-              done
+          files=$(jq -r '.[]' <<< '${{ steps.changed.outputs.all_changed_files }}')
+          failure=0
+          for file in $files; do
+            echo "Publishing $file to '${{ matrix.environment_name }}'…"
+            if [[ "$file" == functions/pipes/* ]]; then
+              type=pipe
+            elif [[ "$file" == functions/filters/* ]]; then
+              type=filter
+            elif [[ "$file" == tools/* ]]; then
+              type=tool
+            else
+              type=pipe
+            fi
+            if ! python .scripts/publish_to_webui.py "$file" --type "$type"; then
+              echo "::error ::Failed to publish $file"
+              failure=1
+            fi
+          done
+          if [[ $failure -ne 0 ]]; then
+            exit 1
+          fi
 
       - name: Skip
         if: ${{ steps.changed.outputs.any_changed == 'true' && github.ref_name != env.TARGET_BRANCH }}
