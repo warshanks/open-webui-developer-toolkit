@@ -411,13 +411,13 @@ class Pipe:
             default=None,
             description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
-        ENABLE_WEB_SEARCH: bool = Field(
+        ENABLE_AUTO_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  Note this adds the tool to each call which may slow down responses. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
-            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH=True.",
+            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_AUTO_WEB_SEARCH_TOOL=True.",
         )
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
@@ -523,7 +523,7 @@ class Pipe:
 
         # Add web_search tool, if supported and enabled.
         # Enable if valves is enable or __metadata__["features"]["openai_responses.web_search"] is True
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH or __metadata__.get("features", {}).get("openai_responses.web_search")):
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or __metadata__.get("features", {}).get("openai_responses.web_search")):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search",
