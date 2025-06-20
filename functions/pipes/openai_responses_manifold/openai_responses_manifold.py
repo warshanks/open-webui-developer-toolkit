@@ -542,8 +542,7 @@ class Pipe:
             )
 
         # Add web_search tool, if supported and enabled.
-        # Enable if valves is enable or __metadata__["features"]["openai_responses.web_search"] is True
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or __metadata__.get("features", {}).get("openai_responses.web_search")):
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_AUTO_WEB_SEARCH_TOOL:
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search",

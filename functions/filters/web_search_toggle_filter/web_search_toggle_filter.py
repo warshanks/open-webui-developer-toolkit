@@ -16,12 +16,11 @@ from pydantic import BaseModel
 
 # Models that natively support OpenAI's web_search tool
 WEB_SEARCH_MODELS = {
-    #"openai_responses.gpt-4.1",
-    #"openai_responses.gpt-4.1-mini",
-    #"openai_responses.gpt-4o",
-    #"openai_responses.gpt-4o-mini",
+    "openai_responses.gpt-4.1",
+    "openai_responses.gpt-4.1-mini",
+    "openai_responses.gpt-4o",
+    "openai_responses.gpt-4o-mini",
 }
-
 
 class Filter:
     class Valves(BaseModel):
@@ -51,16 +50,23 @@ class Filter:
         - If not, reroute to the gpt-4o-search-preview model and configure search options.
         """
 
-        # SUBJECT TO CHANGE.
-        # This is a temp workaround until I can figure out a more elegant way to handle this.
-
-        # Set web search feature flags in __metadata__ for downstream processing
+        # Disable built-in Open WebUI Search, just to be safe
         if __metadata__:
             __metadata__.setdefault("features", {})
             __metadata__["features"]["web_search"] = False  # Disable built-in Open WebUI Search
-            __metadata__["features"]["openai_responses.web_search"] = True  # Enable downstream web_search tool
 
-        body["tool_choice"] = "required"  # Force web_search tool to be used
+        body.tools.append({
+                "type": "web_search",
+                "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+
+                # Temp hardcode until I implement a more elegant way to handle this.
+                "user_location": {
+                    "type": "approximate",
+                    "country": "CA",
+                    "city": "Langley",
+                    "region": "BC",
+                }
+            })
 
         # Append to messages to encourage model to use web search
         body.setdefault("messages", [])
@@ -76,77 +82,4 @@ class Filter:
         return body
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
-        """
-        Post-processing for responses:
-        - If not using a native web_search model, emit citation events for any URLs found in the last message.
-        - Emit a summary status message for the UI.
-        if body.get("model") in WEB_SEARCH_MODELS:
-            # Native web_search models handle citations/events themselves
-            return body
-
-        # For rerouted models, emit citations for each URL found in the response text
-        messages = body.get("messages") or []
-        last_msg = messages[-1] if messages else None
-        content_blocks = last_msg.get("content") if isinstance(last_msg, dict) else None
-
-        # Flatten content blocks into one text string
-        if isinstance(content_blocks, list):
-            text = " ".join(
-                b.get("text", str(b)) if isinstance(b, dict) else str(b)
-                for b in content_blocks
-            )
-        else:
-            text = str(content_blocks or "")
-
-        # Find all openai-attributed URLs in the response
-        urls = re.findall(r"https?://[^\s)]+(?:\?|&)utm_source=openai[^\s)]*", text)
-        for url in urls:
-            await self._emit_citation(__event_emitter__, url)
-
-        # Emit status update to UI based on whether any sources were cited
-        msg = (
-            f"✅ Web search complete — {len(urls)} source{'s' if len(urls) != 1 else ''} cited."
-            if urls
-            else "Search not used — answer based on model's internal knowledge."
-        )
-        await self._emit_status(__event_emitter__, msg, done=True)
-
-        return body
-
-    @staticmethod
-    async def _emit_citation(emitter: callable | None, url: str) -> None:
-
-        if emitter is None:
-            return
-
-        cleaned = url.replace("?utm_source=openai", "").replace(
-            "&utm_source=openai", ""
-        )
-        await emitter(
-            {
-                "type": "citation",
-                "data": {
-                    "document": [cleaned],
-                    "metadata": [
-                        {"date_accessed": datetime.now().isoformat(), "source": cleaned}
-                    ],
-                    "source": {"name": cleaned, "url": cleaned},
-                },
-            }
-        )
-
-    @staticmethod
-    async def _emit_status(
-        emitter: callable | None, description: str, *, done: bool = False
-    ) -> None:
-        if emitter is None:
-            return
-
-        await emitter(
-            {
-                "type": "status",
-                "data": {"description": description, "done": done, "hidden": False},
-            }
-        )
-
-        """
+        pass
