@@ -6,7 +6,6 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-requirements: orjson
 version: 0.8.13
 license: MIT
 """
@@ -36,13 +35,14 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal
 
 # Third-party imports
 import aiohttp
-import orjson
 from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 
 # Open WebUI internals
 from open_webui.models.chats import Chats
 from open_webui.models.models import ModelForm, Models
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Constants & Global Configuration
@@ -361,7 +361,7 @@ class ResponsesBody(BaseModel):
             "functions", # Deprecated in favor of 'tools'.
 
             # Fields that are dropped and manually handled in step 2.
-            "messages", "tools", "reasoning_effort", "max_tokens"
+            "reasoning_effort", "max_tokens"
         }
         sanitized_params = {}
         for key, value in completions_dict.items():
@@ -389,6 +389,8 @@ class ResponsesBody(BaseModel):
 
         # Transform input messages to OpenAI Responses API format
         if "messages" in completions_dict:
+            sanitized_params.pop("messages", None)
+
             sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
                 completions_dict.get("messages", []),
                 chat_id=chat_id,
@@ -397,6 +399,7 @@ class ResponsesBody(BaseModel):
 
         # Transform tools to OpenAI Responses API format
         if "tools" in completions_dict:
+
             sanitized_params["tools"] = ResponsesBody.transform_tools(
                 body_tools=completions_dict.get("tools", []),
                 strict=True,  # Use strict schema for Responses API compatibility
@@ -533,17 +536,18 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
-        # Add OpenWebUI tools, if provided
+        # TODO: Also transform __tools__ and merge them into responses_body.tools (without duplicates).  This technically isn't needed since OpenWebUI injects body["tools"] when native function calling is enabled.
+        """
         if __tools__:
-            responses_body.tools = ResponsesBody.transform_tools(
-                openwebui_tools=__tools__,
-                body_tools=body["tools"],  # Existing tools from ResponsesBody
-                strict=True,  # Use strict schema for Responses API compatibility
+            openwebui_tools = ResponsesBody.transform_tools(
+                openwebui_tools=__tools__,  # OpenWebUI tools passed from the request
+                strict=True,  # Use non-strict schema for OpenWebUI compatibility
             )
+            responses_body.tools.extend(openwebui_tools)  # Append OpenWebUI tools to the ResponsesBody
+        """
 
         # Add web_search tool, if supported and enabled.
-        # Enable if valves is enable or __metadata__["features"]["openai_responses.web_search"] is True
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or __metadata__.get("features", {}).get("openai_responses.web_search")):
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_AUTO_WEB_SEARCH_TOOL:
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search",
@@ -980,7 +984,6 @@ class Pipe:
         url = base_url.rstrip("/") + "/responses"
 
         buf = bytearray()
-        orjson_loads = orjson.loads  # Cached reference for speed
         async with self.session.post(url, json=request_body, headers=headers) as resp:
             resp.raise_for_status()
 
@@ -1005,7 +1008,7 @@ class Pipe:
                         return  # End of SSE stream
                     
                     # Yield JSON-decoded data
-                    yield orjson_loads(data_part)
+                    yield json.loads(data_part.decode("utf-8"))
 
                 # Remove processed data from the buffer
                 if start_idx > 0:
@@ -1059,11 +1062,10 @@ class Pipe:
             sock_read=3600,  # Max seconds for reading from socket (1 hour)
         )
 
-        # Use orjson for fast JSON serialization
         session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
-            json_serialize=lambda obj: orjson.dumps(obj).decode(),
+            json_serialize=json.dumps,
         )
 
         return session
@@ -1086,7 +1088,7 @@ class Pipe:
                 return asyncio.sleep(0, result="Tool not found")
 
             fn = tool_cfg["callable"]
-            args = orjson.loads(call["arguments"])
+            args = json.loads(call["arguments"])
 
             if inspect.iscoroutinefunction(fn):              # async tool
                 return fn(**args)
