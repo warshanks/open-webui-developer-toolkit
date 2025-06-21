@@ -533,13 +533,15 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
-        # Add OpenWebUI tools, if provided
+        # TODO: Also transform __tools__ and merge them into responses_body.tools (without duplicates).  This technically isn't needed since OpenWebUI injects body["tools"] when native function calling is enabled.
+        """
         if __tools__:
-            responses_body.tools = ResponsesBody.transform_tools(
-                openwebui_tools=__tools__,
-                body_tools=body["tools"],  # Existing tools from ResponsesBody
-                strict=True,  # Use strict schema for Responses API compatibility
+            openwebui_tools = ResponsesBody.transform_tools(
+                openwebui_tools=__tools__,  # OpenWebUI tools passed from the request
+                strict=True,  # Use non-strict schema for OpenWebUI compatibility
             )
+            responses_body.tools.extend(openwebui_tools)  # Append OpenWebUI tools to the ResponsesBody
+        """
 
         # Add web_search tool, if supported and enabled.
         if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_AUTO_WEB_SEARCH_TOOL:

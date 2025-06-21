@@ -9,6 +9,7 @@ version: 0.1.0
 
 from __future__ import annotations
 
+from ast import Dict, List
 from typing import Any, Awaitable, Callable, Optional
 from datetime import datetime
 import re
@@ -43,30 +44,46 @@ class Filter:
         body: dict,
         __event_emitter__: Optional[callable] = None,
         __metadata__: Optional[dict] = None,
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
         Main entry point: Modify the request body to enable or route web search.
         - If the selected model supports web_search natively, inject the tool.
         - If not, reroute to the gpt-4o-search-preview model and configure search options.
         """
 
-        # Disable built-in Open WebUI Search, just to be safe
-        if __metadata__:
-            __metadata__.setdefault("features", {})
-            __metadata__["features"]["web_search"] = False  # Disable built-in Open WebUI Search
+        # 1. Disable Open WebUI’s built‑in search feature (in case it’s enabled)
+        if __metadata__ is not None:
+            __metadata__.setdefault("features", {})["web_search"] = False
 
-        body.tools.append({
-                "type": "web_search",
-                "search_context_size": self.valves.SEARCH_CONTEXT_SIZE,
+        # 2. Ensure the chosen model supports the tool; otherwise swap it.
+        if body.get("model") not in WEB_SEARCH_MODELS:
+            body["model"] = self.valves.DEFAULT_SEARCH_MODEL
 
-                # Temp hardcode until I implement a more elegant way to handle this.
-                "user_location": {
-                    "type": "approximate",
-                    "country": "CA",
-                    "city": "Langley",
-                    "region": "BC",
+        # 3. Inject the web_search tool exactly once
+        # ------------------------------------------
+        # • body.setdefault() guarantees a list is present
+        # • we extend that list only if no web_search tool exists
+        # • we add *only* the fields allowed for the built-in tool
+        #   (type, search_context_size, user_location)
+
+        tools: list[dict[str, Any]] = body.setdefault("tools", [])
+
+        if not any(t.get("type") == "web_search" for t in tools):
+            tools.append(
+                {
+                    "type": "web_search",
+                    "search_context_size": getattr(
+                        self.valves, "SEARCH_CONTEXT_SIZE", "medium"
+                    ),
+                    # TODO: replace with runtime geo lookup
+                    "user_location": {
+                        "type": "approximate",
+                        "country": "CA",
+                        "region": "BC",
+                        "city": "Langley",
+                    },
                 }
-            })
+            )
 
         # Append to messages to encourage model to use web search
         body.setdefault("messages", [])
@@ -81,5 +98,11 @@ class Filter:
 
         return body
 
-    async def outlet(self, body: dict, __event_emitter__=None) -> dict:
-        pass
+    # ── Outlet ─────────────────────────────────────────────────────────────────
+    async def outlet(
+        self,
+        body: Dict[str, Any],
+        __event_emitter__: Optional[callable] = None,
+    ) -> Dict[str, Any]:
+        """Currently no post‑processing required."""
+        return body
