@@ -361,7 +361,7 @@ class ResponsesBody(BaseModel):
             "functions", # Deprecated in favor of 'tools'.
 
             # Fields that are dropped and manually handled in step 2.
-            "messages", "tools", "reasoning_effort", "max_tokens"
+            "reasoning_effort", "max_tokens"
         }
         sanitized_params = {}
         for key, value in completions_dict.items():
@@ -389,6 +389,8 @@ class ResponsesBody(BaseModel):
 
         # Transform input messages to OpenAI Responses API format
         if "messages" in completions_dict:
+            sanitized_params.pop("messages", None)
+
             sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
                 completions_dict.get("messages", []),
                 chat_id=chat_id,
@@ -397,6 +399,7 @@ class ResponsesBody(BaseModel):
 
         # Transform tools to OpenAI Responses API format
         if "tools" in completions_dict:
+
             sanitized_params["tools"] = ResponsesBody.transform_tools(
                 body_tools=completions_dict.get("tools", []),
                 strict=True,  # Use strict schema for Responses API compatibility
