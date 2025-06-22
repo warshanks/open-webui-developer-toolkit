@@ -119,107 +119,83 @@ class ResponsesBody(BaseModel):
 
     @staticmethod
     def transform_tools(
-        openwebui_tools: dict[str, Any] | None = None,
-        body_tools: list[dict[str, Any]] | None = None,
+        tools: dict | list | None = None,
+        *,
         strict: bool = False,
     ) -> list[dict]:
         """
-        Normalise and merge:
+        Canonicalise any mixture of tool specs to the OpenAI Responses‑API list.
 
-            __tools__  = {"id": {"spec": {"name": "calc", ...}}}
-            body.tools = [
-                {"name": "foo", ...},                     # completions API style
-                {"type":"function","name":"bar", ...}     # responses API style (already formatted correctly)
-            ]
-
-        Output: [{"type":"function","name":"calc", ...}, ...]   # responses API style
-
-        Later duplicate names override earlier; __tools__ beats body.tools. # TODO Consider reversing this order.  Maybe body.tools should override __tools__?
-        strict=True  ⇒ every prop required, extras banned, optionals nullable.
+        • Accepts a WebUI __tools__ *dict* or a plain *list*.
+        • Flattens only:
+            - __tools__ entries  {"spec": {...}}
+            - Chat-Completions wrappers {"type":"function","function": {...}}
+        • Leaves every other tool (e.g. {"type":"web_search", …}) untouched.
+        • Duplicate keys:
+            - functions   → by *name*
+            - non-functions→ by *type*
+        later items win.
         """
-
-        if not openwebui_tools and not body_tools:
+        if not tools:
             return []
 
-        # ------------------------------------------------------------------
-        # 1. Collect and normalise every incoming tool dict
-        # ------------------------------------------------------------------
-        raw_tools: list[dict] = []
+        # 1. normalise input to an iterable of dicts -----------------------
+        iterable = tools.values() if isinstance(tools, dict) else tools
 
-        # a) Open WebUI mapping  → already flat but buried in 'spec'
-        if openwebui_tools:
-            for meta in openwebui_tools.values():
-                spec = meta.get("spec", {})
-                raw_tools.append(
-                    {
-                        "type": "function",
-                        "name": spec.get("name", ""),
+        native, converted = [], []
+
+        for item in iterable:
+            if not isinstance(item, dict):
+                continue
+
+            # a) __tools__ entry
+            if "spec" in item:
+                spec = item["spec"]
+                if isinstance(spec, dict):
+                    converted.append({
+                        "type":        "function",
+                        "name":        spec.get("name", ""),
                         "description": spec.get("description", ""),
-                        "parameters": spec.get("parameters", {}),
-                    }
-                )
+                        "parameters":  spec.get("parameters", {}),
+                    })
+                continue
 
-        # b) Caller‑supplied array  → could be three variants
-        if body_tools:
-            for item in body_tools:
-                # --- New OpenAI style: {"type": "function", "function": {...}}
-                if "function" in item:
-                    fn = item["function"]
-                    raw_tools.append(
-                        {
-                            "type": "function",
-                            "name": fn.get("name", ""),
-                            "description": fn.get("description", ""),
-                            "parameters": fn.get("parameters", {}),
-                        }
-                    )
+            # b) Chat‑Completions wrapper
+            if item.get("type") == "function" and "function" in item:
+                fn = item["function"]
+                if isinstance(fn, dict):
+                    converted.append({
+                        "type":        "function",
+                        "name":        fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                        "parameters":  fn.get("parameters", {}),
+                    })
+                continue
 
-                # --- Already flat Responses‑API style
-                elif "type" in item:
-                    raw_tools.append(dict(item))  # shallow copy
+            # c) Anything else (including web_search) → keep verbatim
+            native.append(dict(item))
 
-                # --- Old Completions‑API style (no "type")
-                else:
-                    raw_tools.append(
-                        {
-                            "type": "function",
-                            "name": item.get("name", ""),
-                            "description": item.get("description", ""),
-                            "parameters": item.get("parameters", {}),
-                        }
-                    )
-
-        # ------------------------------------------------------------------
-        # 2. Deduplicate (later tools overwrite earlier ones)
-        # ------------------------------------------------------------------
-        canonical: dict[str, dict] = {}
-        for tool in raw_tools:
-            key = tool.get("name") if tool.get("type") == "function" else tool.get("type")
-            canonical[key] = tool
-
-        # ------------------------------------------------------------------
-        # 3. Optional strict‑mode hardening
-        # ------------------------------------------------------------------
+        # 2. strict‑mode hardening for the bits we just converted ----------
         if strict:
-            for tool in canonical.values():
+            for tool in converted:
                 params = tool.setdefault("parameters", {})
-                props = params.setdefault("properties", {})
+                props  = params.setdefault("properties", {})
                 params["required"] = list(props)
                 params["additionalProperties"] = False
                 for schema in props.values():
                     t = schema.get("type")
-                    if isinstance(t, list):
-                        if "null" not in t:
-                            t.append("null")
-                    elif t is not None:
-                        schema["type"] = [t, "null"]
+                    schema["type"] = [t, "null"] if isinstance(t, str) else (
+                        t + ["null"] if isinstance(t, list) and "null" not in t else t
+                    )
                 tool["strict"] = True
 
-        # ------------------------------------------------------------------
-        # 4. Return list in deterministic order
-        # ------------------------------------------------------------------
-        return list(canonical.values())
+        # 3. deduplicate ---------------------------------------------------
+        canonical: dict[str, dict] = {}
+        for t in native + converted:                     # later wins
+            key = t["name"] if t.get("type") == "function" else t["type"]
+            canonical[key] = t
 
+        return list(canonical.values())
 
     @staticmethod
     def transform_messages_to_input(
@@ -390,7 +366,6 @@ class ResponsesBody(BaseModel):
         # Transform input messages to OpenAI Responses API format
         if "messages" in completions_dict:
             sanitized_params.pop("messages", None)
-
             sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
                 completions_dict.get("messages", []),
                 chat_id=chat_id,
@@ -399,11 +374,15 @@ class ResponsesBody(BaseModel):
 
         # Transform tools to OpenAI Responses API format
         if "tools" in completions_dict:
-
+            sanitized_params["tools"] = []
+            """
+            # Convert tools to Responses API format
             sanitized_params["tools"] = ResponsesBody.transform_tools(
-                body_tools=completions_dict.get("tools", []),
-                strict=True,  # Use strict schema for Responses API compatibility
+                tools=completions_dict.get("tools", []),
+                strict=True
             )
+            """
+            sanitized_params["tool_choice"] = completions_dict.get("tool_choice", "auto")
 
         # Build the final ResponsesBody directly
         return ResponsesBody(
@@ -512,6 +491,7 @@ class Pipe:
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         openwebui_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
         user_identifier = __user__[valves.USER_ID_FIELD]  # Use 'id' or 'email' as configured
+        features = __metadata__.get("features", {}).get("openai_responses", {}) # Custom location that this manifold uses to store feature flags
 
         # Set up session logger with session_id and log level
         SessionLogger.session_id.set(__metadata__.get("session_id", None))
@@ -536,18 +516,16 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
-        # TODO: Also transform __tools__ and merge them into responses_body.tools (without duplicates).  This technically isn't needed since OpenWebUI injects body["tools"] when native function calling is enabled.
-        """
+        # Transform tools from __tools__ to OpenAI Responses API format.
+        # TODO: Also transform __tools__ and merge them into responses_body.tools
         if __tools__:
-            openwebui_tools = ResponsesBody.transform_tools(
-                openwebui_tools=__tools__,  # OpenWebUI tools passed from the request
-                strict=True,  # Use non-strict schema for OpenWebUI compatibility
+            responses_body.tools = ResponsesBody.transform_tools(
+                tools = __tools__,
+                strict = True
             )
-            responses_body.tools.extend(openwebui_tools)  # Append OpenWebUI tools to the ResponsesBody
-        """
 
         # Add web_search tool, if supported and enabled.
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_AUTO_WEB_SEARCH_TOOL:
+        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search",
