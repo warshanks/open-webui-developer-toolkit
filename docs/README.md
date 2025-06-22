@@ -10,3 +10,4 @@ This folder stores internal notes and planning documents for extensions. Files h
 - `file_handler.md` – how filters and tools disable the built-in file processor.
 - `responses_file_upload.md` – plan for the companion filter that handles file uploads.
 - `citations.md` – how sources are inserted, emitted and displayed as inline citations.
+- `image_compression.md` – explains the client-side resize logic used when the Image Compression setting is enabled.
