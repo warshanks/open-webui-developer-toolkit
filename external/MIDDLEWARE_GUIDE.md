@@ -2,6 +2,17 @@
 
 `backend/open_webui/utils/middleware.py` defines the heart of Open WebUI's chat pipeline.  It wires the chat REST endpoints to a collection of helpers that augment a request, invoke the model and then stream results back to the browser.  The code is long but can be decomposed into a handful of cooperating routines.
 
+## Core concepts
+
+The middleware coordinates several building blocks:
+
+- **Tasks** – discrete actions such as title generation or code execution that may run in the background using a dedicated task model.
+- **Features** – optional capabilities requested per chat like `memory`,
+  `web_search`, `image_generation` or `code_interpreter`.
+- **Pipelines & Filters** – inlet and outlet filters let extensions mutate requests or streaming responses.
+- **Tools & function calls** – tools can be triggered natively via the model's function calling API or by parsing JSON and invoking Python functions directly.
+- **Memory & retrieval** – conversation history, uploaded files and web search results can be merged into the prompt as retrieval‑augmented context.
+
 ## Request lifecycle
 
 1. **Incoming chat request** arrives with model id, message list and optional files or tool specs.
@@ -92,6 +103,12 @@ print(form_data)
 # }
 ```
 
+Any keys reserved for Open WebUI itself (`stream_response`, `function_calling`,
+`system`) are stripped from the `params` dict before the rest of the values are
+merged.  Additional options may be supplied under a nested `custom_params`
+object; string values there are parsed as JSON when possible and combined with
+the other parameters.
+
 Any `logit_bias` value is normalized through
 `convert_logit_bias_input_to_json` so callers may provide shorthand strings.
 
@@ -106,9 +123,10 @@ Steps performed:
 5. Pass the payload through `process_pipeline_inlet_filter` so extensions can modify it.
 6. Resolve filter functions from the model settings and execute them via `process_filter_functions`.
 7. When tools are present and the model cannot handle function calling, `chat_completion_tools_handler` is invoked.
-8. If files or web search are requested, call `chat_completion_files_handler` and `chat_web_search_handler` accordingly.
-9. Construct RAG context and insert it into the system message using `rag_template` and `add_or_update_system_message`.
-10. Return the final form data, metadata and any accumulated events.
+8. Apply feature handlers in order: memory retrieval, web search, image generation and code interpreter prompts.
+9. Collect context from uploaded files or search results via `chat_completion_files_handler`.
+10. Construct RAG context and insert it into the system message using `rag_template` and `add_or_update_system_message`.
+11. Return the final form data, metadata and any accumulated events.
 
 ### `process_chat_response`
 Wraps the model response and streams it back to the client.
@@ -162,10 +180,19 @@ web search results are appended to the file list so retrieval can use them later
 ```python
 features = form_data.pop("features", None)
 if features:
+    if "memory" in features and features["memory"]:
+        form_data = await chat_memory_handler(request, form_data, extra_params, user)
     if "web_search" in features and features["web_search"]:
         form_data = await chat_web_search_handler(request, form_data, extra_params, user)
     if "image_generation" in features and features["image_generation"]:
         form_data = await chat_image_generation_handler(request, form_data, extra_params, user)
+    if "code_interpreter" in features and features["code_interpreter"]:
+        form_data["messages"] = add_or_update_user_message(
+            request.app.state.config.CODE_INTERPRETER_PROMPT_TEMPLATE
+            if request.app.state.config.CODE_INTERPRETER_PROMPT_TEMPLATE != ""
+            else DEFAULT_CODE_INTERPRETER_PROMPT,
+            form_data["messages"],
+        )
 ```
 
 Finally the function constructs retrieval context from any collected sources and
@@ -283,7 +310,7 @@ When the request does not require streaming or no websocket session is active, t
 
 Only the streaming path needs to read and emit tokens one by one. When no websocket is attached or the model response is non-streaming, `post_response_handler` is scheduled via `create_task` so the HTTP request finishes immediately while tool execution and message updates continue in the background.
 
-Wrapping a plain `Response` in an async generator would add unnecessary context switching and memory allocations. By reserving `stream_wrapper` and `stream_body_handler` for true streaming scenarios, the middleware minimises CPU usage and keeps latency low.
+Wrapping a plain `Response` in an async generator would add unnecessary context switching and memory allocations. By reserving `stream_wrapper` and `stream_body_handler` for true streaming scenarios, the middleware minimizes CPU usage and keeps latency low.
 
 ## Deep dive: `chat_completion_files_handler`
 `chat_completion_files_handler` collects retrieval context from uploaded files or search results. It is called after any tool or search handlers and augments the chat payload with snippets found in those files.
@@ -313,6 +340,7 @@ with ThreadPoolExecutor() as executor:
             reranking_function=request.app.state.rf,
             k_reranker=request.app.state.config.TOP_K_RERANKER,
             r=request.app.state.config.RELEVANCE_THRESHOLD,
+            hybrid_bm25_weight=request.app.state.config.HYBRID_BM25_WEIGHT,
             hybrid_search=request.app.state.config.ENABLE_RAG_HYBRID_SEARCH,
             full_context=request.app.state.config.RAG_FULL_CONTEXT,
         ),
@@ -471,9 +499,9 @@ The handler also removes `metadata['files']` when a tool reports it handled uplo
 Steps performed:
 1. Send an initial `status` event marking that a search query is being generated.
 2. Use `generate_queries` to craft search terms from the latest user message. The JSON response is parsed or the raw text is used as a fallback.
-3. If no queries are produced a completion event is sent and the handler returns early.
+3. If query generation fails the user's message becomes the sole query. When the resulting list is empty a completion event is sent and the handler returns.
 4. When queries exist, `process_web_search` is called which downloads pages and stores them in the retrieval system.
-5. Each returned collection or document is appended to `form_data['files']` so RAG can read them later. A summary event reports the visited URLs.
+5. Each returned collection or document is appended to `form_data['files']` with the originating `queries` list so RAG can read them later. A summary event reports the visited URLs.
 6. Errors are caught and reported back to the client via `status` events.
 
 Below is the core logic showing how queries are built and search results attached:

@@ -7,3 +7,7 @@ This folder stores internal notes and planning documents for extensions. Files h
 - `events.md` – how to emit live UI events using `__event_emitter__` and `__event_call__`.
 - `file_storage.md` – where uploaded files and generated images are kept and how to attach them to chats.
 - `responses_manifold.md` – front-end overview of the OpenAI Responses manifold and why it persists data.
+- `file_handler.md` – how filters and tools disable the built-in file processor.
+- `responses_file_upload.md` – plan for the companion filter that handles file uploads.
+- `citations.md` – how sources are inserted, emitted and displayed as inline citations.
+- `image_compression.md` – explains the client-side resize logic used when the Image Compression setting is enabled.

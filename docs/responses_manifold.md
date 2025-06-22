@@ -45,5 +45,6 @@ Reasoning models can include an `encrypted_content` field. The manifold stores t
 - **Valves** – configure endpoints, API keys and optional features like web search or image generation.
 - **History Reconstruction** – stored items are reinserted when building the request payload so tools can continue from previous calls.
 - **Tool Result Persistence** – by default, tool outputs are appended to the message bucket so the UI can show them again later.
+- **Tool Schema Normalization** – the `transform_tools` helper converts WebUI definitions or OpenAI-style lists into the format expected by the Responses API. Enable strict mode to enforce exact field requirements.
 
 More sections will be added here to document advanced usage and troubleshooting.

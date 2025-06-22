@@ -1,35 +1,45 @@
 # OpenAI Responses Manifold
-| Visible reasoning summariesIntegrates OpenAI's Responses API into Open WebUI, enabling features such as built‑in search, reasoning summaries and token caching.
+**Enables advanced OpenAI features (function calling, tool use, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.7.0 – Pre‑production preview.** The pipeline is still under early testing and will be fully released as `1.0.0`.
+> **Author:** [Justin Kropp](https://github.com/jrkropp)  
+> **License:** MIT
+
+⚠️ **Version 0.8.13 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
-1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin ▸ Pipelines**.
-2. Activate the pipe and configure the valves for your environment.
+1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
+2. Enable the pipe and configure the valves for your environment.
 
 ## Features
+
 | Feature | Status | Last updated | Notes |
 | --- | --- | --- | --- |
-| Native function calling | ✅ GA | 2025-06-03 | Toggle via `ENABLE_NATIVE_TOOL_CALLING`. |
+| Native function calling | ✅ GA | 2025-06-04 | Automatically enabled for supported models. |
 | Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
 | Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
-| Optimized token caching | ✅ GA | 2025-06-03 | Saves ~50–75 % tokens on tuned models. |
+| Optimized token caching | ✅ GA | 2025-06-03 | Save up to ~50–75 % on supported models. |
 | Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
-| Task model support | 🔄 In-progress | 2025-06-03 | Roadmap item. |
+| Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
+| Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
+| Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
+| Response item persistence | ✅ GA | 2025-06-17 | Persists items via newline-wrapped markers (v1) that embed type, ULID and metadata. |
+| Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
+| Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
-| Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (i.e., upload image and ask it to change it) |
-| File upload / file search tool integration | 🕒 Backlog | 2025-06-03 | Roadmap item. |
-| Code interpreter tool | 🕒 Backlog | 2025-06-03 | TBD. Read more [here](https://platform.openai.com/docs/guides/tools-code-interpreter) |
-| Computer use tool | 🕒 Backlog | 2025-06-03 | TBD.  Read more [here](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice via talk feature | 🕒 Backlog | 2025-06-03 | TBD.  Requires patching backend code (possible via pipe however need to think through best approach) |
-| Dynamic chat titles | 🕒 Backlog | 2025-06-03 | TBD.  Leverage title to show progress of long running tasks. |
+| Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
+| File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
+| Code interpreter tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-code-interpreter) |
+| Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
+| Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
+| Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
+| MCP tool support | 🕒 Backlog | 2025-06-09 | Remote MCP servers via Responses API. [More info](https://platform.openai.com/docs/guides/tools-remote-mcp) |
 
-### Quality of life improvements
-- **Pseudo-models**
-  - `o3-mini-high` – alias for `o3-mini` with high reasoning effort.
-  - `o4-mini-high` – alias for `o4-mini` with high reasoning effort.
-- **Debug logging**
-  - Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
+
+### Other Features
+- **Pseudo-models**: `o3-mini-high` / `o4-mini-high` – alias for `o3-mini` / `o4-mini` with high reasoning effort.
+- **Debug logging**: Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
+- **Truncation strategy**: Control with the `TRUNCATION` valve. Default `auto` drops middle context when the request exceeds the window; `disabled` fails with a 400 error. Works with each model's `max_completion_tokens` limit.
+- **Custom parameters**: Pass extra OpenAI settings via Open WebUI's "Custom Parameters" feature. `max_tokens` becomes `max_output_tokens` automatically.
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
@@ -40,87 +50,302 @@ The manifold should work with any model that supports the responses API. Confirm
 | gpt-4.1 | ✅ |
 | gpt-4o | ✅ |
 | o3 | ✅ |
+| o3-pro | ✅ |
 
-# How it Works / Design Architecture
-## Core concepts
-- **Responses API endpoint** – uses the OpenAI Responses API endpoint than completions, enabling features like visible reasoning summaries and built-in tools (web search, etc..).
-- **Valves configuration** – each setting is exposed through valves, so you can tweak behavior without touching code.
-- **History reconstruction** – previous tool calls are replayed when creating new requests, ensuring continuity.
-- **Persistent tool results** – tool outputs are stored alongside messages, making them available on later turns.
-- **Encrypted reasoning tokens** – specialized reasoning tokens (`encrypted_content`) are persisted to optimize follow‑ups.
+---
 
+# The Magic Behind this Pipe
+### Persisting Non-Message Items (function_call, function_call_results, reasoning tokens, etc..)
 
-## Persist OpenAI response items
-Non-message items (function calls, encrypted reasoning tokens and so on) are stored under `openai_responses_pipe` within the chat record. Keeping these items allows the pipe to reconstruct the conversation state precisely, leading to better caching and faster responses.
+The OpenAI Responses API returns essential non-message components (such as reasoning tokens, function calls, and tool outputs). These response items are produced sequentially, reflecting the model’s internal decision-making process.
 
-This design matters for two main reasons:
+**For example:**
 
-1. **Improved caching and cost efficiency** – reconstructing the original context lets OpenAI grant cache-based pricing discounts (up to 75 %!).
-2. **Faster replies** – reasoning tokens prevent the model from re-solving earlier steps, so responses are quicker.
+```json
+[
+  {
+    "id": "rs_6849f90497fc8192a013fb54f888948c0b902dab32480d90",
+    "type": "reasoning",
+    "encrypted_content": "[ENCRYPTED_TOKENS_HERE]"
+  },
+  {
+    "type": "function_call",
+    "function_call": {
+      "name": "get_weather",
+      "arguments": {
+        "location": "New York"
+      }
+    }
+  },
+  {
+    "type": "function_call_result",
+    "function_result": {
+      "location": "New York",
+      "temperature": "72°F",
+      "condition": "Sunny"
+    }
+  },
+  {
+    "type": "message",
+    "role": "assistant",
+    "content": "It’s currently 72°F and sunny in New York."
+  }
+]
+```
+By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, persisting **all** response items (in their original order):
 
-You can inspect this data by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
+* Significantly reduces latency by eliminating redundant tool calls and reasoning re-generation (especially noticeable with o-series models).
+* Reduces cost through improved OpenAI cache hits (saving approximately 50–75% on input tokens).
 
-Full chat JSON structure example:
+**And thus, the core challenge...**
+
+How do we store these response elements without revealing them to the end-user and still ensure compatibility with Open WebUI's extensible filter pipeline?
+
+### Specific Constraints
+1. **Invisibility:**
+   * All non-message items must remain hidden from the user. Only visible assistant messages should appear in the interface.
+2. **Accurate Ordering:**
+   * Response items must be persisted precisely in the order produced by the model, supporting complex interactions (e.g., assistant messages interleaved with tool calls, reasoning steps, and back to assistant messages within a single response).
+3. **Compatibility with Open WebUI Filter Pipeline:**
+   * Context must be reconstructed exclusively from the `body["messages"]` structure provided by Open WebUI after all pipeline filters have applied their modifications:
+
+Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.
+
+```python
+body = {
+  "messages": [
+    { "role": "system", "content": "System prompt text..." },
+    { "role": "user", "content": "User question..." }
+  ]
+}
+```
+
+### Optimal Solution: Invisible Marker Encoding
+To address these challenges effectively, the manifold inserts **newline‑wrapped empty links** containing a self‑describing marker string. Each marker embeds the response `type`, a ULID and optional metadata such as the originating model ID. The full OpenAI payload is stored separately via `Chats.update_chat_by_id()`.
+
+For example, an assistant message visibly appears as:
+```python
+body["messages"] = {
+    "role": "assistant",
+    "content": (
+        "[](openai_responses:v1:function_call:01HX9B8J7FSGRFS65KBN5KAHHB"
+        "?model=openai_responses.gpt-4o)"
+        " The result of 34234 × π is approximately 107,549.28."
+    ),
+}
+```
+Because the link is wrapped by `wrap_marker()`, it always has exactly two newlines before and after so Markdown rendering remains unaffected.
+
+#### How invisible links work
+An empty Markdown link (`[](<url>)`) has no visible label. When wrapped with
+two newlines the link disappears entirely—Open WebUI's renderer collapses these
+newlines so no blank lines remain. This lets us hide any text placed inside the
+parentheses without affecting the surrounding Markdown.
+
+#### Marker specification
+Each hidden link contains a structured marker string we can reliably parse:
+
+```
+\n\n[](openai_responses:v1:<item_type>:<ulid>[?model=<model_id>&key=value&...])\n\n
+```
+
+* `<item_type>` — the literal OpenAI event type such as `function_call` or
+  `reasoning`.
+* `<ulid>` — a 26‑character ULID used as the database key.
+* Optional query parameters store metadata (the originating model ID is stored
+  under `model`).
+
+Markers are extracted with `extract_markers()` and looked up in the database to
+rebuild full context.
+
+On subsequent API calls:
+
+1. The pipeline extracts each marker using `extract_markers()`.
+2. Using the ULID and metadata, it retrieves the corresponding payloads from the database.
+3. The full conversation is reconstructed in the original order.
+
+_**Why not embed the entire JSON?**_
+Embedding only a marker avoids leaking large payloads into the clipboard while still giving the backend enough information to find the stored data.
+
+### Practical Example: Embedding OpenAI Function Calls into Assistant Responses
+
+This example demonstrates how the manifold seamlessly embeds hidden metadata IDs directly into assistant responses, preserving **exact OpenAI response items** to ensure accurate context reconstruction.
+
+---
+
+#### 1️⃣ User asks a question:
 
 ```json
 {
-  "id": "<chat_id>",
-  "user_id": "<user_id>",
-  "title": "<chat_title>",
+  "role": "user",
+  "content": "Calculate 34234 multiplied by pi."
+}
+```
+
+---
+
+#### 2️⃣ OpenAI initiates a function call:
+
+OpenAI responds with a `function_call` event to invoke a calculator tool:
+
+```json
+{
+  "type": "function_call",
+  "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+  "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+  "name": "calculator",
+  "arguments": "{\"expression\":\"34234*pi\"}",
+  "status": "completed"
+}
+```
+
+* We persist the payload under `openai_responses_pipe`. `01HX4Y2VW5VR2Z2HDQ5QY9REHB` is the ULID we generate.
+
+```json
+"01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+  "model": "gpt-4o",
+  "created_at": 1718073601,
+  "payload": {
+    "type": "function_call",
+    "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+    "name": "calculator",
+    "arguments": "{\"expression\":\"34234*pi\"}",
+    "status": "completed"
+  },
+  "message_id": "msg_9fz4qx7e"
+}
+```
+
+* We immediately insert `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)` and yield it so the marker is permanently embedded into `body["messages"]["content"]`.
+
+---
+
+#### 3️⃣ Tool returns the function call output:
+
+Gather tool result, persist to DB and yield another invisible marker (similar to previous step)
+
+---
+
+#### 4️⃣ Assistant provides the visible response:
+
+Finally, the assistant sends the human-readable message:
+
+```
+"34234 multiplied by π equals approximately 107549.28."
+```
+
+* We stream (yield) it.
+
+---
+
+#### 📌 **Final Stream (Invisible markers + Response)**:
+
+```
+[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)[](openai_responses:v1:function_call_output:01HX4Y2VW6B091XE84F5G0Z8NF?model=openai_responses.gpt-4o)The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28.
+```
+
+*(Invisible markers precede the visible text in this example however OpenAI can have additional tool calls or reasoning at any point.)*
+
+---
+
+#### 📦 **Final Chat DB Record**:
+
+```json
+{
+  "id": "61fba20f-2395-40f8-917f-6f80036a5fe9",
+  "user_id": "91216674-177d-4d5b-8a0b-a2d83783eb54",
+  "title": "New Chat",
   "chat": {
-    "id": "<chat_internal_id>",
-    "title": "<chat_title>",
-    "models": ["<model_id>"],
-    "params": {},
+    "id": "",
+    "title": "New Chat",
+    "models": ["openai_responses.gpt-4o"],
     "history": {
       "messages": {
-        "<message_id>": {
-          "id": "<message_id>",
-          "parentId": "<parent_message_id_or_null>",
-          "childrenIds": ["<child_message_id>", "..."],
-          "role": "user|assistant|function",
-          "content": "<message_text_or_null>",
-          "model": "<model_id>",
-          "modelName": "<model_display_name>",
-          "modelIdx": <index>,
-          "timestamp": <unix_ms>,
-          "usage": {},
+        "933ea7dc-d9aa-4981-a447-b06846376136": {
+          "id": "933ea7dc-d9aa-4981-a447-b06846376136",
+          "parentId": null,
+          "childrenIds": ["9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"],
+          "role": "user",
+          "content": "what is 34234*pi",
+          "timestamp": 1749686545,
+          "models": ["openai_responses.gpt-4o"]
+        },
+        "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1": {
+          "id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1",
+          "parentId": "933ea7dc-d9aa-4981-a447-b06846376136",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)[](openai_responses:v1:function_call_output:01HX4Y2VW6B091XE84F5G0Z8NF?model=openai_responses.gpt-4o)The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28."
+          "model": "openai_responses.gpt-4o",
+          "modelName": "OpenAI: GPT-4o ★★☆☆",
+          "timestamp": 1749686545,
+          "statusHistory": [
+            {
+              "description": "🛠️ Let me try calculator…",
+              "done": false,
+              "hidden": false
+            },
+            {
+              "description": "🛠️ Done—the tool finished!",
+              "done": true,
+              "hidden": false
+            }
+          ],
+          "usage": {
+            "input_tokens": 1657,
+            "output_tokens": 41,
+            "total_tokens": 1698,
+            "turn_count": 2,
+            "function_call_count": 1
+          },
           "done": true
         }
       },
-      "currentId": "<current_message_id>"
+      "currentId": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
     },
-    "messages": [
-      {
-        // Flattened version of messages
-      }
-    ],
-    "tags": ["<optional_tag>", "..."],
-    "timestamp": <unix_ms>,
-    "files": [
-      // Any attached files
-    ],
-
-    // —— Custom Extension: Added by openai_responses_pipe ——
     "openai_responses_pipe": {
-      "__v": 2,
-      "messages": {
-        "<message_id>": {
-          "model": "<model_that_generated_nonmessage_items>",
-          "created_at": <unix_timestamp>,
-          "items": [
-            {
-              "type": "function_call|function_call_result|reasoning|...",
-              "...": "..."
-            }
+      "__v": 3,
+      "items": {
+        "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+          "model": "gpt-4o",
+          "created_at": 1749686551,
+          "payload": {
+            "type": "function_call",
+            "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+            "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+            "name": "calculator",
+            "arguments": "{\"expression\":\"34234*pi\"}",
+            "status": "completed"
+          },
+          "message_id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
+        },
+        "01HX4Y2VW6B091XE84F5G0Z8NF": {
+          "model": "gpt-4o",
+          "created_at": 1749686552,
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+            "output": "34234*pi = 107549.282902993"
+          },
+          "message_id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
+        }
+      },
+      "messages_index": {
+        "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1": {
+          "role": "assistant",
+          "done": true,
+          "item_ids": [
+            "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
+            "01HX4Y2VW6B091XE84F5G0Z8NF"
           ]
         }
       }
-    }
-    // —————————————————
+    },
+    "timestamp": 1749686545104
   },
-  "updated_at": <unix_timestamp>,
-  "created_at": <unix_timestamp>,
+  "updated_at": 1749686551,
+  "created_at": 1749686545,
   "share_id": null,
   "archived": false,
   "pinned": false,
@@ -129,11 +354,5 @@ Full chat JSON structure example:
 }
 ```
 
-Each item is tied to a specific `message_id` and the `model` that generated it. This ensures:
-
-1. **Accurate Context Reconstruction**
-   During replay or follow‑up turns, the pipe can precisely rebuild the state of the conversation, including tools or reasoning results not visible in plain messages.
-2. **Model‑Specific Binding**
-   Some items (especially **encrypted reasoning tokens!**) can only be used with the exact model that produced them. Injecting these into another model’s context may result in **errors** or degraded performance. Binding items to the generating model avoids this.
-
-By storing raw `items` exactly as received from the API, the system remains forward‑compatible with future changes to the Responses API structure.
+**Pro Tip**
+You can inspect the DB chat item directly in your browser by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.

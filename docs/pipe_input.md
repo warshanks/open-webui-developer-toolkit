@@ -29,7 +29,10 @@ Holds the conversation request. Typical keys include:
 * `model` – the model identifier, e.g. `"openai_responses.gpt-4.1"`.
 * `messages` – list of `{role, content}` chat messages.
 * `stream_options` – options such as `include_usage: true`.
-* `tools` – list of tool/function definitions.
+* `tools` – list of tool/function definitions. This field is **only** present
+  when native function calling is enabled for the selected model. When filled in,
+  each entry matches the OpenAI Completions API schema so it can be sent
+  directly to OpenAI.
 
 Example:
 
@@ -56,8 +59,12 @@ Example:
       }
     }
   ]
-}
+ }
 ```
+
+When native function calling is **disabled**, the `tools` key will be absent and
+Open WebUI runs tools internally. In that case use the `__tools__` argument
+described later.
 
 ## 2. `__user__`
 
@@ -141,6 +148,9 @@ Additional identifiers and settings for the conversation. Useful keys:
 * `features` – toggles such as `image_generation` or `web_search`
 * `variables` – placeholders like `{{CURRENT_DATE}}`
 * `model` – detailed model configuration
+* `direct` – `true` when the pipe is invoked outside the chat UI
+* `task` – name of the background task if applicable
+* `task_body` – original request payload when `task` is set
 
 Example:
 
@@ -235,13 +245,22 @@ Example:
     ]
   },
   "direct": false,
+  "task": "title_generation", // only present when spawned by a task
+  "task_body": {"model": "gpt-4o", "...": "..."},
   "function_calling": "native"
 }
 ```
 
 ## 7. `__tools__`
 
-Dictionary of tool definitions keyed by tool name. Each entry typically includes a `tool_id`, `callable`, `spec` describing parameters, and optional metadata.
+Dictionary of tool definitions keyed by tool name. This argument is populated
+whenever one or more tools are selected and is available regardless of whether
+native function calling is enabled. It is generally safer to rely on this
+mapping than on `body['tools']` because the structure stays consistent and each
+entry exposes a callable for direct invocation.
+
+Each entry includes a `tool_id`, a `callable`, a `spec` describing parameters,
+and optional metadata.
 
 Example:
 
