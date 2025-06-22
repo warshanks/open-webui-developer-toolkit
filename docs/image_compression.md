@@ -60,3 +60,14 @@ This routine loads the image into an off‑screen canvas, resizes it while prese
 
 The width and height values are stored in `settings.imageCompressionSize` and persisted via `saveSettings()` in `Settings/Interface.svelte`. No hardcoded limits are enforced; leaving the fields blank disables resizing. The server never receives the uncompressed image when this feature is active—compression happens entirely client side.
 
+
+## Document Image Limits
+
+Starting in version 0.6.14, administrators can enforce global limits for documents under **Admin Settings → Documents**. The fields **Document Image Max Width** and **Document Image Max Height** store their values in the retrieval configuration (`RAGConfig`). When a file is uploaded these limits are applied before images are persisted, using the same `compressImage` routine shown above.
+
+Personal image compression in **Settings → Interface** still works, but the smaller of the personal limit and the admin-defined limit is used. Leaving the admin fields blank disables the global restriction.
+
+The admin limits simply cap whatever dimensions a user selects. If a user disables **Image Compression** entirely, the uploaded image bypasses resizing even when admin values are configured. There is currently no option to force compression on users.
+
+The width and height settings correspond to the `FILE_IMAGE_COMPRESSION_WIDTH` and `FILE_IMAGE_COMPRESSION_HEIGHT` environment variables.
+
