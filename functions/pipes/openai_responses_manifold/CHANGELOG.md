@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Emitted an initial reasoning block when using reasoning models to make
   the interface show progress immediately.
 
+## [0.8.14] - 2025-06-23
+- Added experimental `MCP_SERVERS` valve to append remote MCP servers
+  to the tools list.
+
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
 - Fixed blank line after reasoning block by delaying encoded ID emission.

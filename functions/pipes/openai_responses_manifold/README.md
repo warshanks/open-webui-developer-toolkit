@@ -4,11 +4,15 @@
 > **Author:** [Justin Kropp](https://github.com/jrkropp)  
 > **License:** MIT
 
-⚠️ **Version 0.8.13 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.14 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
 1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
 2. Enable the pipe and configure the valves for your environment.
+
+### Remote MCP setup
+Set the `MCP_SERVERS` valve to a JSON array or object describing your remote MCP servers. Each entry is appended to the `tools` array. Example:
+`[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never"}]`
 
 ## Features
 
@@ -32,7 +36,7 @@
 | Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
 | Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
 | Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
-| MCP tool support | 🕒 Backlog | 2025-06-09 | Remote MCP servers via Responses API. [More info](https://platform.openai.com/docs/guides/tools-remote-mcp) |
+| MCP tool support | 🧪 Experimental | 2025-06-23 | Add remote MCP servers via the `MCP_SERVERS` valve. |
 
 
 ### Other Features
@@ -40,6 +44,7 @@
 - **Debug logging**: Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
 - **Truncation strategy**: Control with the `TRUNCATION` valve. Default `auto` drops middle context when the request exceeds the window; `disabled` fails with a 400 error. Works with each model's `max_completion_tokens` limit.
 - **Custom parameters**: Pass extra OpenAI settings via Open WebUI's "Custom Parameters" feature. `max_tokens` becomes `max_output_tokens` automatically.
+- **Remote MCP servers (experimental)**: Configure the `MCP_SERVERS` valve with a JSON object or array to append remote MCP servers to the tools list.
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
