@@ -480,11 +480,11 @@ class Pipe:
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
-        REMOTE_MCP_SERVERS_JSON: str = Field(
-            default="[]",
+        REMOTE_MCP_SERVERS_JSON: Optional[str] = Field(
+            default=None,
             description=(
             "[EXPERIMENTAL] JSON list (or single JSON object) describing one or more "
-            "remote MCP servers that should be attached automatically to **every** request.\n\n"
+            "remote MCP servers that should be attached automatically to every request.\n\n"
             "Each element must follow the MCP tool schema used by the OpenAI Responses API, e.g.:\n"
             '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never"}]\n\n'
             "The value is parsed at runtime; on JSON errors the pipe logs a warning and "
@@ -680,6 +680,10 @@ class Pipe:
                 ):
                     etype = event.get("type")
 
+                    # efficienct check if debug logging is enabled. If so, log the event name
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug("Received event: %s", etype)
+
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
@@ -715,6 +719,10 @@ class Pipe:
                         item       = event.get("item", {})
                         item_type  = item.get("type", "")
 
+                        # if debug logging is enabled, log the item type
+                        if self.logger.isEnabledFor(logging.DEBUG):
+                            self.logger.debug("Output Item Added: %s", json.dumps(item))
+
                         # 1️⃣ map each type to a plain string template
                         started: dict[str, str] = {
                             "web_search_call"       : "🔍 Hmm, let me quickly check online…",
@@ -722,6 +730,7 @@ class Pipe:
                             "file_search_call"      : "📂 Let me skim those files…",
                             "image_generation_call" : "🎨 Let me create that image…",
                             "local_shell_call"      : "💻 Let me run that command…",
+                            "mcp_call"              : "🌐 Let me query the MCP server…",
                         }
 
                         template = started.get(item_type)
