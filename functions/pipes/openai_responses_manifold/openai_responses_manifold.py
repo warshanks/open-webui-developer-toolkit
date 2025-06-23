@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.13
+version: 0.8.14
 license: MIT
 """
 
@@ -18,7 +18,6 @@ from __future__ import annotations
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
 import asyncio
-from copy import deepcopy
 import datetime
 import inspect
 from io import StringIO
@@ -425,6 +424,14 @@ class Pipe:
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
+        MCP_SERVERS: str = Field(
+            default=(os.getenv("MCP_SERVERS") or "").strip(),
+            description=(
+                "Experimental. JSON object or list defining remote MCP servers. "
+                "Each entry is appended to the tools array. Example: "
+                "[{'server_label':'deepwiki','server_url':'https://mcp.deepwiki.com/mcp','require_approval':'never'}]"
+            ),
+        )
         USER_ID_FIELD: Literal["id", "email"] = Field(
             default="id",
             description=(
@@ -527,6 +534,23 @@ class Pipe:
                     "region": "BC",
                 }
             })
+
+        # Append remote MCP servers (experimental)
+        if valves.MCP_SERVERS:
+            try:
+                mcp_entries = json.loads(valves.MCP_SERVERS)
+                if isinstance(mcp_entries, dict):
+                    mcp_entries = [mcp_entries]
+                if isinstance(mcp_entries, list):
+                    responses_body.tools = responses_body.tools or []
+                    for entry in mcp_entries:
+                        if isinstance(entry, dict):
+                            entry = {"type": "mcp", **entry}
+                            responses_body.tools.append(entry)
+                else:
+                    self.logger.warning("MCP_SERVERS must be a JSON object or list")
+            except json.JSONDecodeError as exc:
+                self.logger.error("Invalid MCP_SERVERS JSON: %s", exc)
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
