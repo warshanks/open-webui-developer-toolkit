@@ -483,12 +483,13 @@ class Pipe:
         REMOTE_MCP_SERVERS_JSON: Optional[str] = Field(
             default=None,
             description=(
-            "[EXPERIMENTAL] JSON list (or single JSON object) describing one or more "
-            "remote MCP servers that should be attached automatically to every request.\n\n"
-            "Each element must follow the MCP tool schema used by the OpenAI Responses API, e.g.:\n"
-            '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never"}]\n\n'
-            "The value is parsed at runtime; on JSON errors the pipe logs a warning and "
-            "continues without MCP tools. This interface is likely to evolve."
+                "[EXPERIMENTAL] A JSON-encoded list (or single JSON object) defining one or more "
+                "remote MCP servers to be automatically attached to each request. This can be useful "
+                "for globally enabling tools across all chats.\n\n"
+                "Note: The Responses API currently caches MCP server definitions at the start of each chat. "
+                "This means the first message in a new thread may be slower. A more efficient implementation is planned."
+                "Each item must follow the MCP tool schema supported by the OpenAI Responses API, for example:\n"
+                '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never","allowed_tools": ["ask_question"]}]'
             ),
         )
         USER_ID_FIELD: Literal["id", "email"] = Field(
@@ -535,6 +536,7 @@ class Pipe:
         __tools__: list[dict[str, Any]] | dict[str, Any] | None,
         __task__: Optional[dict[str, Any]] = None,
         __task_body__: Optional[dict[str, Any]] = None,
+        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
     ) -> AsyncGenerator[str, None] | str | None:
         """Process a user request and return either a stream or final text.
 
@@ -747,6 +749,52 @@ class Pipe:
                             status_emitted = True
                             
                         yield ""  # Yield empty string to keep the stream alive
+                        continue # Continue to the next event
+
+                    if etype == "response.mcp_approval_request":
+                        approval_request = event.get("item", {})
+
+                        self._emit_error(
+                            event_emitter,
+                            "MCP tool approval request received. This feature is not yet implemented.",
+                            show_error_message=True,
+                            show_error_log_citation=True,
+                        )
+
+                        """
+                        # PLACEHOLDER CODE FOR MCP APPROVAL REQUEST HANDLING.  Not yet implemented
+                        user_choice = await event_call(
+                            {
+                                "type": "input",
+                                "data": {
+                                    "title": "Approve Remote MCP Tool?",
+                                    "message": (
+                                        f"**Server**: {approval_request.get('server_label')}\n"
+                                        f"**Tool**: `{approval_request.get('name')}`\n\n"
+                                        "Arguments:\n"
+                                        f"```json\n{pretty_args}\n```\n"
+                                        "Type **y** to approve or **n** to reject."
+                                    ),
+                                    "placeholder": "y / n",
+                                },
+                            }
+                        )
+
+                        approve = str(user_choice).strip().lower().startswith("y")
+                        await self._emit_notification(
+                            event_emitter,
+                            f"{'Approved' if approve else 'Rejected'} call to "
+                            f"{approval_request.get('name')} on {approval_request.get('server_label')}.",
+                            level="success" if approve else "warning",
+                        )
+
+                        return {
+                            "type": "mcp_approval_response",
+                            "approval_request_id": approval_request["id"],
+                            "approve": approve,
+                        }
+                        """
+                        yield ""
                         continue # Continue to the next event
 
                     # ─── when a tool FINISHES ──────────────────────────────────────────────
