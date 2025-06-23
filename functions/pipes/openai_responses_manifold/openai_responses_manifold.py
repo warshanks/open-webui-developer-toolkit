@@ -372,18 +372,6 @@ class ResponsesBody(BaseModel):
                 openwebui_model_id=openwebui_model_id
             )
 
-        # Transform tools to OpenAI Responses API format
-        if "tools" in completions_dict:
-            sanitized_params["tools"] = []
-            """
-            # Convert tools to Responses API format
-            sanitized_params["tools"] = ResponsesBody.transform_tools(
-                tools=completions_dict.get("tools", []),
-                strict=True
-            )
-            """
-            sanitized_params["tool_choice"] = completions_dict.get("tool_choice", "auto")
-
         # Build the final ResponsesBody directly
         return ResponsesBody(
             **sanitized_params,
