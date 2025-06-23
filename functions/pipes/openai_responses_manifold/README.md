@@ -11,8 +11,11 @@
 2. Enable the pipe and configure the valves for your environment.
 
 ### Remote MCP setup
-Set the `MCP_SERVERS` valve to a JSON array or object describing your remote MCP servers. Each entry is appended to the `tools` array. Example:
-`[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never"}]`
+Use the experimental `REMOTE_MCP_SERVERS_JSON` valve to attach [Remote MCP servers](https://platform.openai.com/docs/guides/tools-remote-mcp) to every request.  
+Set this valve to a JSON object or array describing the servers and their options.  Each entry is appended to the `tools` list before the request is sent.  Example:
+`[{"server_label": "deepwiki", "server_url": "https://mcp.deepwiki.com/mcp", "require_approval": "never"}]`
+
+Remote MCP servers are third‑party services.  The first message in a new thread may take longer because the Responses API fetches tool definitions when it first encounters each server.
 
 ## Features
 
@@ -36,7 +39,7 @@ Set the `MCP_SERVERS` valve to a JSON array or object describing your remote MCP
 | Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
 | Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
 | Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
-| MCP tool support | 🧪 Experimental | 2025-06-23 | Add remote MCP servers via the `MCP_SERVERS` valve. |
+| MCP tool support | 🧪 Experimental | 2025-06-23 | Attach remote MCP servers via the `REMOTE_MCP_SERVERS_JSON` valve. |
 
 
 ### Other Features
@@ -44,7 +47,7 @@ Set the `MCP_SERVERS` valve to a JSON array or object describing your remote MCP
 - **Debug logging**: Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
 - **Truncation strategy**: Control with the `TRUNCATION` valve. Default `auto` drops middle context when the request exceeds the window; `disabled` fails with a 400 error. Works with each model's `max_completion_tokens` limit.
 - **Custom parameters**: Pass extra OpenAI settings via Open WebUI's "Custom Parameters" feature. `max_tokens` becomes `max_output_tokens` automatically.
-- **Remote MCP servers (experimental)**: Configure the `MCP_SERVERS` valve with a JSON object or array to append remote MCP servers to the tools list.
+- **Remote MCP servers (experimental)**: Configure the `REMOTE_MCP_SERVERS_JSON` valve with a JSON object or array to append remote servers. See the [Remote MCP docs](https://platform.openai.com/docs/guides/tools-remote-mcp) for examples and security notes.
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
