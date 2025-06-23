@@ -196,6 +196,62 @@ class ResponsesBody(BaseModel):
 
         return list(canonical.values())
 
+    # -----------------------------------------------------------------------
+    # Helper: turn the JSON string into valid MCP tool dicts
+    # -----------------------------------------------------------------------
+    @staticmethod
+    def _build_mcp_tools(mcp_json: str) -> list[dict]:
+        """
+        Parse ``REMOTE_MCP_SERVERS_JSON`` and return a list of ready‑to‑use
+        tool objects (``{\"type\":\"mcp\", …}``).  Silently drops invalid items.
+        """
+        if not mcp_json or not mcp_json.strip():
+            return []
+
+        try:
+            data = json.loads(mcp_json)
+        except Exception as exc:                             # malformed JSON
+            logging.getLogger(__name__).warning(
+                "REMOTE_MCP_SERVERS_JSON could not be parsed (%s); ignoring.", exc
+            )
+            return []
+
+        # Accept a single object or a list
+        items = data if isinstance(data, list) else [data]
+
+        valid_tools: list[dict] = []
+        for idx, obj in enumerate(items, start=1):
+            if not isinstance(obj, dict):
+                logging.getLogger(__name__).warning(
+                    "REMOTE_MCP_SERVERS_JSON item %d ignored: not an object.", idx
+                )
+                continue
+
+            # Minimum viable keys
+            label = obj.get("server_label")
+            url   = obj.get("server_url")
+            if not (label and url):
+                logging.getLogger(__name__).warning(
+                    "REMOTE_MCP_SERVERS_JSON item %d ignored: "
+                    "'server_label' and 'server_url' are required.", idx
+                )
+                continue
+
+            # Whitelist only official MCP keys so users can copy‑paste API examples
+            allowed = {
+                "server_label",
+                "server_url",
+                "require_approval",
+                "allowed_tools",
+                "headers",
+            }
+            tool = {"type": "mcp"}
+            tool.update({k: v for k, v in obj.items() if k in allowed})
+
+            valid_tools.append(tool)
+
+        return valid_tools
+    
     @staticmethod
     def transform_messages_to_input(
         messages: List[Dict[str, Any]],
@@ -424,12 +480,15 @@ class Pipe:
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
-        MCP_SERVERS: str = Field(
-            default=(os.getenv("MCP_SERVERS") or "").strip(),
+        REMOTE_MCP_SERVERS_JSON: str = Field(
+            default="[]",
             description=(
-                "Experimental. JSON object or list defining remote MCP servers. "
-                "Each entry is appended to the tools array. Example: "
-                "[{'server_label':'deepwiki','server_url':'https://mcp.deepwiki.com/mcp','require_approval':'never'}]"
+            "[EXPERIMENTAL] JSON list (or single JSON object) describing one or more "
+            "remote MCP servers that should be attached automatically to **every** request.\n\n"
+            "Each element must follow the MCP tool schema used by the OpenAI Responses API, e.g.:\n"
+            '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never"}]\n\n'
+            "The value is parsed at runtime; on JSON errors the pipe logs a warning and "
+            "continues without MCP tools. This interface is likely to evolve."
             ),
         )
         USER_ID_FIELD: Literal["id", "email"] = Field(
@@ -536,21 +595,10 @@ class Pipe:
             })
 
         # Append remote MCP servers (experimental)
-        if valves.MCP_SERVERS:
-            try:
-                mcp_entries = json.loads(valves.MCP_SERVERS)
-                if isinstance(mcp_entries, dict):
-                    mcp_entries = [mcp_entries]
-                if isinstance(mcp_entries, list):
-                    responses_body.tools = responses_body.tools or []
-                    for entry in mcp_entries:
-                        if isinstance(entry, dict):
-                            entry = {"type": "mcp", **entry}
-                            responses_body.tools.append(entry)
-                else:
-                    self.logger.warning("MCP_SERVERS must be a JSON object or list")
-            except json.JSONDecodeError as exc:
-                self.logger.error("Invalid MCP_SERVERS JSON: %s", exc)
+        if valves.REMOTE_MCP_SERVERS_JSON:
+            mcp_tools = ResponsesBody._build_mcp_tools(valves.REMOTE_MCP_SERVERS_JSON)
+            if mcp_tools:
+                responses_body.tools = (responses_body.tools or []) + mcp_tools
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
