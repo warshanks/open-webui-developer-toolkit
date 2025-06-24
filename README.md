@@ -66,6 +66,3 @@ This project is licensed under the **MIT License**. You are free to use, modify,
 
 *Happy hacking! 🚀 If you find this toolkit useful or build something interesting with it, let us know. We’re excited to see how the community extends Open WebUI.*
 *If you encounter any issues, please check the documentation in the `docs/` folder or open an issue for assistance.*
-
-```
-```
