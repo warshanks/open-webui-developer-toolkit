@@ -46,9 +46,3 @@ The workflow below clearly defines each responsibility in the order they occur:
 
 * Ensure graceful handling of missing, invalid, or expired file IDs.
 * Consider asynchronous uploads or chunking of large files.
-
-## Installation
-
-Copy `openai_responses_companion_filter.py` into Open WebUI under:
-
-**Admin ▸ Filters**
