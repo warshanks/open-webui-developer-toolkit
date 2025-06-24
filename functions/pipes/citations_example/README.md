@@ -2,11 +2,13 @@
 
 ## Overview
 
-The Citations Example demonstrates how an Open WebUI pipeline can attach **inline citations** to an assistant's response. This allows the assistant to present answers with references like **\[1]**, **\[2]**, etc., which are clickable and show supporting source snippets. Under the hood, the pipe uses Open WebUI's event emitter system to stream the answer text and **emit citation events** that the frontend parses into interactive references.
+The Citations Example demonstrates how an Open WebUI pipeline can attach **inline citations** to an assistant's response.
 
 ### Incremental Citation Events (Streaming)
 
 The approach used in the example emits citations **incrementally** during the streaming of the answer. The advantage of this method is that each reference becomes available as soon as it is mentioned. The user can potentially click on reference **\[1]** as soon as it appears in the text, even while the rest of the answer is still streaming. Under the hood, each `"citation"` event is merged into the message's source list on arrival (see Frontend Handling below). The UI will render the `[1]` marker as a clickable reference shortly after the event is received.
+
+`await __event_emitter__({"type": "citation", "data": citation})`
 
 ### Single Event Emission (All at Once)
 
@@ -67,3 +69,13 @@ When implementing citation events, there are a few additional considerations to 
 * **Event Type Compatibility:** Open WebUI now prefers the `"source"` event type name for adding citation data, but it still accepts `"citation"` for backward compatibility. In practice, you can use either. The example pipe uses `"citation"`, which gets handled and stored under the message’s `sources` field (the older `citations` field name has been deprecated in favor of `sources`).
 
 * **Automatic vs Manual Save:** Most custom events (including citation events) are **not persisted** to the database by default. If you want the citations to be available after the session or for later viewing, ensure they get saved. Open WebUI will normally save the final state of the assistant message (including sources) once the response is done. However, to be safe, you can manually save the sources as shown in the example (using the `Chats.upsert_message...` call at the end of the pipe). This covers cases where the streaming might be interrupted or the UI might not automatically save intermediate events. Only certain event types like full message replacements or status updates are auto-saved by the framework, so handling citation persistence explicitly is a good practice.
+
+`
+# (Optional) guarantee persistence
+chat_id = __metadata__.get("chat_id") if __metadata__ else None
+msg_id  = __metadata__.get("message_id") if __metadata__ else None
+if chat_id and msg_id:
+    Chats.upsert_message_to_chat_by_id_and_message_id(
+        chat_id, msg_id, {"sources": emitted}
+    )
+    `
