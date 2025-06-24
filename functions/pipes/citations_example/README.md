@@ -9,7 +9,7 @@ The Citations Example demonstrates how an Open WebUI pipeline can attach **inlin
 The example demonstrates emitting citations **incrementally** during response streaming. First, yield the citation placeholder `[1]`, then immediately emit the corresponding citation event.
 
 ```python
-        # 1️⃣  Yield the source number (must start at 1!)
+        # 1️⃣  Yield the source number (must start at one!)
         yield "[1]"
 
         # 2️⃣  Immediately emit the matching citation
