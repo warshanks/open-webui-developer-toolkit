@@ -1,8 +1,5 @@
 # OpenAI Responses Manifold
-**Enables advanced OpenAI features (function calling, tool use, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
-
-> **Author:** [Justin Kropp](https://github.com/jrkropp)  
-> **License:** MIT
+**Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
 ⚠️ **Version 0.8.14 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
@@ -11,13 +8,16 @@
    <img width="894" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
 2. Paste one of the following links:
 
-| Branch                 | Description                                                | Copyable Link                                                                                                                                       |
-| ---------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Main** (recommended) | Stable version.                      | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py`          |
-| **Alpha Preview**      | Experimental version with in-progress features. May break. | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/alpha-preview/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
+| Branch                 | Description                                                              | Link                                                                                                                                       |
+|------------------------|---------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| **Main** (recommended) | Stable production version. Receives regular, tested updates.              | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
+| **Alpha Preview**      | Pre-release version with early features (2–4 weeks ahead of main).        | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/alpha-preview/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
+
 3. **⚠️ The Function ID MUST be set to `openai_responses`**, as it is currently hardcoded throughout the pipe.  This requirement will be removed in a future release.
 <img width="1252" alt="image" src="https://github.com/user-attachments/assets/ffd3dd72-cf39-43fa-be36-56c6ac41477d" />
 4. You are done!
+
+---
 
 ## Features
 
