@@ -6,7 +6,7 @@ The Citations Example demonstrates how an Open WebUI pipeline can attach **inlin
 
 ### Incremental Citation Events (Streaming)
 
-The approach used in the example emits citations **incrementally** during the streaming of the answer.  yield a [1] placeholder and then emitt a corrasponding citations event
+The example demonstrates emitting citations **incrementally** during response streaming. First, yield the citation placeholder `[1]`, then immediately emit the corresponding citation event.
 
 ```python
         # 1️⃣  Yield the source number (must start at 1!)
