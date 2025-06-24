@@ -7,15 +7,17 @@
 ⚠️ **Version 0.8.14 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Installation
-1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
-2. Enable the pipe and configure the valves for your environment.
+1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
+   <img width="894" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
+2. Paste one of the following links:
 
-### Remote MCP setup
-Use the experimental `REMOTE_MCP_SERVERS_JSON` valve to attach [Remote MCP servers](https://platform.openai.com/docs/guides/tools-remote-mcp) to every request.  
-Set this valve to a JSON object or array describing the servers and their options.  Each entry is appended to the `tools` list before the request is sent.  Example:
-`[{"server_label": "deepwiki", "server_url": "https://mcp.deepwiki.com/mcp", "require_approval": "never"}]`
-
-Remote MCP servers are third‑party services.  The first message in a new thread may take longer because the Responses API fetches tool definitions when it first encounters each server.
+| Branch                 | Description                                                | Copyable Link                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Main** (recommended) | Stable version.                      | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py`          |
+| **Alpha Preview**      | Experimental version with in-progress features. May break. | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/alpha-preview/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
+3. **⚠️ The Function ID MUST be set to `openai_responses`**, as it is currently hardcoded throughout the pipe.  This requirement will be removed in a future release.
+<img width="1252" alt="image" src="https://github.com/user-attachments/assets/ffd3dd72-cf39-43fa-be36-56c6ac41477d" />
+4. You are done!
 
 ## Features
 
@@ -39,15 +41,34 @@ Remote MCP servers are third‑party services.  The first message in a new threa
 | Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
 | Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
 | Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
-| MCP tool support | 🧪 Experimental | 2025-06-23 | Attach remote MCP servers via the `REMOTE_MCP_SERVERS_JSON` valve. |
-
+| MCP tool support | 🔄 In-progress | 2025-06-23 | Attach remote MCP servers via the `REMOTE_MCP_SERVERS_JSON` valve. |
 
 ### Other Features
-- **Pseudo-models**: `o3-mini-high` / `o4-mini-high` – alias for `o3-mini` / `o4-mini` with high reasoning effort.
-- **Debug logging**: Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
-- **Truncation strategy**: Control with the `TRUNCATION` valve. Default `auto` drops middle context when the request exceeds the window; `disabled` fails with a 400 error. Works with each model's `max_completion_tokens` limit.
-- **Custom parameters**: Pass extra OpenAI settings via Open WebUI's "Custom Parameters" feature. `max_tokens` becomes `max_output_tokens` automatically.
-- **Remote MCP servers (experimental)**: Configure the `REMOTE_MCP_SERVERS_JSON` valve with a JSON object or array to append remote servers. See the [Remote MCP docs](https://platform.openai.com/docs/guides/tools-remote-mcp) for examples and security notes.
+
+* **Pseudo-model aliases**
+  You can list `o3-mini-high` and `o4-mini-high` in the `MODELS` valve just like regular models.
+  These are **virtual aliases** (not real OpenAI models) that automatically map to `o3-mini` and `o4-mini` with `reasoning_effort` set to `"high"`.
+  This allows you to enable advanced reasoning without needing to set custom parameters manually.
+
+* **Debug logging**
+  Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
+  Can be configured **globally** via the pipe valve OR **per user** via user valve.
+
+* **Truncation strategy**
+  Use the `TRUNCATION` valve to control how long prompts are handled:
+
+  * `auto` (default): removes middle context if the request exceeds token limits
+  * `disabled`: returns a 400 error if the context is too long
+    This works alongside per-model `max_completion_tokens` constraints.
+
+* **Custom parameter support**
+  Pass OpenAI-compatible fields via Open WebUI's **Custom Parameters**.
+  For convenience, `max_tokens` is automatically translated to `max_output_tokens`.
+
+* **Remote MCP server integration** (experimental)
+  Set the `REMOTE_MCP_SERVERS_JSON` valve to a JSON object or array describing [Remote MCP](https://platform.openai.com/docs/guides/tools-remote-mcp) servers.
+  These are appended to each request’s `tools` list before being sent to OpenAI.
+  Supports options like `require_approval` and automatic tool caching.
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
