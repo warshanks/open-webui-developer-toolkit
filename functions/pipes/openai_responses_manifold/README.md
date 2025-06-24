@@ -1,21 +1,23 @@
 # OpenAI Responses Manifold
-**Enables advanced OpenAI features (function calling, tool use, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
-
-> **Author:** [Justin Kropp](https://github.com/jrkropp)  
-> **License:** MIT
+**Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
 ⚠️ **Version 0.8.14 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
-## Installation
-1. Copy `openai_responses_manifold.py` to your Open WebUI under **Admin Panel ▸ Functions**.
-2. Enable the pipe and configure the valves for your environment.
+## Setup Instructions
+1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
+   <img width="894" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
+2. Paste one of the following links:
 
-### Remote MCP setup
-Use the experimental `REMOTE_MCP_SERVERS_JSON` valve to attach [Remote MCP servers](https://platform.openai.com/docs/guides/tools-remote-mcp) to every request.  
-Set this valve to a JSON object or array describing the servers and their options.  Each entry is appended to the `tools` list before the request is sent.  Example:
-`[{"server_label": "deepwiki", "server_url": "https://mcp.deepwiki.com/mcp", "require_approval": "never"}]`
+| Branch                 | Description                                                              | Link                                                                                                                                       |
+|------------------------|---------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| **Main** (recommended) | Stable production version. Receives regular, tested updates.              | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
+| **Alpha Preview**      | Pre-release version with early features (2–4 weeks ahead of main).        | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/alpha-preview/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
 
-Remote MCP servers are third‑party services.  The first message in a new thread may take longer because the Responses API fetches tool definitions when it first encounters each server.
+3. **⚠️ The Function ID MUST be set to `openai_responses`**, as it is currently hardcoded throughout the pipe.  This requirement will be removed in a future release.
+<img width="1252" alt="image" src="https://github.com/user-attachments/assets/ffd3dd72-cf39-43fa-be36-56c6ac41477d" />
+4. You are done!
+
+---
 
 ## Features
 
@@ -39,15 +41,34 @@ Remote MCP servers are third‑party services.  The first message in a new threa
 | Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
 | Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
 | Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
-| MCP tool support | 🧪 Experimental | 2025-06-23 | Attach remote MCP servers via the `REMOTE_MCP_SERVERS_JSON` valve. |
-
+| MCP tool support | 🔄 In-progress | 2025-06-23 | Attach remote MCP servers via the `REMOTE_MCP_SERVERS_JSON` valve. |
 
 ### Other Features
-- **Pseudo-models**: `o3-mini-high` / `o4-mini-high` – alias for `o3-mini` / `o4-mini` with high reasoning effort.
-- **Debug logging**: Set `LOG_LEVEL` to `debug` for in‑message log details. Can be set globally or per user.
-- **Truncation strategy**: Control with the `TRUNCATION` valve. Default `auto` drops middle context when the request exceeds the window; `disabled` fails with a 400 error. Works with each model's `max_completion_tokens` limit.
-- **Custom parameters**: Pass extra OpenAI settings via Open WebUI's "Custom Parameters" feature. `max_tokens` becomes `max_output_tokens` automatically.
-- **Remote MCP servers (experimental)**: Configure the `REMOTE_MCP_SERVERS_JSON` valve with a JSON object or array to append remote servers. See the [Remote MCP docs](https://platform.openai.com/docs/guides/tools-remote-mcp) for examples and security notes.
+
+* **Pseudo-model aliases**
+  You can list `o3-mini-high` and `o4-mini-high` in the `MODELS` valve just like regular models.
+  These are **virtual aliases** (not real OpenAI models) that automatically map to `o3-mini` and `o4-mini` with `reasoning_effort` set to `"high"`.
+  This allows you to enable advanced reasoning without needing to set custom parameters manually.
+
+* **Debug logging**
+  Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
+  Can be configured **globally** via the pipe valve OR **per user** via user valve.
+
+* **Truncation strategy**
+  Use the `TRUNCATION` valve to control how long prompts are handled:
+
+  * `auto` (default): removes middle context if the request exceeds token limits
+  * `disabled`: returns a 400 error if the context is too long
+    This works alongside per-model `max_completion_tokens` constraints.
+
+* **Custom parameter support**
+  Pass OpenAI-compatible fields via Open WebUI's **Custom Parameters**.
+  For convenience, `max_tokens` is automatically translated to `max_output_tokens`.
+
+* **Remote MCP server integration** (experimental)
+  Set the `REMOTE_MCP_SERVERS_JSON` valve to a JSON object or array describing [Remote MCP](https://platform.openai.com/docs/guides/tools-remote-mcp) servers.
+  These are appended to each request’s `tools` list before being sent to OpenAI.
+  Supports options like `require_approval` and automatic tool caching.
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
@@ -100,7 +121,7 @@ The OpenAI Responses API returns essential non-message components (such as reaso
   }
 ]
 ```
-By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, persisting **all** response items (in their original order):
+By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, if we persist **all** response items (in their original order) it...
 
 * Significantly reduces latency by eliminating redundant tool calls and reasoning re-generation (especially noticeable with o-series models).
 * Reduces cost through improved OpenAI cache hits (saving approximately 50–75% on input tokens).
@@ -117,7 +138,7 @@ How do we store these response elements without revealing them to the end-user a
 3. **Compatibility with Open WebUI Filter Pipeline:**
    * Context must be reconstructed exclusively from the `body["messages"]` structure provided by Open WebUI after all pipeline filters have applied their modifications:
 
-Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.
+Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.  We must somehow store the non-visible items inside `body["messages"]["contents"]`
 
 ```python
 body = {
@@ -128,30 +149,33 @@ body = {
 }
 ```
 
-### Optimal Solution: Invisible Marker Encoding
-To address these challenges effectively, the manifold inserts **newline‑wrapped empty links** containing a self‑describing marker string. Each marker embeds the response `type`, a ULID and optional metadata such as the originating model ID. The full OpenAI payload is stored separately via `Chats.update_chat_by_id()`.
+### Current Solution: Invisible Marker Encoding
+Open WebUI doesn't display markdown links that have no visible label (`[](<url>)`). We can use these hidden markdown links to store references (unique IDs) to response items we've saved elsewhere.
 
-For example, an assistant message visibly appears as:
-```python
-body["messages"] = {
-    "role": "assistant",
-    "content": (
-        "[](openai_responses:v1:function_call:01HX9B8J7FSGRFS65KBN5KAHHB"
-        "?model=openai_responses.gpt-4o)"
-        " The result of 34234 × π is approximately 107,549.28."
-    ),
+Here's how it works:
+
+1. We save the full OpenAI responses separately using the built-in method `Chats.update_chat_by_id()`. Each saved response has its own unique ID (e.g, 01HX4Y2VW5VR2Z2HDQ5QY9REHB).
+```json
+"01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+  "model": "gpt-4o",
+  "created_at": 1718073601,
+  "payload": {
+    "type": "function_call",
+    "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+    "name": "calculator",
+    "arguments": "{\"expression\":\"34234*pi\"}",
+    "status": "completed"
+  },
+  "message_id": "msg_9fz4qx7e"
 }
 ```
-Because the link is wrapped by `wrap_marker()`, it always has exactly two newlines before and after so Markdown rendering remains unaffected.
+3. We yield these IDs as invisible markdown links, like `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB)`, so they are permanently embedded in `body["messages"]["contents"]`.
 
-#### How invisible links work
-An empty Markdown link (`[](<url>)`) has no visible label. When wrapped with
-two newlines the link disappears entirely—Open WebUI's renderer collapses these
-newlines so no blank lines remain. This lets us hide any text placed inside the
-parentheses without affecting the surrounding Markdown.
+4. Later, the manifold identifies these hidden IDs, retrieves the stored responses, and reconstructs the full message history—including any hidden messages—in the correct order.
 
 #### Marker specification
-Each hidden link contains a structured marker string we can reliably parse:
+For future extensibility, each hidden link contains a structured marker string we can reliably parse:
 
 ```
 \n\n[](openai_responses:v1:<item_type>:<ulid>[?model=<model_id>&key=value&...])\n\n
@@ -163,14 +187,7 @@ Each hidden link contains a structured marker string we can reliably parse:
 * Optional query parameters store metadata (the originating model ID is stored
   under `model`).
 
-Markers are extracted with `extract_markers()` and looked up in the database to
-rebuild full context.
-
-On subsequent API calls:
-
-1. The pipeline extracts each marker using `extract_markers()`.
-2. Using the ULID and metadata, it retrieves the corresponding payloads from the database.
-3. The full conversation is reconstructed in the original order.
+We surround the hidden markdown link with `\n\n` line breaks to ensure the marker does not disrupt adjacent markdown formatting or content rendering.
 
 _**Why not embed the entire JSON?**_
 Embedding only a marker avoids leaking large payloads into the clipboard while still giving the backend enough information to find the stored data.
@@ -207,7 +224,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We persist the payload under `openai_responses_pipe`. `01HX4Y2VW5VR2Z2HDQ5QY9REHB` is the ULID we generate.
+* We persist the payload in the chat db using a unquie identifier.
 
 ```json
 "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
@@ -225,7 +242,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We immediately insert `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)` and yield it so the marker is permanently embedded into `body["messages"]["content"]`.
+* We immediately yield `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)` so the marker is permanently embedded into `body["messages"]["content"]`.
 
 ---
 
