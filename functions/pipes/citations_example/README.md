@@ -6,9 +6,32 @@ The Citations Example demonstrates how an Open WebUI pipeline can attach **inlin
 
 ### Incremental Citation Events (Streaming)
 
-The approach used in the example emits citations **incrementally** during the streaming of the answer. The advantage of this method is that each reference becomes available as soon as it is mentioned. The user can potentially click on reference **\[1]** as soon as it appears in the text, even while the rest of the answer is still streaming. Under the hood, each `"citation"` event is merged into the message's source list on arrival (see Frontend Handling below). The UI will render the `[1]` marker as a clickable reference shortly after the event is received.
+The approach used in the example emits citations **incrementally** during the streaming of the answer.  yield a [1] placeholder and then emitt a corrasponding citations event
 
-`await __event_emitter__({"type": "citation", "data": citation})`
+```python
+        # 1️⃣  Yield the source number (must start at 1!)
+        yield "[1]"
+
+        # 2️⃣  Immediately emit the matching citation
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "source",        # "source" (preferred) or "citation"
+                    "data": {
+                        "source": {"name": "NASA"},
+                        "document": [
+                            "299 792 458 metres per second is the exact speed of light in vacuum."
+                        ],
+                        "metadata": [
+                            {
+                                "source": "https://science.nasa.gov/ems/03_movinglight/",
+                                "date_accessed": "2025-06-24"
+                            }
+                        ],
+                    },
+                }
+            )
+```
 
 ### Single Event Emission (All at Once)
 
