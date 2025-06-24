@@ -121,7 +121,7 @@ The OpenAI Responses API returns essential non-message components (such as reaso
   }
 ]
 ```
-By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, persisting **all** response items (in their original order):
+By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, if we persist **all** response items (in their original order) it...
 
 * Significantly reduces latency by eliminating redundant tool calls and reasoning re-generation (especially noticeable with o-series models).
 * Reduces cost through improved OpenAI cache hits (saving approximately 50–75% on input tokens).
@@ -138,7 +138,7 @@ How do we store these response elements without revealing them to the end-user a
 3. **Compatibility with Open WebUI Filter Pipeline:**
    * Context must be reconstructed exclusively from the `body["messages"]` structure provided by Open WebUI after all pipeline filters have applied their modifications:
 
-Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.
+Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.  We must somehow store the non-visible items inside `body["messages"]["contents"]`
 
 ```python
 body = {
@@ -149,30 +149,35 @@ body = {
 }
 ```
 
-### Optimal Solution: Invisible Marker Encoding
-To address these challenges effectively, the manifold inserts **newline‑wrapped empty links** containing a self‑describing marker string. Each marker embeds the response `type`, a ULID and optional metadata such as the originating model ID. The full OpenAI payload is stored separately via `Chats.update_chat_by_id()`.
+### Current Solution: Invisible Marker Encoding
+Open WebUI doesn't display markdown links that have no visible label (`[](<url>)`). We use these hidden links to store references (unique IDs) to responses we've saved elsewhere.
 
-For example, an assistant message visibly appears as:
+Here's how it works:
+
+1. We save the full OpenAI responses separately using the built-in method `Chats.update_chat_by_id()`. Each saved response has its own unique ID.
+
+2. We embed these IDs in invisible markdown links, like `[](<hidden_id>)`, within the message content.
+
+3. Later, the manifold identifies these hidden IDs, retrieves the stored responses, and reconstructs the full message history—including any hidden messages—in the correct order.
+
+**Example:**
+
+The assistant message structure looks like this:
+
 ```python
 body["messages"] = {
     "role": "assistant",
     "content": (
-        "[](openai_responses:v1:function_call:01HX9B8J7FSGRFS65KBN5KAHHB"
-        "?model=openai_responses.gpt-4o)"
-        " The result of 34234 × π is approximately 107,549.28."
+        "\n\n[](openai_responses:v1:function_call:01HX9B8J7FSGRFS65KBN5KAHHB?model=openai_responses.gpt-4o)\n\n"
+        "The result of 34234 × π is approximately 107,549.28."
     ),
 }
 ```
-Because the link is wrapped by `wrap_marker()`, it always has exactly two newlines before and after so Markdown rendering remains unaffected.
 
-#### How invisible links work
-An empty Markdown link (`[](<url>)`) has no visible label. When wrapped with
-two newlines the link disappears entirely—Open WebUI's renderer collapses these
-newlines so no blank lines remain. This lets us hide any text placed inside the
-parentheses without affecting the surrounding Markdown.
+We surround the hidden markdown link with `\n\n` line breaks to ensure the marker does not disrupt adjacent markdown formatting or content rendering.
 
 #### Marker specification
-Each hidden link contains a structured marker string we can reliably parse:
+For future extensibility, each hidden link contains a structured marker string we can reliably parse:
 
 ```
 \n\n[](openai_responses:v1:<item_type>:<ulid>[?model=<model_id>&key=value&...])\n\n
@@ -183,15 +188,6 @@ Each hidden link contains a structured marker string we can reliably parse:
 * `<ulid>` — a 26‑character ULID used as the database key.
 * Optional query parameters store metadata (the originating model ID is stored
   under `model`).
-
-Markers are extracted with `extract_markers()` and looked up in the database to
-rebuild full context.
-
-On subsequent API calls:
-
-1. The pipeline extracts each marker using `extract_markers()`.
-2. Using the ULID and metadata, it retrieves the corresponding payloads from the database.
-3. The full conversation is reconstructed in the original order.
 
 _**Why not embed the entire JSON?**_
 Embedding only a marker avoids leaking large payloads into the clipboard while still giving the backend enough information to find the stored data.
