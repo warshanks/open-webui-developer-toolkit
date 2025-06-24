@@ -150,31 +150,29 @@ body = {
 ```
 
 ### Current Solution: Invisible Marker Encoding
-Open WebUI doesn't display markdown links that have no visible label (`[](<url>)`). We use these hidden links to store references (unique IDs) to responses we've saved elsewhere.
+Open WebUI doesn't display markdown links that have no visible label (`[](<url>)`). We can use these hidden markdown links to store references (unique IDs) to response items we've saved elsewhere.
 
 Here's how it works:
 
-1. We save the full OpenAI responses separately using the built-in method `Chats.update_chat_by_id()`. Each saved response has its own unique ID.
-
-2. We embed these IDs in invisible markdown links, like `[](<hidden_id>)`, within the message content.
-
-3. Later, the manifold identifies these hidden IDs, retrieves the stored responses, and reconstructs the full message history—including any hidden messages—in the correct order.
-
-**Example:**
-
-The assistant message structure looks like this:
-
-```python
-body["messages"] = {
-    "role": "assistant",
-    "content": (
-        "\n\n[](openai_responses:v1:function_call:01HX9B8J7FSGRFS65KBN5KAHHB?model=openai_responses.gpt-4o)\n\n"
-        "The result of 34234 × π is approximately 107,549.28."
-    ),
+1. We save the full OpenAI responses separately using the built-in method `Chats.update_chat_by_id()`. Each saved response has its own unique ID (e.g, 01HX4Y2VW5VR2Z2HDQ5QY9REHB).
+```json
+"01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+  "model": "gpt-4o",
+  "created_at": 1718073601,
+  "payload": {
+    "type": "function_call",
+    "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+    "name": "calculator",
+    "arguments": "{\"expression\":\"34234*pi\"}",
+    "status": "completed"
+  },
+  "message_id": "msg_9fz4qx7e"
 }
 ```
+3. We yield these IDs as invisible markdown links, like `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB)`, so they are permanently embedded in `body["messages"]["contents"]`.
 
-We surround the hidden markdown link with `\n\n` line breaks to ensure the marker does not disrupt adjacent markdown formatting or content rendering.
+4. Later, the manifold identifies these hidden IDs, retrieves the stored responses, and reconstructs the full message history—including any hidden messages—in the correct order.
 
 #### Marker specification
 For future extensibility, each hidden link contains a structured marker string we can reliably parse:
@@ -188,6 +186,8 @@ For future extensibility, each hidden link contains a structured marker string w
 * `<ulid>` — a 26‑character ULID used as the database key.
 * Optional query parameters store metadata (the originating model ID is stored
   under `model`).
+
+We surround the hidden markdown link with `\n\n` line breaks to ensure the marker does not disrupt adjacent markdown formatting or content rendering.
 
 _**Why not embed the entire JSON?**_
 Embedding only a marker avoids leaking large payloads into the clipboard while still giving the backend enough information to find the stored data.
@@ -224,7 +224,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We persist the payload under `openai_responses_pipe`. `01HX4Y2VW5VR2Z2HDQ5QY9REHB` is the ULID we generate.
+* We persist the payload in the chat db using a unquie identifier.
 
 ```json
 "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
@@ -242,7 +242,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We immediately insert `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)` and yield it so the marker is permanently embedded into `body["messages"]["content"]`.
+* We immediately yield `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)` so the marker is permanently embedded into `body["messages"]["content"]`.
 
 ---
 
