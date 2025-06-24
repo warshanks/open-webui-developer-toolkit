@@ -70,12 +70,11 @@ When implementing citation events, there are a few additional considerations to 
 
 * **Automatic vs Manual Save:** Most custom events (including citation events) are **not persisted** to the database by default. If you want the citations to be available after the session or for later viewing, ensure they get saved. Open WebUI will normally save the final state of the assistant message (including sources) once the response is done. However, to be safe, you can manually save the sources as shown in the example (using the `Chats.upsert_message...` call at the end of the pipe). This covers cases where the streaming might be interrupted or the UI might not automatically save intermediate events. Only certain event types like full message replacements or status updates are auto-saved by the framework, so handling citation persistence explicitly is a good practice.
 
-`
-# (Optional) guarantee persistence
+```python
 chat_id = __metadata__.get("chat_id") if __metadata__ else None
 msg_id  = __metadata__.get("message_id") if __metadata__ else None
 if chat_id and msg_id:
     Chats.upsert_message_to_chat_by_id_and_message_id(
         chat_id, msg_id, {"sources": emitted}
     )
-    `
+```
