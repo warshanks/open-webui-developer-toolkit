@@ -109,7 +109,7 @@ class ResponsesBody(BaseModel):
     reasoning: Optional[Dict[str, Any]] = None    # {"effort":"high", ...}
     parallel_tool_calls: Optional[bool] = True
     user: Optional[str] = None                # user ID for the request.  Recommended to improve caching hits.
-    tool_choice: Optional[Literal["none", "auto", "required"]] = None
+    tool_choice: Optional[Dict[str, Any]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     include: Optional[List[str]] = None           # extra output keys
 
@@ -123,7 +123,7 @@ class ResponsesBody(BaseModel):
         strict: bool = False,
     ) -> list[dict]:
         """
-        Canonicalise any mixture of tool specs to the OpenAI Responses‑API list.
+        Canonicalise any mixture of tool specs to the OpenAI Responses-API list.
 
         • Accepts a WebUI __tools__ *dict* or a plain *list*.
         • Flattens only:
@@ -159,7 +159,7 @@ class ResponsesBody(BaseModel):
                     })
                 continue
 
-            # b) Chat‑Completions wrapper
+            # b) Chat-Completions wrapper
             if item.get("type") == "function" and "function" in item:
                 fn = item["function"]
                 if isinstance(fn, dict):
@@ -174,7 +174,7 @@ class ResponsesBody(BaseModel):
             # c) Anything else (including web_search) → keep verbatim
             native.append(dict(item))
 
-        # 2. strict‑mode hardening for the bits we just converted ----------
+        # 2. strict-mode hardening for the bits we just converted ----------
         if strict:
             for tool in converted:
                 params = tool.setdefault("parameters", {})
@@ -202,7 +202,7 @@ class ResponsesBody(BaseModel):
     @staticmethod
     def _build_mcp_tools(mcp_json: str) -> list[dict]:
         """
-        Parse ``REMOTE_MCP_SERVERS_JSON`` and return a list of ready‑to‑use
+        Parse ``REMOTE_MCP_SERVERS_JSON`` and return a list of ready-to-use
         tool objects (``{\"type\":\"mcp\", …}``).  Silently drops invalid items.
         """
         if not mcp_json or not mcp_json.strip():
@@ -237,7 +237,7 @@ class ResponsesBody(BaseModel):
                 )
                 continue
 
-            # Whitelist only official MCP keys so users can copy‑paste API examples
+            # Whitelist only official MCP keys so users can copy-paste API examples
             allowed = {
                 "server_label",
                 "server_url",
