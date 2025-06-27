@@ -1379,7 +1379,7 @@ class Pipe:
 class SessionLogger:
     session_id = ContextVar("session_id", default=None)
     log_level = ContextVar("log_level", default=logging.INFO)
-    logs = defaultdict(lambda: deque(maxlen=1000))
+    logs = defaultdict(lambda: deque(maxlen=2000))
 
     @classmethod
     def get_logger(cls, name=__name__):
