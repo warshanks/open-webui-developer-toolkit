@@ -52,6 +52,7 @@ FEATURE_SUPPORT = {
     "function_calling": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
     "reasoning": {"o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
 }
 
 DETAILS_RE = re.compile(
@@ -571,8 +572,8 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
-        # Transform tools from __tools__ to OpenAI Responses API format.
-        # TODO: Also transform __tools__ and merge them into responses_body.tools
+        # Add Open WebUI Tools (if any) to the ResponsesBody.
+        # TODO: Also detect body['tools'] and merge them with __tools__.  This would allow users to pass tools in the request body from filters, etc.
         if __tools__:
             responses_body.tools = ResponsesBody.transform_tools(
                 tools = __tools__,
@@ -583,17 +584,14 @@ class Pipe:
         if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
-                "type": "web_search",
+                "type": "web_search_preview",
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-
-                # Temp hardcode until I implement a more elegant way to handle this.
-                "user_location": {
-                    "type": "approximate",
-                    "country": "CA",
-                    "city": "Langley",
-                    "region": "BC",
-                }
+                "user_location": {"type": "approximate","country": "CA","city": "Langley","region": "BC"} # Temp hardcode until I implement a more elegant way to handle this.
             })
+
+            # Web Search button explicitly enabled; force tool_choice to 'required' to ensure it is always called.
+            if features.get("web_search", False):
+                responses_body.tool_choice = {"type": "web_search_preview"}
 
         # Append remote MCP servers (experimental)
         if valves.REMOTE_MCP_SERVERS_JSON:
