@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.13
+version: 0.8.14
 license: MIT
 """
 
@@ -17,8 +17,8 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
+from ast import Tuple
 import asyncio
-from copy import deepcopy
 import datetime
 import inspect
 from io import StringIO
@@ -42,18 +42,17 @@ from pydantic import BaseModel, Field, model_validator
 from open_webui.models.chats import Chats
 from open_webui.models.models import ModelForm, Models
 
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Constants & Global Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature flags and other module level constants
 FEATURE_SUPPORT = {
-    "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"}, # OpenAI's built-in web search tool.
-    "image_gen_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o3-pro"}, # OpenAI's built-in image generation tool.
-    "function_calling": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro"}, # OpenAI's native function calling support.
-    "reasoning": {"o3", "o4-mini", "o3-mini","o3-pro"}, # OpenAI's reasoning models.
-    "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "web_search_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o3-pro", "o4-mini", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's built-in web search tool.
+    "image_gen_tool": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
+    "function_calling": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
+    "reasoning": {"o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
+    "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
 }
 
 DETAILS_RE = re.compile(
@@ -110,7 +109,7 @@ class ResponsesBody(BaseModel):
     reasoning: Optional[Dict[str, Any]] = None    # {"effort":"high", ...}
     parallel_tool_calls: Optional[bool] = True
     user: Optional[str] = None                # user ID for the request.  Recommended to improve caching hits.
-    tool_choice: Optional[Literal["none", "auto", "required"]] = None
+    tool_choice: Optional[Dict[str, Any]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     include: Optional[List[str]] = None           # extra output keys
 
@@ -124,7 +123,7 @@ class ResponsesBody(BaseModel):
         strict: bool = False,
     ) -> list[dict]:
         """
-        Canonicalise any mixture of tool specs to the OpenAI Responses‑API list.
+        Canonicalise any mixture of tool specs to the OpenAI Responses-API list.
 
         • Accepts a WebUI __tools__ *dict* or a plain *list*.
         • Flattens only:
@@ -160,7 +159,7 @@ class ResponsesBody(BaseModel):
                     })
                 continue
 
-            # b) Chat‑Completions wrapper
+            # b) Chat-Completions wrapper
             if item.get("type") == "function" and "function" in item:
                 fn = item["function"]
                 if isinstance(fn, dict):
@@ -175,7 +174,7 @@ class ResponsesBody(BaseModel):
             # c) Anything else (including web_search) → keep verbatim
             native.append(dict(item))
 
-        # 2. strict‑mode hardening for the bits we just converted ----------
+        # 2. strict-mode hardening for the bits we just converted ----------
         if strict:
             for tool in converted:
                 params = tool.setdefault("parameters", {})
@@ -197,6 +196,62 @@ class ResponsesBody(BaseModel):
 
         return list(canonical.values())
 
+    # -----------------------------------------------------------------------
+    # Helper: turn the JSON string into valid MCP tool dicts
+    # -----------------------------------------------------------------------
+    @staticmethod
+    def _build_mcp_tools(mcp_json: str) -> list[dict]:
+        """
+        Parse ``REMOTE_MCP_SERVERS_JSON`` and return a list of ready-to-use
+        tool objects (``{\"type\":\"mcp\", …}``).  Silently drops invalid items.
+        """
+        if not mcp_json or not mcp_json.strip():
+            return []
+
+        try:
+            data = json.loads(mcp_json)
+        except Exception as exc:                             # malformed JSON
+            logging.getLogger(__name__).warning(
+                "REMOTE_MCP_SERVERS_JSON could not be parsed (%s); ignoring.", exc
+            )
+            return []
+
+        # Accept a single object or a list
+        items = data if isinstance(data, list) else [data]
+
+        valid_tools: list[dict] = []
+        for idx, obj in enumerate(items, start=1):
+            if not isinstance(obj, dict):
+                logging.getLogger(__name__).warning(
+                    "REMOTE_MCP_SERVERS_JSON item %d ignored: not an object.", idx
+                )
+                continue
+
+            # Minimum viable keys
+            label = obj.get("server_label")
+            url   = obj.get("server_url")
+            if not (label and url):
+                logging.getLogger(__name__).warning(
+                    "REMOTE_MCP_SERVERS_JSON item %d ignored: "
+                    "'server_label' and 'server_url' are required.", idx
+                )
+                continue
+
+            # Whitelist only official MCP keys so users can copy-paste API examples
+            allowed = {
+                "server_label",
+                "server_url",
+                "require_approval",
+                "allowed_tools",
+                "headers",
+            }
+            tool = {"type": "mcp"}
+            tool.update({k: v for k, v in obj.items() if k in allowed})
+
+            valid_tools.append(tool)
+
+        return valid_tools
+    
     @staticmethod
     def transform_messages_to_input(
         messages: List[Dict[str, Any]],
@@ -243,7 +298,7 @@ class ResponsesBody(BaseModel):
         # Build the OpenAI input array
         openai_input: list[dict] = []
         for msg in messages:
-            role = msg.get("role", "assistant")
+            role = msg.get("role")
             raw_content = msg.get("content", "")
 
             # Skip system messages; they belong in `instructions`
@@ -265,12 +320,20 @@ class ResponsesBody(BaseModel):
                 }
 
                 openai_input.append({
-                    "type": "message",
                     "role": "user",
                     "content": [
                         block_transform.get(block.get("type"), lambda b: b)(block)
                         for block in content_blocks if block
                     ],
+                })
+                continue
+
+            # -------- developer message --------------------------------- #
+            # Developer messages are treated as system messages in Responses API
+            if role == "developer":
+                openai_input.append({
+                    "role": "developer",
+                    "content": raw_content,
                 })
                 continue
 
@@ -292,7 +355,6 @@ class ResponsesBody(BaseModel):
                             logging.warning(f"Missing persisted item for ID: {mk['ulid']}")
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
-                            "type": "message",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": segment["text"].strip()}]
                         })
@@ -301,7 +363,6 @@ class ResponsesBody(BaseModel):
                 if content:
                     openai_input.append(
                         {
-                            "type": "message",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": content}],
                         }
@@ -372,18 +433,6 @@ class ResponsesBody(BaseModel):
                 openwebui_model_id=openwebui_model_id
             )
 
-        # Transform tools to OpenAI Responses API format
-        if "tools" in completions_dict:
-            sanitized_params["tools"] = []
-            """
-            # Convert tools to Responses API format
-            sanitized_params["tools"] = ResponsesBody.transform_tools(
-                tools=completions_dict.get("tools", []),
-                strict=True
-            )
-            """
-            sanitized_params["tool_choice"] = completions_dict.get("tool_choice", "auto")
-
         # Build the final ResponsesBody directly
         return ResponsesBody(
             **sanitized_params,
@@ -437,6 +486,18 @@ class Pipe:
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
+        REMOTE_MCP_SERVERS_JSON: Optional[str] = Field(
+            default=None,
+            description=(
+                "[EXPERIMENTAL] A JSON-encoded list (or single JSON object) defining one or more "
+                "remote MCP servers to be automatically attached to each request. This can be useful "
+                "for globally enabling tools across all chats.\n\n"
+                "Note: The Responses API currently caches MCP server definitions at the start of each chat. "
+                "This means the first message in a new thread may be slower. A more efficient implementation is planned."
+                "Each item must follow the MCP tool schema supported by the OpenAI Responses API, for example:\n"
+                '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never","allowed_tools": ["ask_question"]}]'
+            ),
+        )
         USER_ID_FIELD: Literal["id", "email"] = Field(
             default="id",
             description=(
@@ -481,6 +542,7 @@ class Pipe:
         __tools__: list[dict[str, Any]] | dict[str, Any] | None,
         __task__: Optional[dict[str, Any]] = None,
         __task_body__: Optional[dict[str, Any]] = None,
+        __event_call__: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
     ) -> AsyncGenerator[str, None] | str | None:
         """Process a user request and return either a stream or final text.
 
@@ -516,8 +578,8 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
-        # Transform tools from __tools__ to OpenAI Responses API format.
-        # TODO: Also transform __tools__ and merge them into responses_body.tools
+        # Add Open WebUI Tools (if any) to the ResponsesBody.
+        # TODO: Also detect body['tools'] and merge them with __tools__.  This would allow users to pass tools in the request body from filters, etc.
         if __tools__:
             responses_body.tools = ResponsesBody.transform_tools(
                 tools = __tools__,
@@ -528,17 +590,16 @@ class Pipe:
         if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
-                "type": "web_search",
+                "type": "web_search_preview",
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-
-                # Temp hardcode until I implement a more elegant way to handle this.
-                "user_location": {
-                    "type": "approximate",
-                    "country": "CA",
-                    "city": "Langley",
-                    "region": "BC",
-                }
+                "user_location": {"type": "approximate","country": "CA","city": "Langley","region": "BC"} # Temp hardcode until I implement a more elegant way to handle this.
             })
+
+        # Append remote MCP servers (experimental)
+        if valves.REMOTE_MCP_SERVERS_JSON:
+            mcp_tools = ResponsesBody._build_mcp_tools(valves.REMOTE_MCP_SERVERS_JSON)
+            if mcp_tools:
+                responses_body.tools = (responses_body.tools or []) + mcp_tools
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
@@ -578,7 +639,7 @@ class Pipe:
         # Send to OpenAI Responses API
         if responses_body.stream:
             # Return async generator for partial text
-            return self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            return await self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
         else:
             # Return final text (non-streaming)
             return await self._run_nonstreaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
@@ -591,24 +652,29 @@ class Pipe:
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]],
         metadata: dict[str, Any] = {},
         tools: Optional[Dict[str, Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[str, None]:
+    ):
         """Stream a conversation loop while maintaining Markdown integrity."""
 
         tools = tools or {}
         openwebui_model = metadata.get("model", {}).get("id", "")
-        reasoning_map: dict[int, str] = {}
         final_output = StringIO()
         total_usage: dict[str, Any] = {}
-        status_emitted = False
 
+        expandable_status_emitter = ExpandableStatusEmitter(
+            event_emitter,
+            status_type=f"{__name__}.expandable_status",
+            summary_prefix="",
+            separator="---",
+            final_output=final_output,  # ← pass your buffer here
+        )
+
+        # Emit initial "thinking" block:
+        # If reasoning model, write "Thinking…" to the expandable status emitter.
         if body.model in FEATURE_SUPPORT["reasoning"]:
-            snippet = (
-                f'<details type="{__name__}.reasoning" done="false">\n'
-                "<summary>🧠Thinking…</summary>\nHmm… just a moment while I gather my thoughts…"
-                "</details>"
+            await expandable_status_emitter.add_item(
+                title="🧠 Thinking…",
+                content="Reading the question and building a plan to answer it. This may take a moment.",
             )
-            if event_emitter:
-                await event_emitter({"type": "chat:completion", "data": {"content": snippet}})
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
@@ -620,84 +686,102 @@ class Pipe:
                 ):
                     etype = event.get("type")
 
+                    # efficienct check if debug logging is enabled. If so, log the event name
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug("Received event: %s", etype)
+                        # if doesn't end in .delta, log the full event
+                        if not etype.endswith(".delta"):
+                            self.logger.debug("Event data: %s", json.dumps(event, indent=2, ensure_ascii=False))
+
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
                             final_output.write(delta)
-                            yield delta
+                            await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
                         continue
 
-                    if etype == "response.reasoning_summary_text.delta":
-                        idx = event.get("summary_index", 0)
-                        delta = event.get("delta", "")
-                        if delta:
-                            reasoning_map[idx] = reasoning_map.get(idx, "") + delta
-                            combined = "\n\n --- \n\n".join(
-                                reasoning_map[i] for i in sorted(reasoning_map)
-                            )
-                            titles = re.findall(r"\*\*(.+?)\*\*", combined)
-                            latest = titles[-1].strip() if titles else "Thinking..."
-                            snippet = (
-                                f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
-                                f"<summary>🧠{latest}</summary>\n"
-                                f"{combined}\n</details>"
-                            )
-                            if event_emitter:
-                                await event_emitter(
-                                    {"type": "chat:completion", "data": {"content": snippet}}
-                                )
-                            yield ""
+                    # Placeholder for annotation emitting
+                    # Note: If we emit annotation numbers (e.g., [1]), we will need to remove them before passing through the model as it will break caching.
+                    if etype == "response.output_text.annotation.added":
                         continue
 
-                    # ─── when a tool STARTS ──────────────────────────────────────────────
-                    # Write status emitting for tool start
-                    if etype == "response.output_item.added":
-                        item       = event.get("item", {})
-                        item_type  = item.get("type", "")
+                    if etype == "response.reasoning_summary_text.done" and expandable_status_emitter:
+                        text = event.get("text", "")
+                        if text:
+                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
+                            title = title_match[-1].strip() if title_match else "Thinking…"
 
-                        # 1️⃣ map each type to a plain string template
-                        started: dict[str, str] = {
-                            "web_search_call"       : "🔍 Hmm, let me quickly check online…",
-                            "function_call"         : "🛠️ Running the {fn} tool…",
-                            "file_search_call"      : "📂 Let me skim those files…",
-                            "image_generation_call" : "🎨 Let me create that image…",
-                            "local_shell_call"      : "💻 Let me run that command…",
-                        }
-
-                        template = started.get(item_type)
-                        if template:
-                            # 2️⃣ Plug the function name in when it exists (ignored for other templates)
-                            description = template.format(fn=item.get("name", "a tool"))
-
-                            # 3️⃣ Emit the live-status message
-                            await self._emit_status(
-                                event_emitter,
-                                description=description,
-                                done=False,
+                            # No need to pass markdown; emitter updates buffer internally!
+                            await expandable_status_emitter.add_item(
+                                title="🧠 " + title,
+                                content=text,
                             )
-                            status_emitted = True
-                            
-                        yield ""  # Yield empty string to keep the stream alive
-                        continue # Continue to the next event
+
+                        continue
+
+                    # ─── Emit detailed tool status upon completion ────────────────────────
+                    if etype == "response.output_item.done":
+                        item = event.get("item", {})
+                        item_type = item.get("type", "")
+                        item_name = item.get("name", "unnamed_tool")
+
+                        # Skip irrelevant item types
+                        if item_type in ("message", "reasoning"):
+                            continue
+
+                        # Default empty content
+                        title = f"Running `{item_name}`"
+                        content = ""
+
+                        # Prepare detailed content per item_type
+                        if item_type == "function_call":
+                            title = f"🛠️ Running the {item_name} tool…"
+                            arguments = json.loads(item.get("arguments") or "{}")
+                            args_formatted = ", ".join(f"{k}={json.dumps(v)}" for k, v in arguments.items())
+                            content = f"```python\n{item_name}({args_formatted})\n```"
+
+                        elif item_type == "web_search_call":
+                            title = "🔍 Hmm, let me quickly check online…"
+
+                            # If action type is 'search', then set title to "🔍 Searching the web for [query]"
+                            action = item.get("action", {})
+                            if action.get("type") == "search":
+                                query = action.get("query")
+                                if query:
+                                    title = f"🔍 Searching the web for: `{query}`"
+                                else:
+                                    title = "🔍 Searching the web"
+
+                            # If action type is 'open_page', then set title to "🔍 Opening web page [url]"
+                            elif action.get("type") == "open_page":
+                                title = "🔍 Opening web page…"
+                                url = action.get("url")
+                                if url:
+                                    content = f"URL: `{url}`"
+
+                        elif item_type == "file_search_call":
+                            title = "📂 Let me skim those files…"
+                        elif item_type == "image_generation_call":
+                            title = "🎨 Let me create that image…"
+                        elif item_type == "local_shell_call":
+                            title = "💻 Let me run that command…"
+                        elif item_type == "mcp_call":
+                            title = "🌐 Let me query the MCP server…"
+
+                        # You can extend here easily for other tool types as needed
+
+                        # Emit the status with prepared title and detailed content
+                        await expandable_status_emitter.add_item(
+                            title=title,
+                            content=content,
+                        )
+
+                        continue
 
                     # ─── when a tool FINISHES ──────────────────────────────────────────────
                     if etype == "response.output_item.done":
                         item = event.get("item", {})
                         item_type = item.get("type", "")
-
-                        if item_type == "reasoning":
-                            parts = (
-                                "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-                                if reasoning_map else "Done thinking!" # TODO: handle empty reasoning case more intelligently
-                            )
-                            snippet = (
-                                f'<details type="{__name__}.reasoning" done="true">\n'
-                                f"<summary>Done thinking!</summary>\n{parts}</details>"
-                            )
-                            yield snippet
-                            reasoning_map.clear()
-                        else:
-                            yield "" # Yield empty string to keep the stream alive
 
                         # persist the item if it is not a message (function_call, reasoning, etc.)
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
@@ -708,7 +792,8 @@ class Pipe:
                                 openwebui_model,
                             )
                             if hidden_uid_marker:
-                                yield hidden_uid_marker
+                                final_output.write(hidden_uid_marker or "")
+                                await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
 
                         continue # Continue to the next event
 
@@ -740,7 +825,8 @@ class Pipe:
                             openwebui_model,
                         )
                         if hidden_uid_marker:
-                            yield hidden_uid_marker
+                            final_output.write(hidden_uid_marker or "")
+                            await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
                     body.input.extend(function_outputs)
                 else:
                     break
@@ -748,18 +834,14 @@ class Pipe:
         # Catch any exceptions during the streaming loop and emit an error
         except Exception as e:  # pragma: no cover - network errors
             await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
-            yield "" # Yield empty string to keep the stream alive
 
         finally:
-            if status_emitted:
-                # Emit final status to indicate completion
-                await self._emit_status(
-                    event_emitter,
-                    description="",
-                    done=True,
-                    hidden=False,
+            if expandable_status_emitter:
+                # Finalize the reasoning emitter
+                await expandable_status_emitter.add_item(
+                    title="Done!",
+                    done=True,  # Mark as done to close the expandable section
                 )
-                status_emitted = False
 
             if valves.LOG_LEVEL != "INHERIT":
                 if event_emitter:
@@ -778,6 +860,12 @@ class Pipe:
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
+
+            # Return the final output to ensure persistence.
+            # Frontend tracks emitted events and persists them after streaming ends.
+            # Explicitly returning the final output guarantees that the message 
+            # is saved, even if the user navigates away prematurely.
+            return final_output.getvalue()
 
     async def _run_nonstreaming_loop(
         self,
@@ -1260,10 +1348,14 @@ class Pipe:
 # 5. Utility Classes (Shared utilities)
 # ─────────────────────────────────────────────────────────────────────────────
 # Support classes used across the pipe implementation
+# In-memory store for debug logs keyed by message ID
+logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
+# Context variable tracking the current message being processed
+current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
 class SessionLogger:
     session_id = ContextVar("session_id", default=None)
     log_level = ContextVar("log_level", default=logging.INFO)
-    logs = defaultdict(lambda: deque(maxlen=1000))
+    logs = defaultdict(lambda: deque(maxlen=2000))
 
     @classmethod
     def get_logger(cls, name=__name__):
@@ -1294,11 +1386,113 @@ class SessionLogger:
 
         return logger
 
-# In-memory store for debug logs keyed by message ID
-logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
-# Context variable tracking the current message being processed
-current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
+class ExpandableStatusEmitter:
+    """
+    Emits and manages an expandable <details> status block.
+    Updates the provided StringIO buffer automatically.
+    """
 
+    def __init__(
+        self,
+        event_emitter: Callable[[Dict[str, object]], Awaitable[None]],
+        status_type: str,
+        *,
+        final_output: StringIO,  # <-- Inject final_output here
+        summary_prefix: str = "",
+        separator: str = "---",
+    ):
+        self.event_emitter = event_emitter
+        self.status_type = status_type
+        self.summary_prefix = summary_prefix
+        self.separator = separator
+        self.items: List[Tuple[str, str]] = []
+        self.done: bool = False
+        self.final_output = final_output
+        self._block_re = re.compile(
+            rf'^\s*<details type="{re.escape(self.status_type)}".*?</details>\s*',
+            re.DOTALL
+        )
+
+    async def add_item(
+        self,
+        title: str,
+        content: str = "",
+        *,
+        done: Optional[bool] = False,
+    ) -> None:
+        self.items.append((title, content))
+        if done is not None:
+            self.done = bool(done)
+        await self._emit_full()
+
+    async def finish(
+        self,
+        final_title: Optional[str] = None,
+    ) -> None:
+        if final_title:
+            self.items.append((final_title, ""))
+        self.done = True
+        await self._emit_full()
+
+    def reset(self) -> None:
+        self.items.clear()
+        self.done = False
+
+    async def _emit_full(self) -> None:
+        original = self.final_output.getvalue()
+        block = self._render_block()
+        updated = (
+            self._block_re.sub(block, original, count=1)
+            if self._block_re.match(original)
+            else f"{block}{original}"
+        )
+
+        # Update final_output directly
+        self.final_output.seek(0)
+        self.final_output.truncate(0)
+        self.final_output.write(updated)
+
+        # Emit to frontend
+        await self.event_emitter({"type": "chat:message", "data": {"content": updated}})
+
+    def _render_block(self) -> str:
+        lines = []
+
+        for idx, (title, body) in enumerate(self.items, 1):
+            body_clean = re.sub(r"^\*\*.*?\*\*\s*\n?", "", body.strip())
+
+            lines.append(f"- **Step {idx}: {title.strip('*')}**")
+
+            if body_clean:
+                if body_clean.strip().startswith("```"):
+                    # Indent code block as sub-bullet (2 spaces + dash + 1 space)
+                    indented_body = '\n'.join(
+                        f"      {line}" if i else f"    - {line}"
+                        for i, line in enumerate(body_clean.splitlines())
+                    )
+                    lines.append(indented_body)
+                else:
+                    indented_body = '\n'.join(
+                        f"    - {line.strip()}" for line in body_clean.splitlines() if line.strip()
+                    )
+                    lines.append(indented_body)
+
+        joined = "\n".join(lines) + "\n\n---"
+
+        summary = self.items[-1][0].strip('*')
+        summary_text = f"{self.summary_prefix}{summary}".strip()
+
+        return (
+            f'<details type="{self.status_type}" done="{str(self.done).lower()}">\n'
+            f"<summary>{summary_text}</summary>\n\n"
+            f"{joined}\n"
+            "</details>\n\n"
+        )
+
+    @staticmethod
+    def _latest_bold(text: str) -> Optional[str]:
+        matches = re.findall(r"\*\*(.+?)\*\*", text)
+        return matches[-1].strip() if matches else None
 
     
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,14 +1,17 @@
 """
-title: Web Search
+title: Web Search
 id: web_search_toggle_filter
-description: Toggle OpenAI web_search tool
+description: Instruct the model to search the web for the latest information.
 required_open_webui_version: 0.6.10
 version: 0.2.0
+
+Note: Works best with the OpenAI Responses manifold:
+      https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold
 """
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Models that already include the native web_search tool
 WEB_SEARCH_MODELS = {
@@ -16,14 +19,27 @@ WEB_SEARCH_MODELS = {
     "openai_responses.gpt-4.1-mini",
     "openai_responses.gpt-4o",
     "openai_responses.gpt-4o-mini",
+    "openai_responses.o3",
+    "openai_responses.o4-mini",
+    "openai_responses.o4-mini-high",
+    "openai_responses.o3-pro",
 }
 
+SUPPORT_TOOL_CHOICE_PARAMETER = {
+    "openai_responses.gpt-4.1",
+    "openai_responses.gpt-4.1-mini",
+    "openai_responses.gpt-4o",
+    "openai_responses.gpt-4o-mini",
+}
 
 class Filter:
     # ── User‑configurable knobs (valves) ──────────────────────────────
     class Valves(BaseModel):
         SEARCH_CONTEXT_SIZE: str = "medium"
         DEFAULT_SEARCH_MODEL: str = "openai_responses.gpt-4o"
+        priority: int = Field(
+            default=0, description="Priority level for the filter operations."
+        )
 
     def __init__(self) -> None:
         self.valves = self.Valves()
@@ -45,37 +61,36 @@ class Filter:
         __metadata__: Optional[dict] = None,
     ) -> Dict[str, Any]:
         
-        # Confirm that the reason_filter is not enabled.  if so, emit warning to user.
-        # It is in _metadata__["filter_ids"]
-        if __metadata__ is not None and "reason_filter" in __metadata__.get("filter_ids", []):
-            raise ValueError(
-                "You cannot use both the Search and Reason features at the same time. "
-                "Please turn off either the Search or Reason button, then press 🔄 Regenerate."
+        if __metadata__:
+            # Prevent using both Reason and Search simultaneously
+            if "reason_filter" in __metadata__.get("filter_ids", []):
+                raise ValueError(
+                    "You cannot use both the Search and Reason features simultaneously. "
+                    "Disable either Search or Reason, then press 🔄 Regenerate."
+                )
+
+            # Explicitly disable WebUI’s native search
+            __metadata__.setdefault("features", {}).update({"web_search": False})
+
+            # Activate the custom OpenAI Responses search feature
+            __metadata__["features"].setdefault("openai_responses", {})["web_search"] = True
+
+        # --- Tell the model to search (forced vs. gentle nudge)
+        if body.get("model") in SUPPORT_TOOL_CHOICE_PARAMETER:
+            body["tool_choice"] = {"type": "web_search_preview"}
+        else:
+            body.setdefault("messages", []).append(
+                {
+                    "role": "developer",
+                    "content": (
+                        "Web search is enabled. "
+                        "Use the `web_search` tool whenever you need fresh information."
+                    ),
+                }
             )
 
-        # Disable WebUI’s separate search feature so we control everything
-        if __metadata__ is not None:
-            __metadata__.setdefault("features", {})["web_search"] = False
-
-        # Ensure the model supports web_search; otherwise swap it
+        # Switch to default search-compatible model if needed
         if body.get("model") not in WEB_SEARCH_MODELS:
             body["model"] = self.valves.DEFAULT_SEARCH_MODEL
-
-        # Encourage the assistant to call the tool
-        body.setdefault("messages", []).append(
-            {
-                "role": "developer",
-                "content": (
-                    "Web search is enabled. "
-                    "Use the `web_search` tool whenever you need up‑to‑date information."
-                ),
-            }
-        )
-
-        # Enable __metadata__.features.openai_responses.web_search
-        if __metadata__ is not None:
-            features = __metadata__.setdefault("features", {})
-            features.setdefault("openai_responses", {})
-            features["openai_responses"]["web_search"] = True
 
         return body
