@@ -17,6 +17,7 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
+from ast import Tuple
 import asyncio
 import datetime
 import inspect
@@ -40,7 +41,6 @@ from pydantic import BaseModel, Field, model_validator
 # Open WebUI internals
 from open_webui.models.chats import Chats
 from open_webui.models.models import ModelForm, Models
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Constants & Global Configuration
@@ -639,7 +639,7 @@ class Pipe:
         # Send to OpenAI Responses API
         if responses_body.stream:
             # Return async generator for partial text
-            return self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            return await self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
         else:
             # Return final text (non-streaming)
             return await self._run_nonstreaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
@@ -652,24 +652,29 @@ class Pipe:
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]],
         metadata: dict[str, Any] = {},
         tools: Optional[Dict[str, Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[str, None]:
+    ):
         """Stream a conversation loop while maintaining Markdown integrity."""
 
         tools = tools or {}
         openwebui_model = metadata.get("model", {}).get("id", "")
-        reasoning_map: dict[int, str] = {}
         final_output = StringIO()
         total_usage: dict[str, Any] = {}
-        status_emitted = False
 
+        expandable_status_emitter = ExpandableStatusEmitter(
+            event_emitter,
+            status_type=f"{__name__}.expandable_status",
+            summary_prefix="",
+            separator="---",
+            final_output=final_output,  # ← pass your buffer here
+        )
+
+        # Emit initial "thinking" block:
+        # If reasoning model, write "Thinking…" to the expandable status emitter.
         if body.model in FEATURE_SUPPORT["reasoning"]:
-            snippet = (
-                f'<details type="{__name__}.reasoning" done="false">\n'
-                "<summary>🧠Thinking…</summary>\nHmm… just a moment while I gather my thoughts…"
-                "</details>"
+            await expandable_status_emitter.add_item(
+                title="🧠 Thinking…",
+                content="Reading the question and building a plan to answer it. This may take a moment.",
             )
-            if event_emitter:
-                await event_emitter({"type": "chat:completion", "data": {"content": snippet}})
 
         try:
             for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
@@ -684,136 +689,99 @@ class Pipe:
                     # efficienct check if debug logging is enabled. If so, log the event name
                     if self.logger.isEnabledFor(logging.DEBUG):
                         self.logger.debug("Received event: %s", etype)
+                        # if doesn't end in .delta, log the full event
+                        if not etype.endswith(".delta"):
+                            self.logger.debug("Event data: %s", json.dumps(event, indent=2, ensure_ascii=False))
 
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
                             final_output.write(delta)
-                            yield delta
+                            await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
                         continue
 
-                    if etype == "response.reasoning_summary_text.delta":
-                        idx = event.get("summary_index", 0)
-                        delta = event.get("delta", "")
-                        if delta:
-                            reasoning_map[idx] = reasoning_map.get(idx, "") + delta
-                            combined = "\n\n --- \n\n".join(
-                                reasoning_map[i] for i in sorted(reasoning_map)
-                            )
-                            titles = re.findall(r"\*\*(.+?)\*\*", combined)
-                            latest = titles[-1].strip() if titles else "Thinking..."
-                            snippet = (
-                                f"<details type=\"{__name__}.reasoning\" done=\"false\">\n"
-                                f"<summary>🧠{latest}</summary>\n"
-                                f"{combined}\n</details>"
-                            )
-                            if event_emitter:
-                                await event_emitter(
-                                    {"type": "chat:completion", "data": {"content": snippet}}
-                                )
-                            yield ""
+                    # Placeholder for annotation emitting
+                    # Note: If we emit annotation numbers (e.g., [1]), we will need to remove them before passing through the model as it will break caching.
+                    if etype == "response.output_text.annotation.added":
                         continue
 
-                    # ─── when a tool STARTS ──────────────────────────────────────────────
-                    # Write status emitting for tool start
-                    if etype == "response.output_item.added":
-                        item       = event.get("item", {})
-                        item_type  = item.get("type", "")
+                    if etype == "response.reasoning_summary_text.done" and expandable_status_emitter:
+                        text = event.get("text", "")
+                        if text:
+                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
+                            title = title_match[-1].strip() if title_match else "Thinking…"
 
-                        # if debug logging is enabled, log the item type
-                        if self.logger.isEnabledFor(logging.DEBUG):
-                            self.logger.debug("Output Item Added: %s", json.dumps(item))
-
-                        # 1️⃣ map each type to a plain string template
-                        started: dict[str, str] = {
-                            "web_search_call"       : "🔍 Hmm, let me quickly check online…",
-                            "function_call"         : "🛠️ Running the {fn} tool…",
-                            "file_search_call"      : "📂 Let me skim those files…",
-                            "image_generation_call" : "🎨 Let me create that image…",
-                            "local_shell_call"      : "💻 Let me run that command…",
-                            "mcp_call"              : "🌐 Let me query the MCP server…",
-                        }
-
-                        template = started.get(item_type)
-                        if template:
-                            # 2️⃣ Plug the function name in when it exists (ignored for other templates)
-                            description = template.format(fn=item.get("name", "a tool"))
-
-                            # 3️⃣ Emit the live-status message
-                            await self._emit_status(
-                                event_emitter,
-                                description=description,
-                                done=False,
+                            # No need to pass markdown; emitter updates buffer internally!
+                            await expandable_status_emitter.add_item(
+                                title="🧠 " + title,
+                                content=text,
                             )
-                            status_emitted = True
-                            
-                        yield ""  # Yield empty string to keep the stream alive
-                        continue # Continue to the next event
 
-                    if etype == "response.mcp_approval_request":
-                        approval_request = event.get("item", {})
+                        continue
 
-                        self._emit_error(
-                            event_emitter,
-                            "MCP tool approval request received. This feature is not yet implemented.",
-                            show_error_message=True,
-                            show_error_log_citation=True,
+                    # ─── Emit detailed tool status upon completion ────────────────────────
+                    if etype == "response.output_item.done":
+                        item = event.get("item", {})
+                        item_type = item.get("type", "")
+                        item_name = item.get("name", "unnamed_tool")
+
+                        # Skip irrelevant item types
+                        if item_type in ("message", "reasoning"):
+                            continue
+
+                        # Default empty content
+                        title = f"Running `{item_name}`"
+                        content = ""
+
+                        # Prepare detailed content per item_type
+                        if item_type == "function_call":
+                            title = f"🛠️ Running the {item_name} tool…"
+                            arguments = json.loads(item.get("arguments") or "{}")
+                            args_formatted = ", ".join(f"{k}={json.dumps(v)}" for k, v in arguments.items())
+                            content = f"```python\n{item_name}({args_formatted})\n```"
+
+                        elif item_type == "web_search_call":
+                            title = "🔍 Hmm, let me quickly check online…"
+
+                            # If action type is 'search', then set title to "🔍 Searching the web for [query]"
+                            action = item.get("action", {})
+                            if action.get("type") == "search":
+                                query = action.get("query")
+                                if query:
+                                    title = f"🔍 Searching the web for: `{query}`"
+                                else:
+                                    title = "🔍 Searching the web"
+
+                            # If action type is 'open_page', then set title to "🔍 Opening web page [url]"
+                            elif action.get("type") == "open_page":
+                                title = "🔍 Opening web page…"
+                                url = action.get("url")
+                                if url:
+                                    content = f"URL: `{url}`"
+
+                        elif item_type == "file_search_call":
+                            title = "📂 Let me skim those files…"
+                        elif item_type == "image_generation_call":
+                            title = "🎨 Let me create that image…"
+                        elif item_type == "local_shell_call":
+                            title = "💻 Let me run that command…"
+                        elif item_type == "mcp_call":
+                            title = "🌐 Let me query the MCP server…"
+
+                        # You can extend here easily for other tool types as needed
+
+                        # Emit the status with prepared title and detailed content
+                        await expandable_status_emitter.add_item(
+                            title=title,
+                            content=content,
                         )
 
-                        """
-                        # PLACEHOLDER CODE FOR MCP APPROVAL REQUEST HANDLING.  Not yet implemented
-                        user_choice = await event_call(
-                            {
-                                "type": "input",
-                                "data": {
-                                    "title": "Approve Remote MCP Tool?",
-                                    "message": (
-                                        f"**Server**: {approval_request.get('server_label')}\n"
-                                        f"**Tool**: `{approval_request.get('name')}`\n\n"
-                                        "Arguments:\n"
-                                        f"```json\n{pretty_args}\n```\n"
-                                        "Type **y** to approve or **n** to reject."
-                                    ),
-                                    "placeholder": "y / n",
-                                },
-                            }
-                        )
-
-                        approve = str(user_choice).strip().lower().startswith("y")
-                        await self._emit_notification(
-                            event_emitter,
-                            f"{'Approved' if approve else 'Rejected'} call to "
-                            f"{approval_request.get('name')} on {approval_request.get('server_label')}.",
-                            level="success" if approve else "warning",
-                        )
-
-                        return {
-                            "type": "mcp_approval_response",
-                            "approval_request_id": approval_request["id"],
-                            "approve": approve,
-                        }
-                        """
-                        yield ""
-                        continue # Continue to the next event
+                        continue
 
                     # ─── when a tool FINISHES ──────────────────────────────────────────────
                     if etype == "response.output_item.done":
                         item = event.get("item", {})
                         item_type = item.get("type", "")
-
-                        if item_type == "reasoning":
-                            parts = (
-                                "\n\n --- \n\n".join(reasoning_map[i] for i in sorted(reasoning_map))
-                                if reasoning_map else "Done thinking!" # TODO: handle empty reasoning case more intelligently
-                            )
-                            snippet = (
-                                f'<details type="{__name__}.reasoning" done="true">\n'
-                                f"<summary>Done thinking!</summary>\n{parts}</details>"
-                            )
-                            yield snippet
-                            reasoning_map.clear()
-                        else:
-                            yield "" # Yield empty string to keep the stream alive
 
                         # persist the item if it is not a message (function_call, reasoning, etc.)
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
@@ -824,7 +792,8 @@ class Pipe:
                                 openwebui_model,
                             )
                             if hidden_uid_marker:
-                                yield hidden_uid_marker
+                                final_output.write(hidden_uid_marker or "")
+                                await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
 
                         continue # Continue to the next event
 
@@ -856,7 +825,8 @@ class Pipe:
                             openwebui_model,
                         )
                         if hidden_uid_marker:
-                            yield hidden_uid_marker
+                            final_output.write(hidden_uid_marker or "")
+                            await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
                     body.input.extend(function_outputs)
                 else:
                     break
@@ -864,18 +834,14 @@ class Pipe:
         # Catch any exceptions during the streaming loop and emit an error
         except Exception as e:  # pragma: no cover - network errors
             await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
-            yield "" # Yield empty string to keep the stream alive
 
         finally:
-            if status_emitted:
-                # Emit final status to indicate completion
-                await self._emit_status(
-                    event_emitter,
-                    description="",
-                    done=True,
-                    hidden=False,
+            if expandable_status_emitter:
+                # Finalize the reasoning emitter
+                await expandable_status_emitter.add_item(
+                    title="Done!",
+                    done=True,  # Mark as done to close the expandable section
                 )
-                status_emitted = False
 
             if valves.LOG_LEVEL != "INHERIT":
                 if event_emitter:
@@ -894,6 +860,12 @@ class Pipe:
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
+
+            # Return the final output to ensure persistence.
+            # Frontend tracks emitted events and persists them after streaming ends.
+            # Explicitly returning the final output guarantees that the message 
+            # is saved, even if the user navigates away prematurely.
+            return final_output.getvalue()
 
     async def _run_nonstreaming_loop(
         self,
@@ -1376,6 +1348,10 @@ class Pipe:
 # 5. Utility Classes (Shared utilities)
 # ─────────────────────────────────────────────────────────────────────────────
 # Support classes used across the pipe implementation
+# In-memory store for debug logs keyed by message ID
+logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
+# Context variable tracking the current message being processed
+current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
 class SessionLogger:
     session_id = ContextVar("session_id", default=None)
     log_level = ContextVar("log_level", default=logging.INFO)
@@ -1410,11 +1386,113 @@ class SessionLogger:
 
         return logger
 
-# In-memory store for debug logs keyed by message ID
-logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
-# Context variable tracking the current message being processed
-current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
+class ExpandableStatusEmitter:
+    """
+    Emits and manages an expandable <details> status block.
+    Updates the provided StringIO buffer automatically.
+    """
 
+    def __init__(
+        self,
+        event_emitter: Callable[[Dict[str, object]], Awaitable[None]],
+        status_type: str,
+        *,
+        final_output: StringIO,  # <-- Inject final_output here
+        summary_prefix: str = "",
+        separator: str = "---",
+    ):
+        self.event_emitter = event_emitter
+        self.status_type = status_type
+        self.summary_prefix = summary_prefix
+        self.separator = separator
+        self.items: List[Tuple[str, str]] = []
+        self.done: bool = False
+        self.final_output = final_output
+        self._block_re = re.compile(
+            rf'^\s*<details type="{re.escape(self.status_type)}".*?</details>\s*',
+            re.DOTALL
+        )
+
+    async def add_item(
+        self,
+        title: str,
+        content: str = "",
+        *,
+        done: Optional[bool] = False,
+    ) -> None:
+        self.items.append((title, content))
+        if done is not None:
+            self.done = bool(done)
+        await self._emit_full()
+
+    async def finish(
+        self,
+        final_title: Optional[str] = None,
+    ) -> None:
+        if final_title:
+            self.items.append((final_title, ""))
+        self.done = True
+        await self._emit_full()
+
+    def reset(self) -> None:
+        self.items.clear()
+        self.done = False
+
+    async def _emit_full(self) -> None:
+        original = self.final_output.getvalue()
+        block = self._render_block()
+        updated = (
+            self._block_re.sub(block, original, count=1)
+            if self._block_re.match(original)
+            else f"{block}{original}"
+        )
+
+        # Update final_output directly
+        self.final_output.seek(0)
+        self.final_output.truncate(0)
+        self.final_output.write(updated)
+
+        # Emit to frontend
+        await self.event_emitter({"type": "chat:message", "data": {"content": updated}})
+
+    def _render_block(self) -> str:
+        lines = []
+
+        for idx, (title, body) in enumerate(self.items, 1):
+            body_clean = re.sub(r"^\*\*.*?\*\*\s*\n?", "", body.strip())
+
+            lines.append(f"- **Step {idx}: {title.strip('*')}**")
+
+            if body_clean:
+                if body_clean.strip().startswith("```"):
+                    # Indent code block as sub-bullet (2 spaces + dash + 1 space)
+                    indented_body = '\n'.join(
+                        f"      {line}" if i else f"    - {line}"
+                        for i, line in enumerate(body_clean.splitlines())
+                    )
+                    lines.append(indented_body)
+                else:
+                    indented_body = '\n'.join(
+                        f"    - {line.strip()}" for line in body_clean.splitlines() if line.strip()
+                    )
+                    lines.append(indented_body)
+
+        joined = "\n".join(lines) + "\n\n---"
+
+        summary = self.items[-1][0].strip('*')
+        summary_text = f"{self.summary_prefix}{summary}".strip()
+
+        return (
+            f'<details type="{self.status_type}" done="{str(self.done).lower()}">\n'
+            f"<summary>{summary_text}</summary>\n\n"
+            f"{joined}\n"
+            "</details>\n\n"
+        )
+
+    @staticmethod
+    def _latest_bold(text: str) -> Optional[str]:
+        matches = re.findall(r"\*\*(.+?)\*\*", text)
+        return matches[-1].strip() if matches else None
 
     
 # ─────────────────────────────────────────────────────────────────────────────

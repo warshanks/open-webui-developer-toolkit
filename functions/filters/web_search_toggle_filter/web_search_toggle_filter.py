@@ -22,6 +22,7 @@ WEB_SEARCH_MODELS = {
     "openai_responses.o3",
     "openai_responses.o4-mini",
     "openai_responses.o4-mini-high",
+    "openai_responses.o3-pro",
 }
 
 SUPPORT_TOOL_CHOICE_PARAMETER = {
