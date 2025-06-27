@@ -67,6 +67,9 @@ class Filter:
             # Activate the custom OpenAI Responses search feature
             __metadata__["features"].setdefault("openai_responses", {})["web_search"] = True
 
+            # Set tool_choice to 'web_search' to ensure the model uses the web search tool
+            body["tool_choice"] = {"type": "web_search_preview"}
+
         # Switch to default search-compatible model if needed
         if body.get("model") not in WEB_SEARCH_MODELS:
             body["model"] = self.valves.DEFAULT_SEARCH_MODEL

@@ -589,10 +589,6 @@ class Pipe:
                 "user_location": {"type": "approximate","country": "CA","city": "Langley","region": "BC"} # Temp hardcode until I implement a more elegant way to handle this.
             })
 
-            # Web Search button explicitly enabled; force tool_choice to 'required' to ensure it is always called.
-            if features.get("web_search", False):
-                responses_body.tool_choice = {"type": "web_search_preview"}
-
         # Append remote MCP servers (experimental)
         if valves.REMOTE_MCP_SERVERS_JSON:
             mcp_tools = ResponsesBody._build_mcp_tools(valves.REMOTE_MCP_SERVERS_JSON)
