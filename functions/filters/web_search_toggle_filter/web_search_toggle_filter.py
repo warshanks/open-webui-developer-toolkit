@@ -8,7 +8,7 @@ version: 0.2.0
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Models that already include the native web_search tool
 WEB_SEARCH_MODELS = {
@@ -24,6 +24,9 @@ class Filter:
     class Valves(BaseModel):
         SEARCH_CONTEXT_SIZE: str = "medium"
         DEFAULT_SEARCH_MODEL: str = "openai_responses.gpt-4o"
+        priority: int = Field(
+            default=0, description="Priority level for the filter operations."
+        )
 
     def __init__(self) -> None:
         self.valves = self.Valves()

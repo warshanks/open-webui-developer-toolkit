@@ -42,7 +42,6 @@ from open_webui.models.chats import Chats
 from open_webui.models.models import ModelForm, Models
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Constants & Global Configuration
 # ─────────────────────────────────────────────────────────────────────────────
