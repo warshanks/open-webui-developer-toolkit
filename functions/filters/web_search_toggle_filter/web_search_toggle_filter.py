@@ -1,9 +1,11 @@
 """
-title: Web Search
+title: Web Search
 id: web_search_toggle_filter
-description: Toggle OpenAI web_search tool
+description: Instruct the model to search the web for the latest information.
 required_open_webui_version: 0.6.10
 version: 0.2.0
+
+NOTE: This filter is designed to work with OpenAI Responses manifold (https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold)
 """
 from __future__ import annotations
 
@@ -51,26 +53,22 @@ class Filter:
         __metadata__: Optional[dict] = None,
     ) -> Dict[str, Any]:
         
-        # Confirm that the reason_filter is not enabled.  if so, emit warning to user.
-        # It is in _metadata__["filter_ids"]
-        if __metadata__ is not None and "reason_filter" in __metadata__.get("filter_ids", []):
-            raise ValueError(
-                "You cannot use both the Search and Reason features at the same time. "
-                "Please turn off either the Search or Reason button, then press 🔄 Regenerate."
-            )
+        if __metadata__:
+            # Prevent using both Reason and Search simultaneously
+            if "reason_filter" in __metadata__.get("filter_ids", []):
+                raise ValueError(
+                    "You cannot use both the Search and Reason features simultaneously. "
+                    "Disable either Search or Reason, then press 🔄 Regenerate."
+                )
 
-        # Disable WebUI’s separate search feature so we control everything
-        if __metadata__ is not None:
-            __metadata__.setdefault("features", {})["web_search"] = False
+            # Explicitly disable WebUI’s native search
+            __metadata__.setdefault("features", {}).update({"web_search": False})
 
-        # Ensure the model supports web_search; otherwise swap it
+            # Activate the custom OpenAI Responses search feature
+            __metadata__["features"].setdefault("openai_responses", {})["web_search"] = True
+
+        # Switch to default search-compatible model if needed
         if body.get("model") not in WEB_SEARCH_MODELS:
             body["model"] = self.valves.DEFAULT_SEARCH_MODEL
-
-        # Enable __metadata__.features.openai_responses.web_search
-        if __metadata__ is not None:
-            features = __metadata__.setdefault("features", {})
-            features.setdefault("openai_responses", {})
-            features["openai_responses"]["web_search"] = True
 
         return body
