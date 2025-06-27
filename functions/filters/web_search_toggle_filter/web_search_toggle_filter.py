@@ -16,6 +16,9 @@ WEB_SEARCH_MODELS = {
     "openai_responses.gpt-4.1-mini",
     "openai_responses.gpt-4o",
     "openai_responses.gpt-4o-mini",
+    "openai_responses.o3",
+    "openai_responses.o4-mini",
+    "openai_responses.o4-mini-high",
 }
 
 
@@ -63,17 +66,6 @@ class Filter:
         # Ensure the model supports web_search; otherwise swap it
         if body.get("model") not in WEB_SEARCH_MODELS:
             body["model"] = self.valves.DEFAULT_SEARCH_MODEL
-
-        # Encourage the assistant to call the tool
-        body.setdefault("messages", []).append(
-            {
-                "role": "developer",
-                "content": (
-                    "Web search is enabled. "
-                    "Use the `web_search` tool whenever you need up‑to‑date information."
-                ),
-            }
-        )
 
         # Enable __metadata__.features.openai_responses.web_search
         if __metadata__ is not None:
