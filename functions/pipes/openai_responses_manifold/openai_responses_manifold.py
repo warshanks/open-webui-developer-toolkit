@@ -298,7 +298,7 @@ class ResponsesBody(BaseModel):
         # Build the OpenAI input array
         openai_input: list[dict] = []
         for msg in messages:
-            role = msg.get("role", "assistant")
+            role = msg.get("role")
             raw_content = msg.get("content", "")
 
             # Skip system messages; they belong in `instructions`
@@ -320,12 +320,20 @@ class ResponsesBody(BaseModel):
                 }
 
                 openai_input.append({
-                    "type": "message",
                     "role": "user",
                     "content": [
                         block_transform.get(block.get("type"), lambda b: b)(block)
                         for block in content_blocks if block
                     ],
+                })
+                continue
+
+            # -------- developer message --------------------------------- #
+            # Developer messages are treated as system messages in Responses API
+            if role == "developer":
+                openai_input.append({
+                    "role": "developer",
+                    "content": raw_content,
                 })
                 continue
 
@@ -347,7 +355,6 @@ class ResponsesBody(BaseModel):
                             logging.warning(f"Missing persisted item for ID: {mk['ulid']}")
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
-                            "type": "message",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": segment["text"].strip()}]
                         })
@@ -356,7 +363,6 @@ class ResponsesBody(BaseModel):
                 if content:
                     openai_input.append(
                         {
-                            "type": "message",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": content}],
                         }

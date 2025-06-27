@@ -5,7 +5,8 @@ description: Instruct the model to search the web for the latest information.
 required_open_webui_version: 0.6.10
 version: 0.2.0
 
-NOTE: This filter is designed to work with OpenAI Responses manifold (https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold)
+Note: Works best with the OpenAI Responses manifold:
+      https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold
 """
 from __future__ import annotations
 
@@ -23,6 +24,12 @@ WEB_SEARCH_MODELS = {
     "openai_responses.o4-mini-high",
 }
 
+SUPPORT_TOOL_CHOICE_PARAMETER = {
+    "openai_responses.gpt-4.1",
+    "openai_responses.gpt-4.1-mini",
+    "openai_responses.gpt-4o",
+    "openai_responses.gpt-4o-mini",
+}
 
 class Filter:
     # ── User‑configurable knobs (valves) ──────────────────────────────
@@ -67,8 +74,19 @@ class Filter:
             # Activate the custom OpenAI Responses search feature
             __metadata__["features"].setdefault("openai_responses", {})["web_search"] = True
 
-            # Set tool_choice to 'web_search' to ensure the model uses the web search tool
+        # --- Tell the model to search (forced vs. gentle nudge)
+        if body.get("model") in SUPPORT_TOOL_CHOICE_PARAMETER:
             body["tool_choice"] = {"type": "web_search_preview"}
+        else:
+            body.setdefault("messages", []).append(
+                {
+                    "role": "developer",
+                    "content": (
+                        "Web search is enabled. "
+                        "Use the `web_search` tool whenever you need fresh information."
+                    ),
+                }
+            )
 
         # Switch to default search-compatible model if needed
         if body.get("model") not in WEB_SEARCH_MODELS:
