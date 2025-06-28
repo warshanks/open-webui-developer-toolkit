@@ -748,7 +748,7 @@ class Pipe:
                         item_name = item.get("name", "unnamed_tool")
 
                         # Skip irrelevant item types
-                        if item_type in ("message", "reasoning"):
+                        if item_type in ("message"):
                             continue
 
                         # Default empty content
@@ -789,6 +789,8 @@ class Pipe:
                             title = "💻 Let me run that command…"
                         elif item_type == "mcp_call":
                             title = "🌐 Let me query the MCP server…"
+                        elif item_type == "reasoning":
+                            title = "🧠 Thinking…"
 
                         # You can extend here easily for other tool types as needed
 
@@ -806,8 +808,8 @@ class Pipe:
                                 [item],
                                 openwebui_model,
                             )
-                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             if hidden_uid_marker:
+                                self.logger.debug("Persisted item: %s", hidden_uid_marker)
                                 final_output.write(hidden_uid_marker or "")
                                 await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
 
@@ -1429,7 +1431,7 @@ class ExpandableStatusEmitter:
         self.done: bool = False
         self.final_output = final_output
         self._block_re = re.compile(
-            rf'^\s*<details type="{re.escape(self.status_type)}".*?</details>\s*',
+            rf'^(?P<pre>\s*)<details type="{re.escape(self.status_type)}".*?</details>(?P<post>\s*)',
             re.DOTALL
         )
 
@@ -1461,11 +1463,16 @@ class ExpandableStatusEmitter:
     async def _emit_full(self) -> None:
         original = self.final_output.getvalue()
         block = self._render_block()
-        updated = (
-            self._block_re.sub(block, original, count=1)
-            if self._block_re.match(original)
-            else f"{block}{original}"
-        )
+
+        match = self._block_re.match(original)
+        if match:
+            updated = self._block_re.sub(
+                lambda m: f"{m.group('pre')}{block}{m.group('post')}",
+                original,
+                count=1,
+            )
+        else:
+            updated = f"{block}{original}"
 
         # Update final_output directly
         self.final_output.seek(0)
