@@ -1,41 +1,47 @@
 """
-title: Invisible Message Encoding
-id: invisible_message_encoding_pipe
-description:
-    Persist a secret by embedding it in a markdown comment so it remains hidden
-    from the UI. Simply place the text between square brackets followed by
-    ``: #`` – for example ``[my secret]: #``. Earlier versions used a more
-    complex ``[hidden_secret:v1:<b64>]`` format, but this example keeps the
-    concept simple and easy to understand.
+title: Invisible Message Encoder
+id: invisible_message_encoder
+description: Embed a secret message in markdown comments, keeping it invisible from the UI.
 author: Justin Kropp
 version: 2.5.1
 license: MIT
+
+Notes:
+    To encode, simply place your secret between brackets followed by ': #'
+    (e.g., `[your secret message]: #`). Previous formats used complex encodings, but this
+    approach is straightforward and intuitive.
 """
 
 import re
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
-# ——— helpers ——————————————————————————————————
+# ——— Helper Functions ————————————————————————
 
-COMMENT_RE = re.compile(r"\[([^\n\]]+)\]: #")
+HIDDEN_MESSAGE_REGEX = re.compile(r"\[([^\]]+)\]: #")
 
-def encode_hidden_comment(secret: str) -> str:
-    """Return a newline wrapped comment carrying *secret*."""
+
+def hide_message(secret: str) -> str:
+    """Wraps the secret message in a markdown comment."""
     return f"\n[{secret}]: #\n"
 
-def decode_hidden_comment(md: str) -> str | None:
-    """Extract the first hidden-comment payload in *md*."""
-    if m := COMMENT_RE.search(md):
-        return m.group(1)
+
+def reveal_message(markdown: str) -> str | None:
+    """Extracts the first hidden message from markdown, if present."""
+    match = HIDDEN_MESSAGE_REGEX.search(markdown)
+    return match.group(1) if match else None
+
+
+def find_latest_hidden_message(messages: list[dict[str, Any]]) -> str | None:
+    """Finds the most recent hidden message from message history."""
+    for message in reversed(messages):
+        content = message.get("content", "")
+        if hidden_message := reveal_message(content):
+            return hidden_message
     return None
 
-def find_secret(messages) -> str | None:
-    for msg in reversed(messages):
-        if secret := decode_hidden_comment(msg.get("content", "")):
-            return secret
-    return None
 
-# ——— Pipe ———————————————————————————————————
+# ——— Main Pipe Logic ——————————————————————————
+
 
 class Pipe:
     async def pipe(
@@ -47,31 +53,34 @@ class Pipe:
         *_,
     ) -> AsyncGenerator[str, None]:
 
-        # 1 — decode if a previous secret exists
-        if (secret := find_secret(body.get("messages", []))) is not None:
-            yield f"🔓 **Decoded message:** `{secret}`"
+        # Step 1: Check if there's a hidden message to reveal
+        previous_messages = body.get("messages", [])
+        hidden_message = find_latest_hidden_message(previous_messages)
+
+        if hidden_message:
+            yield f"🔓 **Your hidden message:** `{hidden_message}`"
             return
 
-        # 2 — prompt user for a new secret
+        # Step 2: Prompt user to input a new secret message
         user_input = await __event_call__(
             {
                 "type": "input",
                 "data": {
-                    "title": "Enter a secret message",
-                    "message": "Type something you'd like to hide invisibly.",
-                    "placeholder": "Your hidden message…",
+                    "title": "Encode a Hidden Message",
+                    "message": "Enter the message you'd like to hide:",
+                    "placeholder": "Your secret here…",
                 },
             }
         )
 
         if not user_input:
-            yield "⚠️ No message provided!"
+            yield "⚠️ **No message provided.** Please try again."
             return
 
-        # 3 — confirm and embed the invisible comment
-        hidden_comment = encode_hidden_comment(user_input)
+        # Step 3: Embed the user's secret message invisibly
+        hidden_markdown_comment = hide_message(user_input)
         yield (
-            "✨ Your message has been **encoded invisibly** in this response. "
-            "Send another message to decode it.\n"
-            f"{hidden_comment}"
+            "✨ **Message encoded successfully!** It is now hidden in this response. "
+            "To decode it, send another message.\n"
+            f"{hidden_markdown_comment}"
         )
