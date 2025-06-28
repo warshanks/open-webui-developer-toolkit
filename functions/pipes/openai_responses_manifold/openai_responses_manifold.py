@@ -599,7 +599,7 @@ class Pipe:
             responses_body.tools.append({
                 "type": "web_search_preview",
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                **({"search_user_location": json.loads(valves.SEARCH_USER_LOCATION)} if valves.SEARCH_USER_LOCATION else {}),
+                **({"user_location": json.loads(valves.SEARCH_USER_LOCATION)} if valves.SEARCH_USER_LOCATION else {}),
             })
 
         # Append remote MCP servers (experimental)
