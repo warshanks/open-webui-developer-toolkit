@@ -2,27 +2,13 @@
 title: Invisible Message Encoding
 id: invisible_message_encoding_pipe
 description:
-    Hides a secret with an empty-text Markdown link, e.g. [](secret).
-    The link renders as a zero-sized <a> tag, so nothing appears on-screen.
-    • No extra blank line: the collapsed anchor's margins merge with the block
-      that follows.
-    • Never breaks headings or lists (a risk with zero-width characters).
-    • Easy to process: one regex  r"\[\]\(([^)\s]+)\)"  finds or strips it.
-notes:
-    USE-CASES
-      • Heading      – link collapses, heading renders:
-            [](topSecret1)
-            # Quarterly Results
-      • Many secrets – stack links, still invisible:
-            [](topSecret1)
-            [](topSecret2)
-            [](topSecret3)
-            ## Roadmap
-      • Inline text  – link adds no spacing:
-            Please review [](topSecret1) ASAP.
-    Clipboard: the raw  [](topSecret1)  string is copied; strip with r"\[\]\([^)]+\)" if you need a clean export.
+    Persist a secret by embedding it in a markdown comment so it remains hidden
+    from the UI. Simply place the text between square brackets followed by
+    ``: #`` – for example ``[my secret]: #``. Earlier versions used a more
+    complex ``[hidden_secret:v1:<b64>]`` format, but this example keeps the
+    concept simple and easy to understand.
 author: Justin Kropp
-version: 2.5.0
+version: 2.5.1
 license: MIT
 """
 
@@ -31,20 +17,21 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 
 # ——— helpers ——————————————————————————————————
 
-LINK_RE = re.compile(r"\[\]\(([^)\s]+)\)")
+COMMENT_RE = re.compile(r"\[([^\n\]]+)\]: #")
 
-def encode_hidden_link(secret: str) -> str:
-    """Return an invisible link line carrying *secret*."""
-    return f"[]({secret})\n"          # one newline → no extra spacer
+def encode_hidden_comment(secret: str) -> str:
+    """Return a newline wrapped comment carrying *secret*."""
+    return f"\n[{secret}]: #\n"
 
-def decode_hidden_link(md: str) -> str | None:
-    """Extract the first hidden-link payload in *md*."""
-    m = LINK_RE.search(md)
-    return m.group(1) if m else None
+def decode_hidden_comment(md: str) -> str | None:
+    """Extract the first hidden-comment payload in *md*."""
+    if m := COMMENT_RE.search(md):
+        return m.group(1)
+    return None
 
 def find_secret(messages) -> str | None:
     for msg in reversed(messages):
-        if secret := decode_hidden_link(msg.get("content", "")):
+        if secret := decode_hidden_comment(msg.get("content", "")):
             return secret
     return None
 
@@ -81,12 +68,10 @@ class Pipe:
             yield "⚠️ No message provided!"
             return
 
-        # 3 — confirm and embed the invisible link
-        hidden_link = encode_hidden_link(user_input)
+        # 3 — confirm and embed the invisible comment
+        hidden_comment = encode_hidden_comment(user_input)
         yield (
             "✨ Your message has been **encoded invisibly** in this response. "
             "Send another message to decode it.\n"
-            f"{hidden_link}"
+            f"{hidden_comment}"
         )
-
-        yield "\n[](topSecret1)\n# test"
