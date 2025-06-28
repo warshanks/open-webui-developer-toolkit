@@ -52,25 +52,8 @@ def test_marker_roundtrip():
     assert segments[-1]["text"].strip().endswith("post")
 
 
-def test_persistence_fetch_and_input(monkeypatch):
-    storage = {}
-
-    class DummyChatModel:
-        def __init__(self, chat=None):
-            self.chat = chat or {"history": {"messages": {}}}
-
-    class DummyChats:
-        @staticmethod
-        def get_chat_by_id(cid):
-            return DummyChatModel(storage.get(cid, {"history": {"messages": {}}}))
-
-        @staticmethod
-        def update_chat_by_id(cid, chat):
-            storage[cid] = chat
-            return DummyChatModel(chat)
-
-    monkeypatch.setattr(mod, "Chats", DummyChats)
-
+def test_persistence_fetch_and_input(dummy_chats):
+    dummy_chats["c1"] = {"history": {"messages": {}}}
     marker1 = mod.persist_openai_response_items(
         "c1",
         "m1",
