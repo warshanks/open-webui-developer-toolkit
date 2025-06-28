@@ -460,17 +460,17 @@ class Pipe:
         )
         ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
-            description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+            description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for unsupported models. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
-        ENABLE_AUTO_WEB_SEARCH_TOOL: bool = Field(
+        ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
-        SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
+        WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
-            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_AUTO_WEB_SEARCH_TOOL=True.",
+            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH_TOOL=True.",
         )
-        SEARCH_USER_LOCATION: Optional[str] = Field(
+        WEB_SEARCH_USER_LOCATION: Optional[str] = Field(
             default=None,
             description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
         )
@@ -482,9 +482,23 @@ class Pipe:
             default="auto",
             description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
-        MAX_TOOL_CALL_LOOPS: int = Field(
+        MAX_TOOL_CALLS: Optional[int] = Field(
+            default=None,
+            description=(
+                "Maximum number of individual tool or function calls the model can make "
+                "within a single response. Applies to the total number of calls across "
+                "all built-in tools. Further tool-call attempts beyond this limit will be ignored."
+            )
+        )
+        MAX_FUNCTION_CALL_LOOPS: int = Field(
             default=5,
-            description="Maximum number of tool calls the model can make in a single request. This is a hard stop safety limit to prevent infinite loops. Defaults to 5.",
+            description=(
+                "Maximum number of full execution cycles (loops) allowed per request. "
+                "Each loop involves the model generating one or more function/tool calls, "
+                "executing all requested functions, and feeding the results back into the model. "
+                "Looping stops when this limit is reached or when the model no longer requests "
+                "additional tool or function calls."
+            )
         )
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
@@ -575,6 +589,7 @@ class Pipe:
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
             user=user_identifier,
+            **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
@@ -594,12 +609,12 @@ class Pipe:
             )
 
         # Add web_search tool, if supported and enabled.
-        if model_family in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
+        if model_family in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False)):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search_preview",
-                "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                **({"user_location": json.loads(valves.SEARCH_USER_LOCATION)} if valves.SEARCH_USER_LOCATION else {}),
+                "WEB_SEARCH_CONTEXT_SIZE": valves.WEB_SEARCH_CONTEXT_SIZE,
+                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}), # Consider using Open WebUI User's location if available instead.
             })
 
         # Append remote MCP servers (experimental)
