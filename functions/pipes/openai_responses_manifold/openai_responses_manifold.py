@@ -573,6 +573,9 @@ class Pipe:
             user=user_identifier,
         )
 
+        # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
+
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
@@ -587,7 +590,7 @@ class Pipe:
             )
 
         # Add web_search tool, if supported and enabled.
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
+        if model_family in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search_preview",
@@ -604,7 +607,7 @@ class Pipe:
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
         if __tools__ and __metadata__.get("function_calling") != "native":
-            supports_function_calling = responses_body.model in FEATURE_SUPPORT["function_calling"]
+            supports_function_calling = model_family in FEATURE_SUPPORT["function_calling"]
 
             if supports_function_calling:
                 await self._emit_notification(
@@ -622,14 +625,14 @@ class Pipe:
                 return
             
         # Enable reasoning summary, if supported and enabled
-        if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
             responses_body.reasoning = responses_body.reasoning or {}
             responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
         # Enable persistence of encrypted reasoning tokens, if supported and store=False
         # TODO make this configurable via valves since some orgs might not be approved for encrypted content
         # Note storing encrypted contents is only supported when store = False
-        if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+        if model_family in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
 
@@ -670,7 +673,8 @@ class Pipe:
 
         # Emit initial "thinking" block:
         # If reasoning model, write "Thinking…" to the expandable status emitter.
-        if body.model in FEATURE_SUPPORT["reasoning"]:
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
+        if model_family in FEATURE_SUPPORT["reasoning"]:
             await expandable_status_emitter.add_item(
                 title="🧠 Thinking…",
                 content="Reading the question and building a plan to answer it. This may take a moment.",
