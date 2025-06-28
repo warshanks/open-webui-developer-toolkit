@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.14
+version: 0.8.15
 license: MIT
 """
 
@@ -460,15 +460,19 @@ class Pipe:
         )
         ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
-            description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for others. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+            description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for unsupported models. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
-        ENABLE_AUTO_WEB_SEARCH_TOOL: bool = Field(
+        ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
-        SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
+        WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
-            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_AUTO_WEB_SEARCH_TOOL=True.",
+            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH_TOOL=True.",
+        )
+        WEB_SEARCH_USER_LOCATION: Optional[str] = Field(
+            default=None,
+            description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
         )
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
@@ -478,9 +482,23 @@ class Pipe:
             default="auto",
             description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
-        MAX_TOOL_CALL_LOOPS: int = Field(
+        MAX_TOOL_CALLS: Optional[int] = Field(
+            default=None,
+            description=(
+                "Maximum number of individual tool or function calls the model can make "
+                "within a single response. Applies to the total number of calls across "
+                "all built-in tools. Further tool-call attempts beyond this limit will be ignored."
+            )
+        )
+        MAX_FUNCTION_CALL_LOOPS: int = Field(
             default=5,
-            description="Maximum number of tool calls the model can make in a single request. This is a hard stop safety limit to prevent infinite loops. Defaults to 5.",
+            description=(
+                "Maximum number of full execution cycles (loops) allowed per request. "
+                "Each loop involves the model generating one or more function/tool calls, "
+                "executing all requested functions, and feeding the results back into the model. "
+                "Looping stops when this limit is reached or when the model no longer requests "
+                "additional tool or function calls."
+            )
         )
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
@@ -571,7 +589,11 @@ class Pipe:
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
             user=user_identifier,
+            **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
+
+        # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
@@ -587,12 +609,12 @@ class Pipe:
             )
 
         # Add web_search tool, if supported and enabled.
-        if responses_body.model in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_AUTO_WEB_SEARCH_TOOL or features.get("web_search", False)):
+        if model_family in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False)):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search_preview",
-                "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                "user_location": {"type": "approximate","country": "CA","city": "Langley","region": "BC"} # Temp hardcode until I implement a more elegant way to handle this.
+                "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
+                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}), # Consider using Open WebUI User's location if available instead.
             })
 
         # Append remote MCP servers (experimental)
@@ -604,7 +626,7 @@ class Pipe:
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
         if __tools__ and __metadata__.get("function_calling") != "native":
-            supports_function_calling = responses_body.model in FEATURE_SUPPORT["function_calling"]
+            supports_function_calling = model_family in FEATURE_SUPPORT["function_calling"]
 
             if supports_function_calling:
                 await self._emit_notification(
@@ -622,14 +644,14 @@ class Pipe:
                 return
             
         # Enable reasoning summary, if supported and enabled
-        if responses_body.model in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
             responses_body.reasoning = responses_body.reasoning or {}
             responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
         # Enable persistence of encrypted reasoning tokens, if supported and store=False
         # TODO make this configurable via valves since some orgs might not be approved for encrypted content
         # Note storing encrypted contents is only supported when store = False
-        if responses_body.model in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+        if model_family in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
 
@@ -670,14 +692,15 @@ class Pipe:
 
         # Emit initial "thinking" block:
         # If reasoning model, write "Thinking…" to the expandable status emitter.
-        if body.model in FEATURE_SUPPORT["reasoning"]:
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
+        if model_family in FEATURE_SUPPORT["reasoning"]:
             await expandable_status_emitter.add_item(
                 title="🧠 Thinking…",
                 content="Reading the question and building a plan to answer it. This may take a moment.",
             )
 
         try:
-            for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
+            for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
                 async for event in self.send_openai_responses_streaming_request(
                     body.model_dump(exclude_none=True),
@@ -776,13 +799,6 @@ class Pipe:
                             content=content,
                         )
 
-                        continue
-
-                    # ─── when a tool FINISHES ──────────────────────────────────────────────
-                    if etype == "response.output_item.done":
-                        item = event.get("item", {})
-                        item_type = item.get("type", "")
-
                         # persist the item if it is not a message (function_call, reasoning, etc.)
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
                             hidden_uid_marker = persist_openai_response_items(
@@ -791,11 +807,12 @@ class Pipe:
                                 [item],
                                 openwebui_model,
                             )
+                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             if hidden_uid_marker:
                                 final_output.write(hidden_uid_marker or "")
                                 await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
 
-                        continue # Continue to the next event
+                        continue
 
                     if etype == "response.completed":
                         final_response = event.get("response", {})
@@ -824,6 +841,7 @@ class Pipe:
                             function_outputs,
                             openwebui_model,
                         )
+                        self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         if hidden_uid_marker:
                             final_output.write(hidden_uid_marker or "")
                             await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
@@ -836,7 +854,7 @@ class Pipe:
             await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
 
         finally:
-            if expandable_status_emitter:
+            if expandable_status_emitter.done is False and len(expandable_status_emitter.items) > 0:
                 # Finalize the reasoning emitter
                 await expandable_status_emitter.add_item(
                     title="Done!",
@@ -870,7 +888,7 @@ class Pipe:
     async def _run_nonstreaming_loop(
         self,
         body: ResponsesBody,                                       # The transformed body for OpenAI Responses API
-        valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
+        valves: Pipe.Valves,                                        # Contains config: MAX_FUNCTION_CALL_LOOPS, API_KEY, etc.
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
         tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
@@ -890,7 +908,7 @@ class Pipe:
         reasoning_map: dict[int, str] = {}
 
         try:
-            for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
+            for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
                 response = await self.send_openai_responses_nonstreaming_request(
                     body.model_dump(exclude_none=True),
                     api_key=valves.API_KEY,
@@ -931,6 +949,7 @@ class Pipe:
                                 [item],
                                 metadata.get("model", {}).get("id"),
                             )
+                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             final_output.write(hidden_uid_marker)
 
                     else:
@@ -941,6 +960,7 @@ class Pipe:
                                 [item],
                                 metadata.get("model", {}).get("id"),
                             )
+                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             final_output.write(hidden_uid_marker)
 
                 usage = response.get("usage", {})
@@ -965,6 +985,7 @@ class Pipe:
                             fn_outputs,
                             openwebui_model_id,
                         )
+                        self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         final_output.write(hidden_uid_marker)
 
                     body.input.extend(fn_outputs)
@@ -1486,7 +1507,7 @@ class ExpandableStatusEmitter:
             f'<details type="{self.status_type}" done="{str(self.done).lower()}">\n'
             f"<summary>{summary_text}</summary>\n\n"
             f"{joined}\n"
-            "</details>\n\n"
+            "</details>"
         )
 
     @staticmethod
@@ -1543,7 +1564,7 @@ def persist_openai_response_items(
         }
         message_bucket["item_ids"].append(item_id)
         hidden_uid_marker = wrap_marker(
-            create_marker(payload.get("type", "unknown"), ulid=item_id, model_id=openwebui_model_id)
+            create_marker(payload.get("type", "unknown"), ulid=item_id)
         )
         hidden_uid_markers.append(hidden_uid_marker)
 
@@ -1614,22 +1635,15 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 #####################
 
 # Helper utilities for persistent item markers
-
-_SENTINEL = "[](openai_responses:"
-_RE = re.compile(
-    r"\[\]\(openai_responses:v1:(?P<kind>[a-z0-9_]{2,30}):"
-    r"(?P<ulid>[A-Z0-9]{26})(?:\?(?P<query>[^)]+))?\)",
-    re.I,
-)
-
-ULID_LENGTH = 26
+ULID_LENGTH = 16
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-def _ulid() -> str:
-    ts = int(time.time() * 1000) & 0xFFFFFFFFFFFF
-    rd = secrets.randbits(80)
-    return "".join(CROCKFORD_ALPHABET[(ts >> i) & 31] for i in range(45, -1, -5)) + \
-        "".join(CROCKFORD_ALPHABET[(rd >> i) & 31] for i in range(75, -1, -5))
+_SENTINEL = "[openai_responses:v2:"
+_RE = re.compile(
+    rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{2,30}):"
+    rf"(?P<ulid>[A-Z0-9]{{{ULID_LENGTH}}})(?:\?(?P<query>[^\]]+))?\]:\s*#",
+    re.I,
+)
 
 def _qs(d: dict[str, str]) -> str:
     return "&".join(f"{k}={v}" for k, v in d.items()) if d else ""
@@ -1645,9 +1659,7 @@ def _encode_base32(value: int, length: int) -> str:
     return "".join(reversed(chars))
 
 def generate_item_id() -> str:
-    ts_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
-    rd = int.from_bytes(os.urandom(10), "big")
-    return _encode_base32(ts_ms, 10) + _encode_base32(rd, 16)
+    return ''.join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))
 
 def create_marker(
     item_type: str,
@@ -1657,30 +1669,30 @@ def create_marker(
     metadata: dict[str, str] | None = None,
 ) -> str:
     if not re.fullmatch(r"[a-z0-9_]{2,30}", item_type):
-        raise ValueError("item_type must be 2–30 chars of [a-z0-9_]")
+        raise ValueError("item_type must be 2-30 chars of [a-z0-9_]")
     meta = {**(metadata or {})}
     if model_id:
         meta["model"] = model_id
-    base = f"openai_responses:v1:{item_type}:{ulid or _ulid()}"
+    base = f"openai_responses:v2:{item_type}:{ulid or generate_item_id()}"
     return f"{base}?{_qs(meta)}" if meta else base
 
 def wrap_marker(marker: str) -> str:
-    return f"\n\n[]({marker})\n\n"
+    return f"\n[{marker}]: #\n"
 
 def contains_marker(text: str) -> bool:
     return _SENTINEL in text
 
 def parse_marker(marker: str) -> dict:
-    if not marker.startswith("openai_responses:v1:"):
-        raise ValueError("not a v1 marker")
+    if not marker.startswith("openai_responses:v2:"):
+        raise ValueError("not a v2 marker")
     _, _, kind, rest = marker.split(":", 3)
     uid, _, q = rest.partition("?")
-    return {"version": "v1", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
+    return {"version": "v2", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
 
 def extract_markers(text: str, *, parsed: bool = False) -> list:
     found = []
     for m in _RE.finditer(text):
-        raw = f"openai_responses:v1:{m.group('kind')}:{m.group('ulid')}"
+        raw = f"openai_responses:v2:{m.group('kind')}:{m.group('ulid')}"
         if m.group("query"):
             raw += f"?{m.group('query')}"
         found.append(parse_marker(raw) if parsed else raw)
@@ -1692,7 +1704,7 @@ def split_text_by_markers(text: str) -> list[dict]:
     for m in _RE.finditer(text):
         if m.start() > last:
             segments.append({"type": "text", "text": text[last:m.start()]})
-        raw = f"openai_responses:v1:{m.group('kind')}:{m.group('ulid')}"
+        raw = f"openai_responses:v2:{m.group('kind')}:{m.group('ulid')}"
         if m.group("query"):
             raw += f"?{m.group('query')}"
         segments.append({"type": "marker", "marker": raw})
