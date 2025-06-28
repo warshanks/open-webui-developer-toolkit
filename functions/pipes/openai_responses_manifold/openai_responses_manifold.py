@@ -854,7 +854,7 @@ class Pipe:
             await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
 
         finally:
-            if expandable_status_emitter:
+            if expandable_status_emitter.done is False and len(expandable_status_emitter.items) > 0:
                 # Finalize the reasoning emitter
                 await expandable_status_emitter.add_item(
                     title="Done!",
@@ -1507,7 +1507,7 @@ class ExpandableStatusEmitter:
             f'<details type="{self.status_type}" done="{str(self.done).lower()}">\n'
             f"<summary>{summary_text}</summary>\n\n"
             f"{joined}\n"
-            "</details>\n\n"
+            "</details>"
         )
 
     @staticmethod
