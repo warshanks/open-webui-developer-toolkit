@@ -1636,10 +1636,10 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 
 # Helper utilities for persistent item markers
 
-_SENTINEL = "[](openai_responses:"
+_SENTINEL = "[openai_responses:"
 _RE = re.compile(
-    r"\[\]\(openai_responses:v1:(?P<kind>[a-z0-9_]{2,30}):"
-    r"(?P<ulid>[A-Z0-9]{26})(?:\?(?P<query>[^)]+))?\)",
+    r"\[openai_responses:v2:(?P<kind>[a-z0-9_]{2,30}):"
+    r"(?P<ulid>[A-Z0-9]{26})(?:\?(?P<query>[^\]]+))?\]:\s*#",
     re.I,
 )
 
@@ -1678,30 +1678,30 @@ def create_marker(
     metadata: dict[str, str] | None = None,
 ) -> str:
     if not re.fullmatch(r"[a-z0-9_]{2,30}", item_type):
-        raise ValueError("item_type must be 2–30 chars of [a-z0-9_]")
+        raise ValueError("item_type must be 2-30 chars of [a-z0-9_]")
     meta = {**(metadata or {})}
     if model_id:
         meta["model"] = model_id
-    base = f"openai_responses:v1:{item_type}:{ulid or _ulid()}"
+    base = f"openai_responses:v2:{item_type}:{ulid or _ulid()}"
     return f"{base}?{_qs(meta)}" if meta else base
 
 def wrap_marker(marker: str) -> str:
-    return f"\n\n[]({marker})\n\n"
+    return f"\n[{marker}]: #\n"
 
 def contains_marker(text: str) -> bool:
     return _SENTINEL in text
 
 def parse_marker(marker: str) -> dict:
-    if not marker.startswith("openai_responses:v1:"):
-        raise ValueError("not a v1 marker")
+    if not marker.startswith("openai_responses:v2:"):
+        raise ValueError("not a v2 marker")
     _, _, kind, rest = marker.split(":", 3)
     uid, _, q = rest.partition("?")
-    return {"version": "v1", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
+    return {"version": "v2", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
 
 def extract_markers(text: str, *, parsed: bool = False) -> list:
     found = []
     for m in _RE.finditer(text):
-        raw = f"openai_responses:v1:{m.group('kind')}:{m.group('ulid')}"
+        raw = f"openai_responses:v2:{m.group('kind')}:{m.group('ulid')}"
         if m.group("query"):
             raw += f"?{m.group('query')}"
         found.append(parse_marker(raw) if parsed else raw)
@@ -1713,7 +1713,7 @@ def split_text_by_markers(text: str) -> list[dict]:
     for m in _RE.finditer(text):
         if m.start() > last:
             segments.append({"type": "text", "text": text[last:m.start()]})
-        raw = f"openai_responses:v1:{m.group('kind')}:{m.group('ulid')}"
+        raw = f"openai_responses:v2:{m.group('kind')}:{m.group('ulid')}"
         if m.group("query"):
             raw += f"?{m.group('query')}"
         segments.append({"type": "marker", "marker": raw})
