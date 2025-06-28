@@ -700,7 +700,7 @@ class Pipe:
             )
 
         try:
-            for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
+            for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
                 async for event in self.send_openai_responses_streaming_request(
                     body.model_dump(exclude_none=True),
@@ -893,7 +893,7 @@ class Pipe:
     async def _run_nonstreaming_loop(
         self,
         body: ResponsesBody,                                       # The transformed body for OpenAI Responses API
-        valves: Pipe.Valves,                                        # Contains config: MAX_TOOL_CALL_LOOPS, API_KEY, etc.
+        valves: Pipe.Valves,                                        # Contains config: MAX_FUNCTION_CALL_LOOPS, API_KEY, etc.
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]], # Function to emit events to the front-end UI
         metadata: Dict[str, Any] = {},                              # Metadata for the request (e.g., session_id, chat_id)
         tools: Optional[Dict[str, Dict[str, Any]]] = None,          # Optional tools dictionary for function calls
@@ -913,7 +913,7 @@ class Pipe:
         reasoning_map: dict[int, str] = {}
 
         try:
-            for loop_idx in range(valves.MAX_TOOL_CALL_LOOPS):
+            for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
                 response = await self.send_openai_responses_nonstreaming_request(
                     body.model_dump(exclude_none=True),
                     api_key=valves.API_KEY,
