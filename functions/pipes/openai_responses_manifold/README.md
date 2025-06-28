@@ -32,6 +32,7 @@
 | Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
 | Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
 | Response item persistence | ✅ GA | 2025-06-27 | Persists items via newline-wrapped comment markers (v2) that embed type, 16-character ULIDs and metadata. |
+| Expandable status output | ✅ GA | 2025-06-28 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
@@ -53,6 +54,10 @@
 * **Debug logging**
   Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
   Can be configured **globally** via the pipe valve OR **per user** via user valve.
+
+* **Expandable status blocks**
+  Tool progress is shown using `<details type="openai_responses.expandable_status">` blocks.
+  The `ExpandableStatusEmitter` helper simplifies adding new steps programmatically.
 
 * **Truncation strategy**
   Use the `TRUNCATION` valve to control how long prompts are handled:
