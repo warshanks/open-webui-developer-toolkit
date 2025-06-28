@@ -62,13 +62,6 @@ class Filter:
     ) -> Dict[str, Any]:
         
         if __metadata__:
-            # Prevent using both Reason and Search simultaneously
-            if "reason_filter" in __metadata__.get("filter_ids", []):
-                raise ValueError(
-                    "You cannot use both the Search and Reason features simultaneously. "
-                    "Disable either Search or Reason, then press 🔄 Regenerate."
-                )
-
             # Explicitly disable WebUI’s native search
             __metadata__.setdefault("features", {}).update({"web_search": False})
 
