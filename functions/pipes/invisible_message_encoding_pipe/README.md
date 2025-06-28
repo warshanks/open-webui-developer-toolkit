@@ -1,3 +1,10 @@
 # Invisible Message Encoding Pipe
 
-Encode user input invisibly in assistant responses and decode it from later messages.
+Persist a secret by embedding it in a hidden markdown comment:
+
+```markdown
+[my secret]: #
+```
+
+The text inside the brackets is hidden from normal Markdown rendering. Send
+another message later and the pipe will reveal it.
