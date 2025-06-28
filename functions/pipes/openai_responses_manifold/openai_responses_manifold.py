@@ -1564,7 +1564,7 @@ def persist_openai_response_items(
         }
         message_bucket["item_ids"].append(item_id)
         hidden_uid_marker = wrap_marker(
-            create_marker(payload.get("type", "unknown"), ulid=item_id, model_id=openwebui_model_id)
+            create_marker(payload.get("type", "unknown"), ulid=item_id)
         )
         hidden_uid_markers.append(hidden_uid_marker)
 
@@ -1635,22 +1635,15 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
 #####################
 
 # Helper utilities for persistent item markers
-
-_SENTINEL = "[openai_responses:"
-_RE = re.compile(
-    r"\[openai_responses:v2:(?P<kind>[a-z0-9_]{2,30}):"
-    r"(?P<ulid>[A-Z0-9]{26})(?:\?(?P<query>[^\]]+))?\]:\s*#",
-    re.I,
-)
-
-ULID_LENGTH = 26
+ULID_LENGTH = 16
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-def _ulid() -> str:
-    ts = int(time.time() * 1000) & 0xFFFFFFFFFFFF
-    rd = secrets.randbits(80)
-    return "".join(CROCKFORD_ALPHABET[(ts >> i) & 31] for i in range(45, -1, -5)) + \
-        "".join(CROCKFORD_ALPHABET[(rd >> i) & 31] for i in range(75, -1, -5))
+_SENTINEL = "[openai_responses:v2:"
+_RE = re.compile(
+    rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{2,30}):"
+    rf"(?P<ulid>[A-Z0-9]{{{ULID_LENGTH}}})(?:\?(?P<query>[^\]]+))?\]:\s*#",
+    re.I,
+)
 
 def _qs(d: dict[str, str]) -> str:
     return "&".join(f"{k}={v}" for k, v in d.items()) if d else ""
@@ -1666,9 +1659,7 @@ def _encode_base32(value: int, length: int) -> str:
     return "".join(reversed(chars))
 
 def generate_item_id() -> str:
-    ts_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
-    rd = int.from_bytes(os.urandom(10), "big")
-    return _encode_base32(ts_ms, 10) + _encode_base32(rd, 16)
+    return ''.join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))
 
 def create_marker(
     item_type: str,
@@ -1682,7 +1673,7 @@ def create_marker(
     meta = {**(metadata or {})}
     if model_id:
         meta["model"] = model_id
-    base = f"openai_responses:v2:{item_type}:{ulid or _ulid()}"
+    base = f"openai_responses:v2:{item_type}:{ulid or generate_item_id()}"
     return f"{base}?{_qs(meta)}" if meta else base
 
 def wrap_marker(marker: str) -> str:
