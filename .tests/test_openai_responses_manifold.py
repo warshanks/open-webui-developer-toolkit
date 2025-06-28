@@ -1,14 +1,9 @@
-from importlib import import_module
 import json
-import sys
+from dataclasses import dataclass
+
 import pytest
 
-try:
-    import orjson  # noqa: F401
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    sys.modules["orjson"] = object()
-
-mod = import_module("functions.pipes.openai_responses_manifold.openai_responses_manifold")
+from functions.pipes.openai_responses_manifold import openai_responses_manifold as mod
 
 
 @pytest.fixture()
@@ -16,15 +11,17 @@ def dummy_chats(monkeypatch):
     """Simple in-memory Chats stub."""
     storage: dict[str, dict] = {}
 
+    @dataclass
     class DummyChatModel:
-        def __init__(self, chat=None):
-            self.chat = chat or {"history": {"messages": {}}}
+        chat: dict
 
     class DummyChats:
         @staticmethod
         def get_chat_by_id(cid):
             chat = storage.get(cid)
-            return DummyChatModel(chat) if chat is not None else None
+            if chat is None:
+                return None
+            return DummyChatModel(chat)
 
         @staticmethod
         def update_chat_by_id(cid, chat):
