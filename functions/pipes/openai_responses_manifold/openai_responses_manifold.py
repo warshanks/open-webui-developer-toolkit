@@ -470,6 +470,10 @@ class Pipe:
             default="medium",
             description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_AUTO_WEB_SEARCH_TOOL=True.",
         )
+        SEARCH_USER_LOCATION: Optional[str] = Field(
+            default=None,
+            description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
+        )
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
@@ -595,7 +599,7 @@ class Pipe:
             responses_body.tools.append({
                 "type": "web_search_preview",
                 "search_context_size": valves.SEARCH_CONTEXT_SIZE,
-                "user_location": {"type": "approximate","country": "CA","city": "Langley","region": "BC"} # Temp hardcode until I implement a more elegant way to handle this.
+                **({"search_user_location": json.loads(valves.SEARCH_USER_LOCATION)} if valves.SEARCH_USER_LOCATION else {}),
             })
 
         # Append remote MCP servers (experimental)
