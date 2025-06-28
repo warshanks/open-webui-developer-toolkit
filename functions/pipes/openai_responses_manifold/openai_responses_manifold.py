@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.14
+version: 0.8.15
 license: MIT
 """
 
@@ -799,13 +799,6 @@ class Pipe:
                             content=content,
                         )
 
-                        continue
-
-                    # ─── when a tool FINISHES ──────────────────────────────────────────────
-                    if etype == "response.output_item.done":
-                        item = event.get("item", {})
-                        item_type = item.get("type", "")
-
                         # persist the item if it is not a message (function_call, reasoning, etc.)
                         if valves.PERSIST_TOOL_RESULTS and item_type != "message":
                             hidden_uid_marker = persist_openai_response_items(
@@ -814,11 +807,12 @@ class Pipe:
                                 [item],
                                 openwebui_model,
                             )
+                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             if hidden_uid_marker:
                                 final_output.write(hidden_uid_marker or "")
                                 await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
 
-                        continue # Continue to the next event
+                        continue
 
                     if etype == "response.completed":
                         final_response = event.get("response", {})
@@ -847,6 +841,7 @@ class Pipe:
                             function_outputs,
                             openwebui_model,
                         )
+                        self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         if hidden_uid_marker:
                             final_output.write(hidden_uid_marker or "")
                             await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
@@ -954,6 +949,7 @@ class Pipe:
                                 [item],
                                 metadata.get("model", {}).get("id"),
                             )
+                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             final_output.write(hidden_uid_marker)
 
                     else:
@@ -964,6 +960,7 @@ class Pipe:
                                 [item],
                                 metadata.get("model", {}).get("id"),
                             )
+                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             final_output.write(hidden_uid_marker)
 
                 usage = response.get("usage", {})
@@ -988,6 +985,7 @@ class Pipe:
                             fn_outputs,
                             openwebui_model_id,
                         )
+                        self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         final_output.write(hidden_uid_marker)
 
                     body.input.extend(fn_outputs)
