@@ -613,7 +613,7 @@ class Pipe:
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search_preview",
-                "WEB_SEARCH_CONTEXT_SIZE": valves.WEB_SEARCH_CONTEXT_SIZE,
+                "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
                 **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}), # Consider using Open WebUI User's location if available instead.
             })
 
