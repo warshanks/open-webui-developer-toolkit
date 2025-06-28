@@ -28,7 +28,6 @@ import os
 import re
 import sys
 import secrets
-import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
@@ -1640,7 +1639,7 @@ CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 _SENTINEL = "[openai_responses:v2:"
 _RE = re.compile(
-    rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{2,30}):"
+    rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{{2,30}}):"
     rf"(?P<ulid>[A-Z0-9]{{{ULID_LENGTH}}})(?:\?(?P<query>[^\]]+))?\]:\s*#",
     re.I,
 )
@@ -1651,12 +1650,6 @@ def _qs(d: dict[str, str]) -> str:
 def _parse_qs(q: str) -> dict[str, str]:
     return dict(p.split("=", 1) for p in q.split("&")) if q else {}
 
-def _encode_base32(value: int, length: int) -> str:
-    chars = []
-    for _ in range(length):
-        chars.append(CROCKFORD_ALPHABET[value & 31])
-        value >>= 5
-    return "".join(reversed(chars))
 
 def generate_item_id() -> str:
     return ''.join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))

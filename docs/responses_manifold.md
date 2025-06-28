@@ -36,6 +36,14 @@ OpenAI's API returns rich output items such as function calls, tool responses an
 
 Items are kept verbatim as delivered by the API. When history is rebuilt, these items are inserted before the assistant message that generated them. Because the data sits under its own key, vanilla WebUI installations ignore it gracefully.
 
+To reference these stored items, the manifold embeds invisible markers into the assistant's message content. Each marker uses a markdown comment of the form:
+
+```
+[openai_responses:v2:<item_type>:<16-char-id>?model=<model_id>]: #
+```
+
+The `item_type` corresponds to the OpenAI event type. These markers remain hidden in the UI but allow the pipeline to reconstruct the conversation with the exact items preserved.
+
 ## Encrypted Reasoning Tokens
 
 Reasoning models can include an `encrypted_content` field. The manifold stores this encrypted token with each response. OpenAI uses it to cache earlier reasoning steps so follow‑up requests are faster and require less context, improving both speed and quality. Models no longer need to reread their own explanations, giving them more budget for new reasoning in subsequent turns.

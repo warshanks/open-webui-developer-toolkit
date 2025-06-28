@@ -24,6 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Added experimental `MCP_SERVERS` valve to append remote MCP servers
   to the tools list.
 
+## [0.8.15] - 2025-06-27
+- Switched to 16-character ULIDs and `v2` comment markers.
+- Simplified ID generation with `secrets.choice`.
+- Updated regex and marker utilities for the new format.
+- Persisted items remain under `openai_responses_pipe` with shortened IDs.
+
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
 - Fixed blank line after reasoning block by delaying encoded ID emission.
