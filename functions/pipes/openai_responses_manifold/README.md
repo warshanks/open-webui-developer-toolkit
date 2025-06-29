@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.15 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.16 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
@@ -35,6 +35,7 @@
 | Expandable status output | ✅ GA | 2025-06-28 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
+| Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
 | File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
@@ -85,6 +86,8 @@ The manifold should work with any model that supports the responses API. Confirm
 | gpt-4o | ✅ |
 | o3 | ✅ |
 | o3-pro | ✅ |
+| o3-deep-research | ❌ |
+| o4-mini-deep-research | ❌ |
 
 ---
 
