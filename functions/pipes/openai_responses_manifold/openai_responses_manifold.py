@@ -1607,7 +1607,7 @@ class ExpandableStatusIndicator:
         updated_message = (
             self._BLOCK_RE.sub(block, assistant_message, 1)
             if self._BLOCK_RE.search(assistant_message)
-            else f"{block}\n\n{assistant_message}"
+            else f"{block}\n{assistant_message}"
         )
 
         if emit and self._event_emitter:
