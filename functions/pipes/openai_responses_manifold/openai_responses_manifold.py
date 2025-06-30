@@ -731,15 +731,18 @@ class Pipe:
                     if etype == "response.reasoning_summary_text.done":
                         text = event.get("text", "")
                         if text:
+                            # Extract bolded title from the last pair of **...**
                             title_match = re.findall(r"\*\*(.+?)\*\*", text)
                             title = title_match[-1].strip() if title_match else "Thinking…"
 
-                            assistant_message = await expandable_status_indicator.add(  # <-- Changed call
+                            # Remove bolded titles from the content to avoid duplication
+                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
+
+                            assistant_message = await expandable_status_indicator.add(
                                 assistant_message,
                                 status_title="🧠 " + title,
-                                status_content=text,
+                                status_content=content,
                             )
-
                         continue
 
                     # ─── Emit detailed tool status upon completion ────────────────────────
@@ -1402,9 +1405,6 @@ import re
 import time
 from typing import Awaitable, Callable, List, Optional, Tuple, Any
 
-EventEmitter = Callable[[dict[str, Any]], Awaitable[None]]
-
-
 class ExpandableStatusIndicator:
     """
     Real‑time, **expandable progress log** for chat assistants
@@ -1485,7 +1485,7 @@ class ExpandableStatusIndicator:
     def __init__(
         self,
         *,
-        event_emitter: Optional[EventEmitter] = None,
+        event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
         expanded: bool = False,
     ) -> None:
         self._emit = event_emitter
