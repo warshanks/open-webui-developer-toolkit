@@ -944,7 +944,7 @@ class Pipe:
                             reasoning_map[idx] = reasoning_map.get(idx, "") + text
 
                     elif item_type == "reasoning":
-                        parts = "\n\n --- \n\n".join(
+                        parts = "\n---".join(
                             reasoning_map[i] for i in sorted(reasoning_map)
                         )
                         snippet = (
