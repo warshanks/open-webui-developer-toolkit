@@ -694,7 +694,7 @@ class Pipe:
         if model_family in FEATURE_SUPPORT["reasoning"]:
             assistant_message = await status_indicator.add(
                 assistant_message,
-                status_title="🧠 Thinking…",
+                status_title="Thinking…",
                 status_content="Reading the question and building a plan to answer it. This may take a moment.",
             )
 
@@ -1607,7 +1607,7 @@ class ExpandableStatusIndicator:
         updated_message = (
             self._BLOCK_RE.sub(status_block, assistant_message, 1)
             if self._BLOCK_RE.search(assistant_message)
-            else f"{status_block}{assistant_message}"
+            else f"{status_block}{assistant_message}" # There is no need to add a \n in between the status block and assistant message.  Adding one adds whitespace.
         )
 
         if emit and self._event_emitter:
