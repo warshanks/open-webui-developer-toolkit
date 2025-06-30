@@ -1500,7 +1500,6 @@ class ExpandableStatusIndicator:
 
     def __init__(
         self,
-        *,
         event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> None:
         self._event_emitter = event_emitter
