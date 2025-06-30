@@ -1504,10 +1504,10 @@ class ExpandableStatusIndicator:
         event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> None:
         self._event_emitter = event_emitter
-        self._expanded: bool = False,
+        self._expanded: bool = False
         self._items: List[Tuple[str, List[str]]] = []
         self._started = time.perf_counter()
-        self._done: bool = False,
+        self._done: bool = False
 
     # --------------------------------------------------------------------- #
     # Public async API                                                      #
