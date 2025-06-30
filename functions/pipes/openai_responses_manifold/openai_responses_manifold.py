@@ -771,6 +771,19 @@ class Pipe:
                         if item_type in ("message"):
                             continue
 
+                        # persist the item if it is not a message (function_call, reasoning, etc.)
+                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                            hidden_uid_marker = persist_openai_response_items(
+                                metadata.get("chat_id"),
+                                metadata.get("message_id"),
+                                [item],
+                                openwebui_model,
+                            )
+                            if hidden_uid_marker:
+                                self.logger.debug("Persisted item: %s", hidden_uid_marker)
+                                assistant_message += hidden_uid_marker
+                                await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+
                         # Default empty content
                         title = f"Running `{item_name}`"
                         content = ""
@@ -810,27 +823,15 @@ class Pipe:
                         elif item_type == "mcp_call":
                             title = "🌐 Let me query the MCP server…"
                         elif item_type == "reasoning":
-                            title = "" # don't show title for reasoning items
+                            title = None # Don't emit a title for reasoning items
 
                         # Emit the status with prepared title and detailed content
-                        assistant_message = await status_indicator.add(
-                            assistant_message,
-                            status_title=title,
-                            status_content=content,
-                        )
-
-                        # persist the item if it is not a message (function_call, reasoning, etc.)
-                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
-                            hidden_uid_marker = persist_openai_response_items(
-                                metadata.get("chat_id"),
-                                metadata.get("message_id"),
-                                [item],
-                                openwebui_model,
+                        if title:
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title=title,
+                                status_content=content,
                             )
-                            if hidden_uid_marker:
-                                self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                                assistant_message += hidden_uid_marker
-                                await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
 
                         continue
 
