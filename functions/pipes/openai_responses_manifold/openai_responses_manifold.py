@@ -944,7 +944,7 @@ class Pipe:
                             reasoning_map[idx] = reasoning_map.get(idx, "") + text
 
                     elif item_type == "reasoning":
-                        parts = "\n---".join(
+                        parts = "\n\n---".join(
                             reasoning_map[i] for i in sorted(reasoning_map)
                         )
                         snippet = (
@@ -1628,7 +1628,7 @@ class ExpandableStatusIndicator:
         return (
             f'<details type="status"{" open" if self._expanded else ""} '
             f'done="{str(self._done).lower()}">\n'
-            f"<summary>{summary}</summary>\n\n{body_md}\n\n---\n</details>"
+            f"<summary>{summary}</summary>\n\n{body_md}\n\n---</details>"
         )
 
     
