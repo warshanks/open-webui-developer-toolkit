@@ -728,6 +728,7 @@ class Pipe:
                     if etype == "response.output_text.annotation.added":
                         continue
 
+                    
                     if etype == "response.reasoning_summary_text.done":
                         text = event.get("text", "")
                         if text:
@@ -1613,7 +1614,7 @@ class ExpandableStatusIndicator:
         return (
             f'<details type="status"{" open" if self._expanded else ""} '
             f'done="{str(self._done).lower()}">\n'
-            f"<summary>{summary}</summary>\n\n{body_md}\n</details>"
+            f"<summary>{summary}</summary>\n\n{body_md}\n\n---\n</details>"
         )
 
     
