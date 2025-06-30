@@ -1603,20 +1603,20 @@ class ExpandableStatusIndicator:
             )
 
     async def _render(self, assistant_message: str, emit: bool) -> str:
-        block = self._render_block()
+        status_block = self._render_status_block()
         updated_message = (
-            self._BLOCK_RE.sub(block, assistant_message, 1)
+            self._BLOCK_RE.sub(status_block, assistant_message, 1)
             if self._BLOCK_RE.search(assistant_message)
-            else f"{block}\n{assistant_message}"
+            else f"{status_block}\n{assistant_message}"
         )
 
         if emit and self._event_emitter:
             await self._event_emitter(
-                {"type": "chat:message", "data": {"content": updated_message}}
+                {"type": "chat:message", "data": {"content": updated_message}} # This replaces the entire message in the UI
             )
         return updated_message
 
-    def _render_block(self) -> str:
+    def _render_status_block(self) -> str:
         lines: List[str] = []
         for title, subs in self._items:
             lines.append(f"- **{title}**")
