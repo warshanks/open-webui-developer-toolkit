@@ -684,16 +684,15 @@ class Pipe:
         assistant_message = ""  # <-- Changed to a plain string instead of StringIO
         total_usage: dict[str, Any] = {}
 
-        expandable_status_indicator = ExpandableStatusIndicator(
-            event_emitter=event_emitter,
-            expanded=False,
-        )
+        status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
+        status_indicator._expanded = True  # Force status indicator to be expanded by default
+        status_indicator._done = False
 
         # Emit initial "thinking" block:
         # If reasoning model, write "Thinking…" to the expandable status emitter.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
         if model_family in FEATURE_SUPPORT["reasoning"]:
-            assistant_message = await expandable_status_indicator.add(  # <-- Changed call
+            assistant_message = await status_indicator.add(
                 assistant_message,
                 status_title="🧠 Thinking…",
                 status_content="Reading the question and building a plan to answer it. This may take a moment.",
@@ -719,7 +718,7 @@ class Pipe:
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
-                            assistant_message += delta  # <-- Changed from StringIO to direct concatenation
+                            assistant_message += delta
                             await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
                         continue
 
@@ -728,7 +727,6 @@ class Pipe:
                     if etype == "response.output_text.annotation.added":
                         continue
 
-                    
                     if etype == "response.reasoning_summary_text.done":
                         text = event.get("text", "")
                         if text:
@@ -739,12 +737,29 @@ class Pipe:
                             # Remove bolded titles from the content to avoid duplication
                             content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
 
-                            assistant_message = await expandable_status_indicator.add(
+                            assistant_message = await status_indicator.add(
                                 assistant_message,
                                 status_title="🧠 " + title,
                                 status_content=content,
                             )
                         continue
+
+                    # ─── Emit status updates for in-progress items ──────────────────────
+                    if etype == "response.output_item.added":
+                        item = event.get("item", {})
+                        item_type = item.get("type", "")
+                        item_status = item.get("status", "")
+
+                        # If type is message and status is in_progress, emit a status update
+                        if item_type == "message" and item_status == "in_progress" and len(status_indicator._items) > 0:
+                            # Emit a status update for the message
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title="📝 Responding to the user…",
+                                status_content="",
+                            )
+                            continue
+
 
                     # ─── Emit detailed tool status upon completion ────────────────────────
                     if etype == "response.output_item.done":
@@ -798,7 +813,7 @@ class Pipe:
                             title = "🧠 Thinking…"
 
                         # Emit the status with prepared title and detailed content
-                        assistant_message = await expandable_status_indicator.add(  # <-- Changed call
+                        assistant_message = await status_indicator.add(
                             assistant_message,
                             status_title=title,
                             status_content=content,
@@ -814,7 +829,7 @@ class Pipe:
                             )
                             if hidden_uid_marker:
                                 self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                                assistant_message += hidden_uid_marker  # <-- Changed to direct concatenation
+                                assistant_message += hidden_uid_marker
                                 await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
 
                         continue
@@ -848,7 +863,7 @@ class Pipe:
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         if hidden_uid_marker:
-                            assistant_message += hidden_uid_marker  # <-- Changed to direct concatenation
+                            assistant_message += hidden_uid_marker
                             await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
                     body.input.extend(function_outputs)
                 else:
@@ -859,8 +874,8 @@ class Pipe:
             await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
 
         finally:
-            if not expandable_status_indicator._done and expandable_status_indicator._items:
-                assistant_message = await expandable_status_indicator.finish(assistant_message)  # <-- Changed to finish
+            if not status_indicator._done and status_indicator._items:
+                assistant_message = await status_indicator.finish(assistant_message)
 
             if valves.LOG_LEVEL != "INHERIT":
                 if event_emitter:
@@ -877,7 +892,7 @@ class Pipe:
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
             # Return the final output to ensure persistence.
-            return assistant_message  # <-- changed return
+            return assistant_message
 
 
     async def _run_nonstreaming_loop(
@@ -1487,13 +1502,12 @@ class ExpandableStatusIndicator:
         self,
         *,
         event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
-        expanded: bool = False,
     ) -> None:
-        self._emit = event_emitter
-        self._expanded = expanded
+        self._event_emitter = event_emitter
+        self._expanded: bool = False,
         self._items: List[Tuple[str, List[str]]] = []
         self._started = time.perf_counter()
-        self._done = False
+        self._done: bool = False,
 
     # --------------------------------------------------------------------- #
     # Public async API                                                      #
@@ -1596,8 +1610,8 @@ class ExpandableStatusIndicator:
             else f"{block}\n\n{assistant_message}"
         )
 
-        if emit and self._emit:
-            await self._emit(
+        if emit and self._event_emitter:
+            await self._event_emitter(
                 {"type": "chat:message", "data": {"content": updated_message}}
             )
         return updated_message
