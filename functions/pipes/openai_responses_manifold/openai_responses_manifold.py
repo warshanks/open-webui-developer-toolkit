@@ -810,7 +810,7 @@ class Pipe:
                         elif item_type == "mcp_call":
                             title = "🌐 Let me query the MCP server…"
                         elif item_type == "reasoning":
-                            title = "🧠 Thinking…"
+                            title = "" # don't show title for reasoning items
 
                         # Emit the status with prepared title and detailed content
                         assistant_message = await status_indicator.add(
