@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.16
+version: 0.8.17
 license: MIT
 """
 
@@ -21,13 +21,13 @@ from typing import Tuple
 import asyncio
 import datetime
 import inspect
-from io import StringIO
 import json
 import logging
 import os
 import re
 import sys
 import secrets
+import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
@@ -681,7 +681,7 @@ class Pipe:
         """
         tools = tools or {}
         openwebui_model = metadata.get("model", {}).get("id", "")
-        assistant_message = ""  # <-- Changed to a plain string instead of StringIO
+        assistant_message = ""
         total_usage: dict[str, Any] = {}
 
         status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
@@ -914,9 +914,23 @@ class Pipe:
         openwebui_model_id = metadata.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
 
         tools = tools or {}
-        assistant_message = StringIO()
+        assistant_message = ""
         total_usage: Dict[str, Any] = {}
         reasoning_map: dict[int, str] = {}
+
+        status_indicator = ExpandableStatusIndicator(event_emitter)
+        status_indicator._expanded = True
+        status_indicator._done = False
+
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
+        if model_family in FEATURE_SUPPORT["reasoning"]:
+            assistant_message = await status_indicator.add(
+                assistant_message,
+                status_title="Thinking…",
+                status_content=(
+                    "Reading the question and building a plan to answer it. This may take a moment."
+                ),
+            )
 
         try:
             for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
@@ -935,13 +949,21 @@ class Pipe:
                     if item_type == "message":
                         for content in item.get("content", []):
                             if content.get("type") == "output_text":
-                                assistant_message.write(content.get("text", ""))
+                                assistant_message += content.get("text", "")
 
                     elif item_type == "reasoning_summary_text":
                         idx = item.get("summary_index", 0)
                         text = item.get("text", "")
                         if text:
                             reasoning_map[idx] = reasoning_map.get(idx, "") + text
+                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
+                            title = title_match[-1].strip() if title_match else "Thinking…"
+                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title="🧠 " + title,
+                                status_content=content,
+                            )
 
                     elif item_type == "reasoning":
                         parts = "\n\n---".join(
@@ -951,7 +973,7 @@ class Pipe:
                             f'<details type="{__name__}.reasoning" done="true">\n'
                             f"<summary>Done thinking!</summary>\n{parts}</details>"
                         )
-                        assistant_message.write(snippet)
+                        assistant_message += snippet
                         reasoning_map.clear()
                         if valves.PERSIST_TOOL_RESULTS:
                             hidden_uid_marker = persist_openai_response_items(
@@ -961,7 +983,7 @@ class Pipe:
                                 metadata.get("model", {}).get("id"),
                             )
                             self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            assistant_message.write(hidden_uid_marker)
+                            assistant_message += hidden_uid_marker
 
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
@@ -972,7 +994,49 @@ class Pipe:
                                 metadata.get("model", {}).get("id"),
                             )
                             self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            assistant_message.write(hidden_uid_marker)
+                            assistant_message += hidden_uid_marker
+
+                        title = f"Running `{item.get('name', 'unnamed_tool')}`"
+                        content = ""
+
+                        if item_type == "function_call":
+                            title = f"🛠️ Running the {item.get('name', 'unnamed_tool')} tool…"
+                            arguments = json.loads(item.get("arguments") or "{}")
+                            args_formatted = ", ".join(
+                                f"{k}={json.dumps(v)}" for k, v in arguments.items()
+                            )
+                            content = f"```python\n{item.get('name', 'unnamed_tool')}({args_formatted})\n```"
+                        elif item_type == "web_search_call":
+                            title = "🔍 Hmm, let me quickly check online…"
+                            action = item.get("action", {})
+                            if action.get("type") == "search":
+                                query = action.get("query")
+                                if query:
+                                    title = f"🔍 Searching the web for: `{query}`"
+                                else:
+                                    title = "🔍 Searching the web"
+                            elif action.get("type") == "open_page":
+                                title = "🔍 Opening web page…"
+                                url = action.get("url")
+                                if url:
+                                    content = f"URL: `{url}`"
+                        elif item_type == "file_search_call":
+                            title = "📂 Let me skim those files…"
+                        elif item_type == "image_generation_call":
+                            title = "🎨 Let me create that image…"
+                        elif item_type == "local_shell_call":
+                            title = "💻 Let me run that command…"
+                        elif item_type == "mcp_call":
+                            title = "🌐 Let me query the MCP server…"
+                        elif item_type == "reasoning":
+                            title = None
+
+                        if title:
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title=title,
+                                status_content=content,
+                            )
 
                 usage = response.get("usage", {})
                 if usage:
@@ -997,14 +1061,16 @@ class Pipe:
                             openwebui_model_id,
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                        assistant_message.write(hidden_uid_marker)
+                        assistant_message += hidden_uid_marker
 
                     body.input.extend(fn_outputs)
                 else:
                     break
 
             # Finalize output
-            final_text = assistant_message.getvalue().strip()
+            final_text = assistant_message.strip()
+            if not status_indicator._done and status_indicator._items:
+                final_text = await status_indicator.finish(final_text)
             return final_text
 
         except Exception as e:  # pragma: no cover - network errors
@@ -1016,6 +1082,8 @@ class Pipe:
                 done=True,
             )
         finally:
+            if not status_indicator._done and status_indicator._items:
+                assistant_message = await status_indicator.finish(assistant_message)
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
@@ -1417,10 +1485,6 @@ class SessionLogger:
         logger.addHandler(mem)
 
         return logger
-
-import re
-import time
-from typing import Awaitable, Callable, List, Optional, Tuple, Any
 
 class ExpandableStatusIndicator:
     """
