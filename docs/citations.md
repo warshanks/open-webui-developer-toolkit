@@ -83,8 +83,6 @@ def __init__(self):
 ```
 
 **Note:**
-
-* Built-in citations (`self.citation = True`) overwrite custom emissions.
 * Currently, you cannot disable built-in citations from pipes.
 
 ---
