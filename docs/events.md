@@ -248,7 +248,7 @@ This will execute the given script in the user's browser context and populate `r
 
 To use these event helpers, declare them as parameters in your component’s function signature (Pipe, Filter, or Tool). Open WebUI will automatically inject the appropriate `__event_emitter__` and `__event_call__` when invoking your function.
 
-For example, a Pipe might accept the helpers like so:
+For example:
 
 ```python
 async def pipe(
