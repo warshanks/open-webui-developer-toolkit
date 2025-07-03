@@ -73,29 +73,6 @@ Backend logic pauses until a response is received.
 | **`input`** *(requires `__event_call__`)*        | Prompt user for input and await their response.                      |
 | **`execute`** *(requires `__event_call__`)*      | Execute client-side JavaScript and await the result.                 |
 
-The most logical place for detailed examples of **each event type** would be directly under the "**📑 Supported Event Types**" section, right after the table.
-
-**Recommended Structure:**
-
----
-
-## 📑 Supported Event Types
-
-| Event Type                                       | Notes                                                                |
-| ------------------------------------------------ | -------------------------------------------------------------------- |
-| **`status`**                                     | Display incremental progress or status updates.                      |
-| **`chat:message:delta`** / **`message`**         | Append incremental text (partial streaming results).                 |
-| **`chat:message`** / **`replace`**               | Replace entire message content.                                      |
-| **`chat:completion`**                            | Emit the final completed chat response.                              |
-| **`chat:message:files`** / **`files`**           | Attach or update files in a message.                                 |
-| **`chat:title`**                                 | Dynamically set/update the conversation title.                       |
-| **`chat:tags`**                                  | Update tags associated with the conversation.                        |
-| **`source`** / **`citation`**                    | Add references or citations to messages.                             |
-| **`notification`**                               | Display toast notifications (`success`, `error`, `info`, `warning`). |
-| **`confirmation`** *(requires `__event_call__`)* | Prompt user to confirm or cancel an action.                          |
-| **`input`** *(requires `__event_call__`)*        | Prompt user for input and await their response.                      |
-| **`execute`** *(requires `__event_call__`)*      | Execute client-side JavaScript and await the result.                 |
-
 ---
 
 ### Detailed Examples of Each Event Type
