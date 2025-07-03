@@ -37,6 +37,30 @@ Each event is represented as a dictionary with a **type** and **data** payload:
 
 ---
 
+## Using Events from Tools / Filters / Pipes
+
+To use these event helpers, declare them as parameters in your component’s function signature (Pipe, Filter, or Tool). Open WebUI will automatically inject the appropriate `__event_emitter__` and `__event_call__` when invoking your function.
+
+For example:
+
+```python
+async def pipe(
+    self,
+    body: dict,
+    __event_emitter__: Callable[[dict], Awaitable[None]] = None,
+    __event_call__: Callable[[dict], Awaitable[Any]] = None,
+):
+    # Send a status update
+    await __event_emitter__({
+        "type": "status",
+        "data": {"description": "Processing started...", "done": False}
+    })
+```
+
+> **Note:** Only parameters that you explicitly declare in the function signature  will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.
+
+---
+
 ### Detailed Examples of Each Event Type
 
 #### ✅ Status Updates (`status`)
@@ -92,16 +116,77 @@ This sets the message content in the UI to the provided text, replacing any part
 
 #### ✅ Chat Completion (`chat:completion`)
 
-Explicitly mark the completion of a chat response (especially if using custom completion logic):
+The `chat:completion` event explicitly marks the end of an assistant's response. The `middleware.py` automatically emits a completion event upon finishing, so in most cases you don't need to manually emit this event. However, it’s especially useful during streaming or when including additional metadata such as token usage, dynamically setting the chat title, or explicitly handling errors.
+
+> **Important:** Always include the `content` field (even if empty `""`) to prevent UI issues, especially if users navigate away mid-stream.
+
+**Supported fields within `data`:**
+
+| Field         | Description                                                           |
+| ------------- | --------------------------------------------------------------------- |
+| **`content`** | *(required)* Text of the message (use `""` if no additional content). |
+| **`done`**    | *(optional)* Boolean to explicitly indicate the end of streaming.     |
+| **`title`**   | *(optional)* Set or update the conversation title dynamically.        |
+| **`usage`**   | *(optional)* Provide token usage details (prompt, completion, total). |
+| **`error`**   | *(optional)* Indicate an error occurred (with message details).       |
+
+##### Basic Example
+
+Emit a complete assistant response with content:
 
 ```python
 await __event_emitter__({
     "type": "chat:completion",
-    "data": {"content": "This is the final answer."}
+    "data": {
+        "content": "Here is your complete answer.",
+        "done": True,
+        "title": "Summary of Today's Meeting"
+    }
 })
 ```
 
-This event indicates to the UI that the message generation is complete. (In many cases, using a final `replace` event is sufficient, but `chat:completion` can be used for advanced control.)
+This finalizes the response and updates the chat title.
+
+##### Example with Usage Data
+
+Finalize the response and include token usage statistics:
+
+```python
+await __event_emitter__({
+    "type": "chat:completion",
+    "data": {
+        "content": "",
+        "done": True,
+        "usage": {
+            "prompt_tokens": 15,
+            "completion_tokens": 30,
+            "total_tokens": 45
+        },
+        "title": "API Usage Summary"
+    }
+})
+```
+
+Here, `content` is empty since previous events streamed the content. The UI finalizes the message, updates the title, and optionally records token usage stats.
+
+##### Example Emitting Errors
+
+Explicitly indicate an error or aborted generation to the user:
+
+```python
+await __event_emitter__({
+    "type": "chat:completion",
+    "data": {
+        "content": "",
+        "done": True,
+        "error": {
+            "message": "Model response timed out. Please try again."
+        }
+    }
+})
+```
+
+The frontend marks the chat as complete and prominently displays the error, ensuring users aren’t left waiting indefinitely.
 
 ---
 
@@ -244,42 +329,8 @@ This will execute the given script in the user's browser context and populate `r
 
 ---
 
-## Integrating Events into Your Components
-
-To use these event helpers, declare them as parameters in your component’s function signature (Pipe, Filter, or Tool). Open WebUI will automatically inject the appropriate `__event_emitter__` and `__event_call__` when invoking your function.
-
-For example:
-
-```python
-async def pipe(
-    self,
-    body: dict,
-    __event_emitter__: Callable[[dict], Awaitable[None]] = None,
-    __event_call__: Callable[[dict], Awaitable[Any]] = None,
-):
-    # Immediately send a status update
-    await __event_emitter__({
-        "type": "status",
-        "data": {"description": "Processing started...", "done": False}
-    })
-
-    # Prompt the user for confirmation before proceeding
-    confirmed = await __event_call__({
-        "type": "confirmation",
-        "data": {"message": "Continue operation?"}
-    })
-
-    if not confirmed:
-        return {"error": "Operation cancelled by user"}
-
-    # ... continue processing ...
-```
-
-> **Note:** Only parameters that you explicitly declare in the function signature will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.
-
----
-
-## 🔧 Under the Hood: How Helpers Are Injected
+## 🔧 Under the Hood:
+### How __event_emitter__ and __event_call__ are passed to your pipe / filter / tool
 
 When Open WebUI calls your component, it prepares the event helpers using metadata from the current request (like session and message IDs). It then inspects your function’s signature and injects only the parameters you have defined.
 
@@ -304,9 +355,7 @@ result = await function_module.pipe(**params)
 
 In summary, Open WebUI automatically provides `__event_emitter__` and `__event_call__` (along with other context like IDs) to your function, but **only** if your function is defined to accept them.
 
----
-
-## 🛠️ Advanced: Creating Event Emitters Manually
+### Creating Event Emitters Manually (Advanced)
 
 In rare cases, you might want to create event emitter/caller outside of the automatic injection (for example, in a standalone script or for testing). You can manually construct these helpers by providing the required metadata:
 
@@ -325,11 +374,8 @@ event_call = get_event_call(metadata)
 
 Now you can use `event_emitter({...})` or `await event_call({...})` just like the injected versions. Make sure to supply real session/chat IDs from an active context.
 
----
-
-## 🔄 Detailed Event Behavior
-
-### Using `__event_emitter__` (Broadcast)
+### Detailed Event Behavior
+#### Using `__event_emitter__` (Broadcast)
 
 Events emitted via `__event_emitter__` are broadcast to **all** active sessions for the current user (including the session that triggered the event). Under the hood, these events use a WebSocket broadcast (Socket.IO) to update every open client interface for that user.
 
@@ -356,7 +402,7 @@ custom_emitter = get_event_emitter(metadata, update_db=False)
 
 *(Using a custom emitter like this is advanced usage; typically you can rely on the default behavior.)*
 
-### Using `__event_call__` (Await Response)
+#### Using `__event_call__` (Await Response)
 
 Events sent via `__event_call__` go to **only the requesting session** (the single user/browser that triggered the call) and pause execution until a response is received. Internally, this utilizes Socket.IO’s RPC-like call mechanism to ensure the response corresponds to the correct session and event.
 
@@ -371,9 +417,7 @@ user_input = await __event_call__({
 
 The code will resume only after the user provides input (or closes the dialog). Under the hood, Open WebUI uses a `sio.call(...)` to implement this behavior, tying the response to the specific session that initiated the event.
 
----
-
-## 🗄️ Event Persistence in Database
+### Event Persistence in Database
 
 Some event types **immediately persist** their data to the database to guard against interruptions (for example, if a user closes the browser mid-stream, the partial content is not lost). Other events only update the UI state and the in-memory chat, and are persisted only when the message is finalized.
 
@@ -395,9 +439,7 @@ Chats.upsert_message_to_chat_by_id_and_message_id(
 
 > **Note:** If you manually persist data in the middle of streaming, be aware that when the message completes normally, the final write might override your manual update. Automatic persistence will typically ensure the final state is saved.
 
----
-
-## 🖥️ Frontend Integration
+### How Frontend Processes Events
 
 On the frontend side, the Open WebUI client listens for these events via WebSockets and updates the UI in real-time. For instance, the `Chat.svelte` component might handle incoming events as follows:
 
