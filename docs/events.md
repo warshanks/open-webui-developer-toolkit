@@ -57,7 +57,7 @@ async def pipe(
     })
 ```
 
-> **Note:** Only parameters that you explicitly declare in the function signature  will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.  See [Under the Hood](#under-the-hood) for further details on how this works.
+> **Note:** Only parameters that you explicitly declare in the function signature  will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.  See [Under the Hood](#-under-the-hood) for further details on how this works.
 
 ---
 
