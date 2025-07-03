@@ -1,22 +1,30 @@
-# 📚 How Inline Citations Work in Open WebUI
+# 📚 Inline Citations in Open WebUI
 
-Open WebUI supports displaying inline citations as numbered references (e.g., `[1]`) within assistant responses. Users can click these references to view detailed source information.
+Open WebUI supports inline citations displayed as numbered references (e.g., `[1]`) within assistant responses. Users can click these references to view detailed source information.
 
-Inline citation functionality consists of the following clear steps:
+This guide covers:
+
+* Built-in citations (RAG/Web Search)
+* Custom citations (emitted via Pipes, Filters, Tools)
+* Frontend parsing and persistence
 
 ---
-## How Built-In Citations (with RAG / Web Search) work
-### Wrapping Snippets in `<source>` Tags
 
-Before passing retrieved snippets into the LLM’s system prompt, Open WebUI explicitly wraps each snippet in numbered `<source>` tags. These tags clearly link each piece of context to a unique citation ID, enabling the LLM to reference sources accurately.
+## 🔍 Built-In Citations (RAG/Web Search)
 
-#### Implementation Details:
+Open WebUI automatically generates inline citations using context snippets wrapped in `<source>` tags.
 
-* Each unique snippet gets assigned a sequential numeric ID, starting from `1`.
-* Snippets are placed within `<source>` tags, each explicitly labeled with a unique `id`.
-* Optional source names can be included using the `name` attribute.
+### Step 1: Wrapping Snippets in `<source>` Tags
 
-**Example implementation (`middleware.py`, lines 928–946):**
+Retrieved snippets are explicitly wrapped in numbered `<source>` tags before being passed to the LLM’s system prompt. This allows the LLM to accurately reference each snippet.
+
+**Implementation Details:**
+
+* Assign sequential numeric IDs starting from `1`.
+* Use `<source>` tags with a unique `id` attribute.
+* Optionally include source names via the `name` attribute.
+
+**Example (`middleware.py`, lines 928–946):**
 
 ```python
 citation_idx = {}
@@ -37,58 +45,55 @@ for source in sources:
             )
 ```
 
-#### Result:
-
-The resulting context provided to the LLM looks like this:
+**Resulting Context Example:**
 
 ```html
 <source id="1" name="NASA">299,792,458 meters per second is the exact speed of light in vacuum.</source>
 <source id="2" name="AAA">AAA recommends taking breaks every two hours while driving.</source>
 ```
 
----
+### Step 2: System Prompt and Inline Citation Markers
 
-### LLM System Prompt & Citation Markers
+The LLM is instructed to insert inline citation markers `[n]` whenever referencing content from numbered `<source>` tags.
 
-Open WebUI instructs the LLM through its RAG system prompt to insert inline citation markers `[n]` whenever information from these numbered sources is used in its response.
-
-**Example RAG Template instruction (`config.py`, lines 2218–2248):**
+**System Prompt Example (`config.py`, lines 2218–2248):**
 
 ```text
 ### Task:
 Respond using the provided context, adding inline citations [id] only when the <source> tag explicitly contains an id attribute (e.g., <source id="1">).
 ```
 
-Thus, if the assistant references the first snippet, it includes `[1]` in the answer.
+Thus, referencing the first snippet results in a `[1]` citation in the assistant response.
 
 ---
 
-Here's the updated, comprehensive section incorporating guidance about disabling built-in citations to avoid conflicts with custom emissions:
+## 🔧 Custom Citations (Pipes, Filters, Tools)
 
----
+Extensions like **pipes**, **filters**, and **tools** can manually emit citations directly to the frontend, either incrementally or collectively.
 
-## 🔧 Emitting Custom Citations (Pipes, Filters, Tools)
+### ⚠️ Important: Disable Built-in Citations
 
-Extensions such as **pipes**, **filters**, and **tools** can manually emit custom citation events directly into Open WebUI’s frontend. Citations may be emitted **incrementally** during streaming, or **collectively** at the end of the response.
-
-### ⚠️ Disabling Built-in Citations
-
-When implementing custom citations from a **Tool** or **Filter**, ensure you disable Open WebUI’s built-in citation handling by setting:
+When emitting custom citations from **Tools** or **Filters**, disable Open WebUI’s built-in citation handling to avoid conflicts:
 
 ```python
 def __init__(self):
-    self.citation = False  # Disable built-in citations to avoid overwrites
+    self.citation = False  # Prevent built-in citation overwrite
 ```
 
-**Important:**
-* If `self.citation` remains `True` (the default), built-in citations based on your tool’s return value will overwrite any manually emitted citations. Always disable this when managing citations manually.
-* You can not [currently] disable citations from a pipe.
-  
+**Note:**
+
+* Built-in citations (`self.citation = True`) overwrite custom emissions.
+* Currently, you cannot disable built-in citations from pipes.
+
 ---
 
-### 📡 Incremental Emission Example (Pipe):
+### 📡 Emitting Custom Citations: Examples
 
-Emit citations immediately after yielding their placeholder within the assistant's response stream:
+Custom citations can be emitted incrementally or as a single event.
+
+#### Incremental Emission (Pipes)
+
+Emit citations immediately after yielding placeholder text:
 
 ```python
 yield "The speed of light is exactly 299,792,458 m/s [1]."
@@ -108,11 +113,9 @@ await __event_emitter__({
 })
 ```
 
----
+#### Single Emission (Pipe, `chat:completion` event)
 
-### 📦 Single Emission Example (Pipe, `chat:completion`):
-
-Alternatively, emit all citations together at once, typically at the end of the response stream:
+Emit all citations simultaneously, typically at the end of streaming:
 
 ```python
 await __event_emitter__({
@@ -148,14 +151,16 @@ await __event_emitter__({
 
 ---
 
-### Frontend Parsing and Rendering
+## 🖥 Frontend Parsing & Rendering
 
-The Open WebUI frontend parses these citation markers (`[1]`, `[2]`, etc.) and renders them as clickable references linked directly to the corresponding sources.
+The frontend parses inline citation markers `[1]`, `[2]`, etc., and renders them as clickable references.
 
-* **Citation events** emitted by the backend (type: `"source"` or `"citation"`) are collected and stored alongside the message content.
-* **Markers** are dynamically replaced by clickable UI elements.
+**Frontend Behavior:**
 
-**Frontend parsing example (`index.ts`, lines 60–75):**
+* **Citation events** (`type: "source"` or `"citation"`) are collected and stored.
+* **Markers** in message content become clickable UI elements linking to citation details.
+
+**Frontend Parsing Example (`index.ts`, lines 60–75):**
 
 ```typescript
 sourceIds.forEach((sourceId, idx) => {
@@ -164,15 +169,13 @@ sourceIds.forEach((sourceId, idx) => {
 });
 ```
 
-When clicked, these references open detailed citation modals displaying snippet text and metadata.
+Clicking a reference opens a detailed modal displaying the source snippet and metadata.
 
 ---
 
----
+## 💾 Persistence & Best Practices
 
-### Persistence & Best Practices
-
-To ensure citations persist even if the user closes the window mid-response:
+To ensure citations persist even if the user interrupts the response:
 
 * Manually save emitted citations at the end of the pipe:
 
