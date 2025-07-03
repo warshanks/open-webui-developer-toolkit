@@ -63,25 +63,56 @@ Thus, if the assistant references the first snippet, it includes `[1]` in the an
 
 ---
 
-### Emitting Custom Citations (Pipes, Filters, Tools)
+Here's the updated, comprehensive section incorporating guidance about disabling built-in citations to avoid conflicts with custom emissions:
 
-Extensions like pipes, filters, and tools can also emit custom citation events directly. Citations can be emitted incrementally during streaming or collectively at the end.
+---
 
-**Incremental Emission Example (pipe):**
+## 🔧 Emitting Custom Citations (Pipes, Filters, Tools)
+
+Extensions such as **pipes**, **filters**, and **tools** can manually emit custom citation events directly into Open WebUI’s frontend. Citations may be emitted **incrementally** during streaming, or **collectively** at the end of the response.
+
+### ⚠️ Disabling Built-in Citations
+
+When implementing custom citations from a **Tool** or **Filter**, ensure you disable Open WebUI’s built-in citation handling by setting:
+
+```python
+def __init__(self):
+    self.citation = False  # Disable built-in citations to avoid overwrites
+```
+
+**Important:**
+* If `self.citation` remains `True` (the default), built-in citations based on your tool’s return value will overwrite any manually emitted citations. Always disable this when managing citations manually.
+* You can not [currently] disable citations from a pipe.
+  
+---
+
+### 📡 Incremental Emission Example (Pipe):
+
+Emit citations immediately after yielding their placeholder within the assistant's response stream:
 
 ```python
 yield "The speed of light is exactly 299,792,458 m/s [1]."
+
 await __event_emitter__({
     "type": "source",
     "data": {
         "source": {"name": "NASA"},
         "document": ["299,792,458 meters per second is the exact speed of light in vacuum."],
-        "metadata": [{"source": "https://science.nasa.gov/ems/03_movinglight/", "date_accessed": "2025-06-24"}],
+        "metadata": [
+            {
+                "source": "https://science.nasa.gov/ems/03_movinglight/",
+                "date_accessed": "2025-06-24"
+            }
+        ],
     },
 })
 ```
 
-**Single Emission Example (pipe, `chat:completion`):**
+---
+
+### 📦 Single Emission Example (Pipe, `chat:completion`):
+
+Alternatively, emit all citations together at once, typically at the end of the response stream:
 
 ```python
 await __event_emitter__({
@@ -93,12 +124,22 @@ await __event_emitter__({
             {
                 "source": {"name": "Harvard Health"},
                 "document": ["Mediterranean diet linked to cardiovascular health."],
-                "metadata": [{"source": "https://health.harvard.edu", "date_accessed": "2025-06-24"}],
+                "metadata": [
+                    {
+                        "source": "https://health.harvard.edu",
+                        "date_accessed": "2025-06-24"
+                    }
+                ],
             },
             {
                 "source": {"name": "Mayo Clinic"},
                 "document": ["Diet reduces inflammation markers."],
-                "metadata": [{"source": "https://mayoclinic.org", "date_accessed": "2025-06-24"}],
+                "metadata": [
+                    {
+                        "source": "https://mayoclinic.org",
+                        "date_accessed": "2025-06-24"
+                    }
+                ],
             },
         ],
     },
