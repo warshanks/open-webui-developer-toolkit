@@ -5,12 +5,12 @@ Open WebUI supports displaying inline citations as numbered references (e.g., `[
 Inline citation functionality consists of the following clear steps:
 
 ---
-
-## 1. 📥 Wrapping Snippets in `<source>` Tags
+## How Built-In Citations (with RAG / Web Search) work
+### Wrapping Snippets in `<source>` Tags
 
 Before passing retrieved snippets into the LLM’s system prompt, Open WebUI explicitly wraps each snippet in numbered `<source>` tags. These tags clearly link each piece of context to a unique citation ID, enabling the LLM to reference sources accurately.
 
-### Implementation Details:
+#### Implementation Details:
 
 * Each unique snippet gets assigned a sequential numeric ID, starting from `1`.
 * Snippets are placed within `<source>` tags, each explicitly labeled with a unique `id`.
@@ -37,7 +37,7 @@ for source in sources:
             )
 ```
 
-### Result:
+#### Result:
 
 The resulting context provided to the LLM looks like this:
 
@@ -48,7 +48,7 @@ The resulting context provided to the LLM looks like this:
 
 ---
 
-## 2. 🧠 LLM System Prompt & Citation Markers
+### LLM System Prompt & Citation Markers
 
 Open WebUI instructs the LLM through its RAG system prompt to insert inline citation markers `[n]` whenever information from these numbered sources is used in its response.
 
@@ -63,27 +63,7 @@ Thus, if the assistant references the first snippet, it includes `[1]` in the an
 
 ---
 
-## 3. 🚀 Frontend Parsing and Rendering
-
-The Open WebUI frontend parses these citation markers (`[1]`, `[2]`, etc.) and renders them as clickable references linked directly to the corresponding sources.
-
-* **Citation events** emitted by the backend (type: `"source"` or `"citation"`) are collected and stored alongside the message content.
-* **Markers** are dynamically replaced by clickable UI elements.
-
-**Frontend parsing example (`index.ts`, lines 60–75):**
-
-```typescript
-sourceIds.forEach((sourceId, idx) => {
-    const regex = new RegExp(`\\[${idx + 1}\\]`, 'g');
-    segment = segment.replace(regex, `<source_id data="${idx + 1}" title="${sourceId}" />`);
-});
-```
-
-When clicked, these references open detailed citation modals displaying snippet text and metadata.
-
----
-
-## 4. 🔧 Emitting Custom Citations (Pipes, Filters, Tools)
+### Emitting Custom Citations (Pipes, Filters, Tools)
 
 Extensions like pipes, filters, and tools can also emit custom citation events directly. Citations can be emitted incrementally during streaming or collectively at the end.
 
@@ -127,7 +107,29 @@ await __event_emitter__({
 
 ---
 
-## 5. 💾 Persistence & Best Practices
+### Frontend Parsing and Rendering
+
+The Open WebUI frontend parses these citation markers (`[1]`, `[2]`, etc.) and renders them as clickable references linked directly to the corresponding sources.
+
+* **Citation events** emitted by the backend (type: `"source"` or `"citation"`) are collected and stored alongside the message content.
+* **Markers** are dynamically replaced by clickable UI elements.
+
+**Frontend parsing example (`index.ts`, lines 60–75):**
+
+```typescript
+sourceIds.forEach((sourceId, idx) => {
+    const regex = new RegExp(`\\[${idx + 1}\\]`, 'g');
+    segment = segment.replace(regex, `<source_id data="${idx + 1}" title="${sourceId}" />`);
+});
+```
+
+When clicked, these references open detailed citation modals displaying snippet text and metadata.
+
+---
+
+---
+
+### Persistence & Best Practices
 
 To ensure citations persist even if the user closes the window mid-response:
 
