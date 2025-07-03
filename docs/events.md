@@ -1,13 +1,13 @@
 # Events: Communicating with the Frontend
 
-Events allow backend components (**Pipes**, **Filters**, and **Tools**) to directly interact with Open WebUI’s frontend.
+Events allow backend components (**Pipes**, **Filters**, and **Tools**) to directly interact with Open WebUI’s frontend in real-time.
 
-Two main helpers are used:
+Two main helpers are provided for this purpose:
 
-* **`__event_emitter__`** *(one-way communication)* sends immediate frontend updates.
-* **`__event_call__`** *(two-way communication)* prompts the frontend and waits for user responses.
+* **`__event_emitter__`** – *(one-way communication)* Fire-and-forget events to send immediate updates to the frontend.
+* **`__event_call__`** – *(two-way communication)* Prompt the frontend and wait for a user response (awaitable).
 
-Basic structure for events:
+Each event is represented as a dictionary with a **type** and **data** payload:
 
 ```python
 {
@@ -20,20 +20,20 @@ Basic structure for events:
 
 ## 📑 Supported Event Types
 
-| Event Type                                       | Notes                                                                |
-| ------------------------------------------------ | -------------------------------------------------------------------- |
-| **`status`**                                     | Display incremental progress or status updates.                      |
-| **`chat:message:delta`** / **`message`**         | Append incremental text (partial streaming results).                 |
-| **`chat:message`** / **`replace`**               | Replace entire message content.                                      |
-| **`chat:completion`**                            | Emit the final completed chat response.                              |
-| **`chat:message:files`** / **`files`**           | Attach or update files in a message.                                 |
-| **`chat:title`**                                 | Dynamically set/update the conversation title.                       |
-| **`chat:tags`**                                  | Update tags associated with the conversation.                        |
-| **`source`** / **`citation`**                    | Add references or citations to messages.                             |
-| **`notification`**                               | Display toast notifications (`success`, `error`, `info`, `warning`). |
-| **`confirmation`** *(requires `__event_call__`)* | Prompt user to confirm or cancel an action.                          |
-| **`input`** *(requires `__event_call__`)*        | Prompt user for input and await their response.                      |
-| **`execute`** *(requires `__event_call__`)*      | Execute client-side JavaScript and await the result.                 |
+| Event Type                                       | Notes                                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| **`status`**                                     | Show a progress/status update (e.g. loading states, intermediate steps).                  |
+| **`chat:message:delta`** / **`message`**         | Stream partial text content (append incremental chunks of a response).                    |
+| **`chat:message`** / **`replace`**               | Replace or set the entire message content (usually used to finalize a streamed response). |
+| **`chat:completion`**                            | Explicitly denote the final completion of a chat response (advanced use).                 |
+| **`chat:message:files`** / **`files`**           | Attach or update files associated with a message (for uploads or outputs).                |
+| **`chat:title`**                                 | Dynamically set or update the conversation title.                                         |
+| **`chat:tags`**                                  | Update tags associated with the conversation.                                             |
+| **`source`** / **`citation`**                    | Add reference citations or other source data to a message.                                |
+| **`notification`**                               | Display a toast notification (`success`, `error`, `info`, or `warning`) to the user.      |
+| **`confirmation`** *(requires `__event_call__`)* | Prompt the user to confirm or cancel an action (yes/no dialog).                           |
+| **`input`** *(requires `__event_call__`)*        | Prompt the user for text input (with a dialog) and await their response.                  |
+| **`execute`** *(requires `__event_call__`)*      | Execute client-side JavaScript and return the result.                                     |
 
 ---
 
@@ -41,7 +41,7 @@ Basic structure for events:
 
 #### ✅ Status Updates (`status`)
 
-Immediately inform users about backend processing states:
+Immediately inform the user about backend processing status or progress:
 
 ```python
 await __event_emitter__({
@@ -50,63 +50,83 @@ await __event_emitter__({
 })
 ```
 
+*(The `done` flag can be toggled to indicate whether the process is finished. For example, set `"done": True` on the final status update.)*
+
 ---
 
 #### ✅ Incremental Text Updates (`chat:message:delta` or `message`)
 
-Incrementally stream content to users (equivalent to yielding text although goes directly to frontend skipping middleware.py):
+Stream content to the user incrementally (e.g. token-by-token or chunk-by-chunk):
 
 ```python
 await __event_emitter__({
+    "type": "chat:message:delta",  # or simply "message"
+    "data": {"content": "Partial response chunk "}
+})
+
+# ... Later in your code, send more chunks as they are generated:
+await __event_emitter__({
     "type": "chat:message:delta",
-    "data": {"content": "Processing step 1 of 3...\n"}
+    "data": {"content": "next part of the response..."}
 })
 ```
+
+Each `chat:message:delta` event appends text to the current message in the UI. Use this for real-time streaming of a response.
 
 ---
 
 #### ✅ Full Message Replacement (`chat:message` or `replace`)
 
-Replace entire chat message content instantly:
+Replace the entire content of the current message (often used to signal completion of streaming):
 
 ```python
 await __event_emitter__({
-    "type": "replace",
-    "data": {"content": "Here's the final response to your query."}
+    "type": "chat:message",  # or "replace"
+    "data": {"content": "Here is the final complete response."}
 })
 ```
+
+This sets the message content in the UI to the provided text, replacing any partially streamed content.
 
 ---
 
 #### ✅ Chat Completion (`chat:completion`)
 
-Explicitly mark the completion of the chat:
+Explicitly mark the completion of a chat response (especially if using custom completion logic):
 
 ```python
 await __event_emitter__({
     "type": "chat:completion",
-    "data": {"content": "Here's the final response to your query."}
+    "data": {"content": "This is the final answer."}
 })
 ```
+
+This event indicates to the UI that the message generation is complete. (In many cases, using a final `replace` event is sufficient, but `chat:completion` can be used for advanced control.)
 
 ---
 
 #### ✅ Attaching Files (`chat:message:files` or `files`)
 
-Attach files directly to a chat message:
+Attach or update files in the current message (e.g. providing a generated report or image as output):
 
 ```python
 await __event_emitter__({
-    "type": "files",
-    "data": {"files": [{"name": "report.pdf", "url": "/files/report.pdf"}]}
+    "type": "files",  # or "chat:message:files"
+    "data": {
+        "files": [
+            {"name": "report.pdf", "url": "/files/report.pdf"}
+        ]
+    }
 })
 ```
+
+This will make the frontend show the file (here *report.pdf*) as an attachment in the chat message.
 
 ---
 
 #### ✅ Updating Conversation Title (`chat:title`)
 
-Set or change the current chat title dynamically:
+Dynamically set or update the title of the current conversation:
 
 ```python
 await __event_emitter__({
@@ -115,11 +135,13 @@ await __event_emitter__({
 })
 ```
 
+This changes the title displayed for the chat (useful if your tool or pipe determines a more context-appropriate title).
+
 ---
 
 #### ✅ Updating Conversation Tags (`chat:tags`)
 
-Update tags associated with the current conversation:
+Update the tags associated with the current conversation (for organizational or filtering purposes):
 
 ```python
 await __event_emitter__({
@@ -128,37 +150,50 @@ await __event_emitter__({
 })
 ```
 
+This replaces the conversation’s tags with the provided list.
+
 ---
 
 #### ✅ Citations and Sources (`source` or `citation`)
 
-Add references or citations to support your message:
+Add references or citations to support your message (commonly used for RAG or code execution results):
 
 ```python
 await __event_emitter__({
-    "type": "citation",
-    "data": {"sources": [{"title": "Event Docs", "url": "https://example.com/docs/events"}]}
+    "type": "citation",  # or "source"
+    "data": {
+        "sources": [
+            {"title": "Event Docs", "url": "https://example.com/docs/events"}
+        ]
+    }
 })
 ```
+
+This event can add a list of source links or citations to the message (the UI typically displays them as reference links or footnotes).
 
 ---
 
 #### ✅ Notifications (`notification`)
 
-Display a toast notification on the user's screen:
+Show a toast notification to the user (non-intrusive alert at the bottom/top of the app):
 
 ```python
 await __event_emitter__({
     "type": "notification",
-    "data": {"kind": "success", "message": "Your data was successfully saved!"}
+    "data": {
+        "kind": "success",  # could be "info", "warning", "error"
+        "message": "Your data was successfully saved!"
+    }
 })
 ```
 
+This will display a small **Success** notification to the user. (The `kind` or type field indicates the style of notification.)
+
 ---
 
-#### ✅ User Confirmation (`confirmation`) *(**event\_call** required)*
+#### ✅ User Confirmation (`confirmation`) *(requires `__event_call__`)*
 
-Prompt user confirmation and await response:
+Prompt the user with a confirmation dialog and wait for their response:
 
 ```python
 confirmed = await __event_call__({
@@ -170,16 +205,18 @@ confirmed = await __event_call__({
 })
 
 if confirmed:
-    # continue action
+    # continue with the action
 else:
-    # cancel action
+    # action was cancelled by the user
 ```
+
+The code pauses until the user clicks **Confirm** or **Cancel**. The `confirmed` variable will be truthy if the user confirmed.
 
 ---
 
-#### ✅ User Input Prompt (`input`) *(**event\_call** required)*
+#### ✅ User Input Prompt (`input`) *(requires `__event_call__`)*
 
-Prompt user input and await their response:
+Prompt the user with an input dialog and retrieve their text input:
 
 ```python
 user_name = await __event_call__({
@@ -188,11 +225,13 @@ user_name = await __event_call__({
 })
 ```
 
+After the user enters text and submits, `user_name` will contain their input (e.g., `"Alice"`). You can then use `__event_emitter__` if you want to provide feedback or use that input in a follow-up event.
+
 ---
 
-#### ✅ Executing JavaScript (`execute`) *(**event\_call** required)*
+#### ✅ Executing JavaScript (`execute`) *(requires `__event_call__`)*
 
-Execute client-side JavaScript and await result:
+Run client-side JavaScript code on the user's browser and get the result:
 
 ```python
 result = await __event_call__({
@@ -201,11 +240,15 @@ result = await __event_call__({
 })
 ```
 
+This will execute the given script in the user's browser context and populate `result` with the return value. For example, the above code snippet returns the current page URL. Use this for advanced integrations that need to query or manipulate the client environment.
+
 ---
 
 ## Integrating Events into Your Components
 
-To use events, explicitly declare them in your component’s signature. Open WebUI automatically injects these helpers at runtime:
+To use these event helpers, declare them as parameters in your component’s function signature (Pipe, Filter, or Tool). Open WebUI will automatically inject the appropriate `__event_emitter__` and `__event_call__` when invoking your function.
+
+For example, a Pipe might accept the helpers like so:
 
 ```python
 async def pipe(
@@ -214,11 +257,13 @@ async def pipe(
     __event_emitter__: Callable[[dict], Awaitable[None]] = None,
     __event_call__: Callable[[dict], Awaitable[Any]] = None,
 ):
+    # Immediately send a status update
     await __event_emitter__({
         "type": "status",
         "data": {"description": "Processing started...", "done": False}
     })
 
+    # Prompt the user for confirmation before proceeding
     confirmed = await __event_call__({
         "type": "confirmation",
         "data": {"message": "Continue operation?"}
@@ -227,18 +272,18 @@ async def pipe(
     if not confirmed:
         return {"error": "Operation cancelled by user"}
 
-    # Continue processing...
+    # ... continue processing ...
 ```
 
-Only parameters you explicitly declare will be injected.
+> **Note:** Only parameters that you explicitly declare in the function signature will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.
 
 ---
 
 ## 🔧 Under the Hood: How Helpers Are Injected
 
-When calling your component, Open WebUI internally prepares a dictionary (`extra_params`) containing available parameters. It dynamically inspects your function signature and only passes parameters you've explicitly defined.
+When Open WebUI calls your component, it prepares the event helpers using metadata from the current request (like session and message IDs). It then inspects your function’s signature and injects only the parameters you have defined.
 
-Simplified internal example (`functions.py`):
+**Simplified internal mechanism (from Open WebUI’s loader):**
 
 ```python
 extra_params = {
@@ -247,20 +292,23 @@ extra_params = {
     "__chat_id__": metadata.get("chat_id"),
     "__session_id__": metadata.get("session_id"),
     "__message_id__": metadata.get("message_id"),
+    # ... other context params ...
 }
 
-# Pass only explicitly defined parameters:
+# Only pass parameters that the function actually accepts:
 sig = inspect.signature(function_module.pipe)
 params = {k: v for k, v in extra_params.items() if k in sig.parameters}
 
-result = await pipe(**params)
+result = await function_module.pipe(**params)
 ```
+
+In summary, Open WebUI automatically provides `__event_emitter__` and `__event_call__` (along with other context like IDs) to your function, but **only** if your function is defined to accept them.
 
 ---
 
 ## 🛠️ Advanced: Creating Event Emitters Manually
 
-You can manually create event helpers, although you'll need to specify the necessary metadata explicitly (`session_id`, `chat_id`, `message_id`):
+In rare cases, you might want to create event emitter/caller outside of the automatic injection (for example, in a standalone script or for testing). You can manually construct these helpers by providing the required metadata:
 
 ```python
 from open_webui.socket.main import get_event_emitter, get_event_call
@@ -271,19 +319,27 @@ metadata = {
     "message_id": "message-id"
 }
 
-event_emitter = get_event_emitter(metadata)
+event_emitter = get_event_emitter(metadata)       # create an emitter (update_db=True by default)
 event_call = get_event_call(metadata)
 ```
+
+Now you can use `event_emitter({...})` or `await event_call({...})` just like the injected versions. Make sure to supply real session/chat IDs from an active context.
 
 ---
 
 ## 🔄 Detailed Event Behavior
 
-### Using `__event_emitter__` *(Broadcast)*
+### Using `__event_emitter__` (Broadcast)
 
-Events emitted via `__event_emitter__` broadcast to all active user sessions, including the current request's session, using Python Socket.IO.
+Events emitted via `__event_emitter__` are broadcast to **all** active sessions for the current user (including the session that triggered the event). Under the hood, these events use a WebSocket broadcast (Socket.IO) to update every open client interface for that user.
 
-These event types (`status`, `message`, `replace`) automatically persist in the database by default:
+By default, certain event types are automatically persisted to the database as soon as they are emitted, to ensure no data is lost if the user disconnects mid-stream:
+
+* **`status`** – status updates are added to the message’s status history.
+* **`message`** – content appended via incremental message events is saved to the message.
+* **`replace`** – the replaced full content is immediately saved/updated.
+
+For example, sending a status update will persist that status to the chat history:
 
 ```python
 await __event_emitter__({
@@ -292,17 +348,19 @@ await __event_emitter__({
 })
 ```
 
-Disable automatic persistence if needed:
+If you wish to emit events without automatically updating the database (perhaps for purely transient UI updates), you can disable persistence when getting the emitter:
 
 ```python
-emitter = get_event_emitter(metadata, update_db=False)
+custom_emitter = get_event_emitter(metadata, update_db=False)
 ```
 
----
+*(Using a custom emitter like this is advanced usage; typically you can rely on the default behavior.)*
 
-### Using `__event_call__` *(Await Response)*
+### Using `__event_call__` (Await Response)
 
-`__event_call__` sends events specifically to the requesting session and waits synchronously for the user's response:
+Events sent via `__event_call__` go to **only the requesting session** (the single user/browser that triggered the call) and pause execution until a response is received. Internally, this utilizes Socket.IO’s RPC-like call mechanism to ensure the response corresponds to the correct session and event.
+
+For example, prompting for input will send an event to that user’s browser and wait for the answer:
 
 ```python
 user_input = await __event_call__({
@@ -311,29 +369,21 @@ user_input = await __event_call__({
 })
 ```
 
-Internally, this leverages Socket.IO’s `call` method, ensuring responses are bound to the correct user session.
+The code will resume only after the user provides input (or closes the dialog). Under the hood, Open WebUI uses a `sio.call(...)` to implement this behavior, tying the response to the specific session that initiated the event.
 
 ---
 
 ## 🗄️ Event Persistence in Database
 
-Here's a clearer restructuring with concise explanation and immediate examples:
+Some event types **immediately persist** their data to the database to guard against interruptions (for example, if a user closes the browser mid-stream, the partial content is not lost). Other events only update the UI state and the in-memory chat, and are persisted only when the message is finalized.
 
----
+**Events that persist automatically upon emission:**
 
-## 🗄️ Event Persistence in Database
+* **`status`** – The status update is added to the message's status history log.
+* **`message`** – Incremental content (appended text) is saved to the message content.
+* **`replace`** – The message content is created or replaced fully in the database.
 
-Some event types immediately persist to the database to protect against unexpected interruptions (e.g., the user closing their browser mid-stream). Others only update the browser's cached chat content and persist once the message is fully complete.
-
-Events that automatically persist immediately include:
-
-* **`status`**: Appends incremental updates to the message’s status history.
-* **`message`**: Incrementally appends text content to the existing message.
-* **`replace`**: Completely replaces the existing message content.
-
-### Example: Manually Persisting Events
-
-You can manually persist event data at any time by directly updating the database:
+You can manually persist or update message content at any time by writing to the database. For example, to update a message's content directly:
 
 ```python
 Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -343,27 +393,30 @@ Chats.upsert_message_to_chat_by_id_and_message_id(
 )
 ```
 
-> **Note:**
-> Manual persistence performed mid-stream may be overwritten by the frontend when the message completes.
+> **Note:** If you manually persist data in the middle of streaming, be aware that when the message completes normally, the final write might override your manual update. Automatic persistence will typically ensure the final state is saved.
 
 ---
 
 ## 🖥️ Frontend Integration
 
-The frontend receives events via WebSocket and immediately updates UI state. Example from `Chat.svelte` component:
+On the frontend side, the Open WebUI client listens for these events via WebSockets and updates the UI in real-time. For instance, the `Chat.svelte` component might handle incoming events as follows:
 
 ```svelte
-$socket?.on('chat-events', chatEventHandler);
-
-function chatEventHandler(event) {
+$socket.on('chat-events', event => {
     const { type, data } = event;
 
     if (type === 'chat:message:delta' || type === 'message') {
+        // Append incoming content to the current message
         message.content += data.content;
     } else if (type === 'chat:message' || type === 'replace') {
+        // Replace the message content entirely
         message.content = data.content;
+    } else if (type === 'status') {
+        // Update message status (e.g., show or update a loading indicator)
+        updateStatus(message, data);
     }
-}
+    // ... handle other event types similarly ...
+});
 ```
 
----
+The frontend logic ensures each event type updates the chat UI appropriately (streaming text, updating titles, showing notifications, etc.). As a developer, you don’t usually need to write any frontend code — just emitting or calling the events from the backend will trigger the intended UI updates automatically.
