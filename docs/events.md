@@ -118,7 +118,7 @@ This sets the message content in the UI to the provided text, replacing any part
 
 The `chat:completion` event explicitly marks the end of an assistant's response. The `middleware.py` automatically emits a completion event upon finishing, so in most cases you don't need to manually emit this event. However, it’s especially useful during streaming or when including additional metadata such as token usage, dynamically setting the chat title, or explicitly handling errors.
 
-> **Important:** Always include the `content` field (even if empty `""`) to prevent UI issues, especially if users navigate away mid-stream.
+> **Important:** Always include the `content` field (even if empty `""`) to prevent UI issues, especially if users navigate away mid-stream.  Empty content field will not replace previously emited text.
 
 **Supported fields within `data`:**
 
@@ -167,7 +167,7 @@ await __event_emitter__({
 })
 ```
 
-Here, `content` is empty since previous events streamed the content. The UI finalizes the message, updates the title, and optionally records token usage stats.
+Here, `content` is empty since we don't want to overwrite previously yield text. The UI finalizes the message, updates the title, and optionally records token usage stats.
 
 ##### Example Emitting Errors
 
