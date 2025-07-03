@@ -65,10 +65,6 @@ graph LR
     I --> J
 ```
 
-Great. I’ll restructure and rewrite the current Open WebUI message lifecycle documentation to make it easy for new frontend and backend developers to grasp the complete flow—from user input to backend processing and storage. I’ll enhance visual clarity with annotated diagrams, provide layered explanations for both high-level and deep-dive readers, and include a new section with debugging tips, common pitfalls, and extensibility guidance.
-
-I’ll get started and let you know once it’s ready for your review.
-
 
 # Chat Message Lifecycle in Open WebUI
 

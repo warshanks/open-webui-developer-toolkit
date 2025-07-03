@@ -1,4 +1,7 @@
-# Web Search Toggle Filter
-Adds a web search toggle using OpenAI's built-in tool.
+# 🌐 Web Search Toggle Filter
+A simple toggle filter that enables web search using the OpenAI Responses manifold.
 
-Copy `web_search_toggle_filter.py` to Open WebUI under **Admin ▸ Filters** to enable.
+**Recommended manifold:** [`functions/pipes/openai_responses_manifold`](https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold)
+
+**Installation:**
+Copy `web_search_toggle_filter.py` into **Admin ▸ Functions** in Open WebUI.

@@ -1,54 +1,47 @@
 """
-title: Invisible Message Encoding
-id: invisible_message_encoding_pipe
-description:
-    Hides a secret with an empty-text Markdown link, e.g. [](secret).
-    The link renders as a zero-sized <a> tag, so nothing appears on-screen.
-    • No extra blank line: the collapsed anchor's margins merge with the block
-      that follows.
-    • Never breaks headings or lists (a risk with zero-width characters).
-    • Easy to process: one regex  r"\[\]\(([^)\s]+)\)"  finds or strips it.
-notes:
-    USE-CASES
-      • Heading      – link collapses, heading renders:
-            [](topSecret1)
-            # Quarterly Results
-      • Many secrets – stack links, still invisible:
-            [](topSecret1)
-            [](topSecret2)
-            [](topSecret3)
-            ## Roadmap
-      • Inline text  – link adds no spacing:
-            Please review [](topSecret1) ASAP.
-    Clipboard: the raw  [](topSecret1)  string is copied; strip with r"\[\]\([^)]+\)" if you need a clean export.
+title: Invisible Message Encoder
+id: invisible_message_encoder
+description: Embed a secret message in markdown comments, keeping it invisible from the UI.
 author: Justin Kropp
-version: 2.5.0
+version: 2.5.1
 license: MIT
+
+Notes:
+    To encode, simply place your secret between brackets followed by ': #'
+    (e.g., `[your secret message]: #`). Previous formats used complex encodings, but this
+    approach is straightforward and intuitive.
 """
 
 import re
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
-# ——— helpers ——————————————————————————————————
+# ——— Helper Functions ————————————————————————
 
-LINK_RE = re.compile(r"\[\]\(([^)\s]+)\)")
+HIDDEN_MESSAGE_REGEX = re.compile(r"\[([^\]]+)\]: #")
 
-def encode_hidden_link(secret: str) -> str:
-    """Return an invisible link line carrying *secret*."""
-    return f"[]({secret})\n"          # one newline → no extra spacer
 
-def decode_hidden_link(md: str) -> str | None:
-    """Extract the first hidden-link payload in *md*."""
-    m = LINK_RE.search(md)
-    return m.group(1) if m else None
+def hide_message(secret: str) -> str:
+    """Wraps the secret message in a markdown comment."""
+    return f"\n[{secret}]: #\n"
 
-def find_secret(messages) -> str | None:
-    for msg in reversed(messages):
-        if secret := decode_hidden_link(msg.get("content", "")):
-            return secret
+
+def reveal_message(markdown: str) -> str | None:
+    """Extracts the first hidden message from markdown, if present."""
+    match = HIDDEN_MESSAGE_REGEX.search(markdown)
+    return match.group(1) if match else None
+
+
+def find_latest_hidden_message(messages: list[dict[str, Any]]) -> str | None:
+    """Finds the most recent hidden message from message history."""
+    for message in reversed(messages):
+        content = message.get("content", "")
+        if hidden_message := reveal_message(content):
+            return hidden_message
     return None
 
-# ——— Pipe ———————————————————————————————————
+
+# ——— Main Pipe Logic ——————————————————————————
+
 
 class Pipe:
     async def pipe(
@@ -60,33 +53,34 @@ class Pipe:
         *_,
     ) -> AsyncGenerator[str, None]:
 
-        # 1 — decode if a previous secret exists
-        if (secret := find_secret(body.get("messages", []))) is not None:
-            yield f"🔓 **Decoded message:** `{secret}`"
+        # Step 1: Check if there's a hidden message to reveal
+        previous_messages = body.get("messages", [])
+        hidden_message = find_latest_hidden_message(previous_messages)
+
+        if hidden_message:
+            yield f"🔓 **Your hidden message:** `{hidden_message}`"
             return
 
-        # 2 — prompt user for a new secret
+        # Step 2: Prompt user to input a new secret message
         user_input = await __event_call__(
             {
                 "type": "input",
                 "data": {
-                    "title": "Enter a secret message",
-                    "message": "Type something you'd like to hide invisibly.",
-                    "placeholder": "Your hidden message…",
+                    "title": "Encode a Hidden Message",
+                    "message": "Enter the message you'd like to hide:",
+                    "placeholder": "Your secret here…",
                 },
             }
         )
 
         if not user_input:
-            yield "⚠️ No message provided!"
+            yield "⚠️ **No message provided.** Please try again."
             return
 
-        # 3 — confirm and embed the invisible link
-        hidden_link = encode_hidden_link(user_input)
+        # Step 3: Embed the user's secret message invisibly
+        hidden_markdown_comment = hide_message(user_input)
         yield (
-            "✨ Your message has been **encoded invisibly** in this response. "
-            "Send another message to decode it.\n"
-            f"{hidden_link}"
+            "✨ **Message encoded successfully!** It is now hidden in this response. "
+            "To decode it, send another message.\n"
+            f"{hidden_markdown_comment}"
         )
-
-        yield "\n[](topSecret1)\n# test"

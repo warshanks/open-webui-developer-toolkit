@@ -2,37 +2,46 @@
 
 All notable changes to the OpenAI Responses Manifold pipeline are documented in this file.
 
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.10] - 2025-06-16
-- Replaced zero-width item ID encoding with empty Markdown links.
-- Introduced v1 markers with model metadata and removed legacy helpers.
+## [0.8.17] - 2025-07-01
+- Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 
-## [0.8.11] - 2025-06-17
-- Fixed crash in non-streaming loop when metadata lacked a model ID.
-- Added invisible link persistence for non-streaming responses.
+## [0.8.16] - 2025-06-28
+- Fixed custom separator handling in `ExpandableStatusEmitter`.
+- Corrected `Tuple` import for type hints.
+- Sorted changelog entries chronologically.
 
-## [0.8.12] - 2025-06-18
-- Fixed missing final message when streaming disabled by emitting the
-  complete text via `chat:completion`.
-
-## [0.8.13] - 2025-06-19
-- Emitted an initial reasoning block when using reasoning models to make
-  the interface show progress immediately.
+## [0.8.15] - 2025-06-27
+- Switched to 16-character ULIDs and `v2` comment markers.
+- Simplified ID generation with `secrets.choice`.
+- Updated regex and marker utilities for the new format.
+- Persisted items remain under `openai_responses_pipe` with shortened IDs.
 
 ## [0.8.14] - 2025-06-23
 - Added experimental `MCP_SERVERS` valve to append remote MCP servers
   to the tools list.
 
+## [0.8.13] - 2025-06-19
+- Emitted an initial reasoning block when using reasoning models to make
+  the interface show progress immediately.
+
+## [0.8.12] - 2025-06-18
+- Fixed missing final message when streaming disabled by emitting the
+  complete text via `chat:completion`.
+
+## [0.8.11] - 2025-06-17
+- Fixed crash in non-streaming loop when metadata lacked a model ID.
+- Added invisible link persistence for non-streaming responses.
+
+## [0.8.10] - 2025-06-16
+- Replaced zero-width item ID encoding with empty Markdown links.
+- Introduced v1 markers with model metadata and removed legacy helpers.
+
 ## [0.8.9] - 2025-06-15
 - Added helper to safely emit visible chunks after encoded IDs.
 - Fixed blank line after reasoning block by delaying encoded ID emission.
-
-## [0.8.7] - 2025-06-13
-- Embedded zero-width encoded IDs during streaming and non-streaming flows.
-- Persisted each output item immediately and yielded the encoded reference.
-- Rebuilt chat history using `build_openai_input` for accurate ordering.
-- Stored full model ID for each item and stripped prefix only when filtering.
 
 ## [0.8.8] - 2025-06-14
 - Renamed helper functions for clarity and maintainability.
@@ -43,6 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Refined reasoning block streaming for safe token ordering.
 - Replaced streaming loop with a single-flag newline injector for
   predictable token placement.
+
+## [0.8.7] - 2025-06-13
+- Embedded zero-width encoded IDs during streaming and non-streaming flows.
+- Persisted each output item immediately and yielded the encoded reference.
+- Rebuilt chat history using `build_openai_input` for accurate ordering.
+- Stored full model ID for each item and stripped prefix only when filtering.
 
 ## [0.8.6] - 2025-06-12
 - Added helper utilities for zero-width encoded item persistence.

@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.14 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.17 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
@@ -31,9 +31,11 @@
 | Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
 | Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
 | Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
-| Response item persistence | ✅ GA | 2025-06-17 | Persists items via newline-wrapped markers (v1) that embed type, ULID and metadata. |
+| Response item persistence | ✅ GA | 2025-06-27 | Persists items via newline-wrapped comment markers (v2) that embed type, 16-character ULIDs and metadata. |
+| Expandable status output | ✅ GA | 2025-07-01 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
+| Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
 | File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
@@ -53,6 +55,10 @@
 * **Debug logging**
   Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
   Can be configured **globally** via the pipe valve OR **per user** via user valve.
+
+* **Expandable status blocks**
+  Tool progress is shown using `<details type="openai_responses.expandable_status">` blocks.
+  The `ExpandableStatusEmitter` helper simplifies adding new steps programmatically.
 
 * **Truncation strategy**
   Use the `TRUNCATION` valve to control how long prompts are handled:
@@ -80,6 +86,8 @@ The manifold should work with any model that supports the responses API. Confirm
 | gpt-4o | ✅ |
 | o3 | ✅ |
 | o3-pro | ✅ |
+| o3-deep-research | ❌ |
+| o4-mini-deep-research | ❌ |
 
 ---
 
@@ -314,7 +322,7 @@ The result of \(34234 \times \pi\) is approximately 107,549.28.
           "parentId": "933ea7dc-d9aa-4981-a447-b06846376136",
           "childrenIds": [],
           "role": "assistant",
-          "content": "[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)[](openai_responses:v1:function_call_output:01HX4Y2VW6B091XE84F5G0Z8NF?model=openai_responses.gpt-4o)The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28."
+          "content": "[openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H?model=openai_responses.gpt-4o]: #\n[openai_responses:v2:function_call_output:01HX4Y2VW6B091XE?model=openai_responses.gpt-4o]: #\nThe result of \\(34234 \\times \\pi\\) is approximately 107,549.28."
           "model": "openai_responses.gpt-4o",
           "modelName": "OpenAI: GPT-4o ★★☆☆",
           "timestamp": 1749686545,

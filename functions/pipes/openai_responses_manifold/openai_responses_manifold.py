@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.15
+version: 0.8.17
 license: MIT
 """
 
@@ -17,11 +17,10 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
-from ast import Tuple
+from typing import Tuple
 import asyncio
 import datetime
 import inspect
-from io import StringIO
 import json
 import logging
 import os
@@ -52,6 +51,8 @@ FEATURE_SUPPORT = {
     "function_calling": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
     "reasoning": {"o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    
+    # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
 }
 
@@ -675,28 +676,26 @@ class Pipe:
         metadata: dict[str, Any] = {},
         tools: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
-        """Stream a conversation loop while maintaining Markdown integrity."""
-
+        """
+        Stream assistant responses incrementally, handling function calls, status updates, and tool usage.
+        """
         tools = tools or {}
         openwebui_model = metadata.get("model", {}).get("id", "")
-        final_output = StringIO()
+        assistant_message = ""
         total_usage: dict[str, Any] = {}
 
-        expandable_status_emitter = ExpandableStatusEmitter(
-            event_emitter,
-            status_type=f"{__name__}.expandable_status",
-            summary_prefix="",
-            separator="---",
-            final_output=final_output,  # ← pass your buffer here
-        )
+        status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
+        status_indicator._expanded = True  # Force status indicator to be expanded by default
+        status_indicator._done = False
 
         # Emit initial "thinking" block:
         # If reasoning model, write "Thinking…" to the expandable status emitter.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
         if model_family in FEATURE_SUPPORT["reasoning"]:
-            await expandable_status_emitter.add_item(
-                title="🧠 Thinking…",
-                content="Reading the question and building a plan to answer it. This may take a moment.",
+            assistant_message = await status_indicator.add(
+                assistant_message,
+                status_title="Thinking…",
+                status_content="Reading the question and building a plan to answer it. This may take a moment.",
             )
 
         try:
@@ -719,8 +718,8 @@ class Pipe:
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
-                            final_output.write(delta)
-                            await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
+                            assistant_message += delta
+                            await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
                         continue
 
                     # Placeholder for annotation emitting
@@ -728,19 +727,39 @@ class Pipe:
                     if etype == "response.output_text.annotation.added":
                         continue
 
-                    if etype == "response.reasoning_summary_text.done" and expandable_status_emitter:
+                    if etype == "response.reasoning_summary_text.done":
                         text = event.get("text", "")
                         if text:
+                            # Extract bolded title from the last pair of **...**
                             title_match = re.findall(r"\*\*(.+?)\*\*", text)
                             title = title_match[-1].strip() if title_match else "Thinking…"
 
-                            # No need to pass markdown; emitter updates buffer internally!
-                            await expandable_status_emitter.add_item(
-                                title="🧠 " + title,
-                                content=text,
-                            )
+                            # Remove bolded titles from the content to avoid duplication
+                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
 
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title="🧠 " + title,
+                                status_content=content,
+                            )
                         continue
+
+                    # ─── Emit status updates for in-progress items ──────────────────────
+                    if etype == "response.output_item.added":
+                        item = event.get("item", {})
+                        item_type = item.get("type", "")
+                        item_status = item.get("status", "")
+
+                        # If type is message and status is in_progress, emit a status update
+                        if item_type == "message" and item_status == "in_progress" and len(status_indicator._items) > 0:
+                            # Emit a status update for the message
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title="📝 Responding to the user…",
+                                status_content="",
+                            )
+                            continue
+
 
                     # ─── Emit detailed tool status upon completion ────────────────────────
                     if etype == "response.output_item.done":
@@ -749,8 +768,21 @@ class Pipe:
                         item_name = item.get("name", "unnamed_tool")
 
                         # Skip irrelevant item types
-                        if item_type in ("message", "reasoning"):
+                        if item_type in ("message"):
                             continue
+
+                        # persist the item if it is not a message (function_call, reasoning, etc.)
+                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                            hidden_uid_marker = persist_openai_response_items(
+                                metadata.get("chat_id"),
+                                metadata.get("message_id"),
+                                [item],
+                                openwebui_model,
+                            )
+                            if hidden_uid_marker:
+                                self.logger.debug("Persisted item: %s", hidden_uid_marker)
+                                assistant_message += hidden_uid_marker
+                                await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
 
                         # Default empty content
                         title = f"Running `{item_name}`"
@@ -790,27 +822,16 @@ class Pipe:
                             title = "💻 Let me run that command…"
                         elif item_type == "mcp_call":
                             title = "🌐 Let me query the MCP server…"
-
-                        # You can extend here easily for other tool types as needed
+                        elif item_type == "reasoning":
+                            title = None # Don't emit a title for reasoning items
 
                         # Emit the status with prepared title and detailed content
-                        await expandable_status_emitter.add_item(
-                            title=title,
-                            content=content,
-                        )
-
-                        # persist the item if it is not a message (function_call, reasoning, etc.)
-                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
-                            hidden_uid_marker = persist_openai_response_items(
-                                metadata.get("chat_id"),
-                                metadata.get("message_id"),
-                                [item],
-                                openwebui_model,
+                        if title:
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title=title,
+                                status_content=content,
                             )
-                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            if hidden_uid_marker:
-                                final_output.write(hidden_uid_marker or "")
-                                await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
 
                         continue
 
@@ -843,8 +864,8 @@ class Pipe:
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         if hidden_uid_marker:
-                            final_output.write(hidden_uid_marker or "")
-                            await event_emitter({"type": "chat:message", "data": {"content": final_output.getvalue()}})
+                            assistant_message += hidden_uid_marker
+                            await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
                     body.input.extend(function_outputs)
                 else:
                     break
@@ -854,36 +875,26 @@ class Pipe:
             await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
 
         finally:
-            if expandable_status_emitter.done is False and len(expandable_status_emitter.items) > 0:
-                # Finalize the reasoning emitter
-                await expandable_status_emitter.add_item(
-                    title="Done!",
-                    done=True,  # Mark as done to close the expandable section
-                )
+            if not status_indicator._done and status_indicator._items:
+                assistant_message = await status_indicator.finish(assistant_message)
 
             if valves.LOG_LEVEL != "INHERIT":
                 if event_emitter:
                     session_id = SessionLogger.session_id.get()
                     logs = SessionLogger.logs.get(session_id, [])
                     if logs:
-                        await self._emit_citation(
-                            event_emitter,
-                            "\n".join(logs),
-                            "Logs",
-                        )
+                        await self._emit_citation(event_emitter, "\n".join(logs), "Logs")
 
             # Emit completion (middleware.py also does this so this just covers if there is a downstream error)
-            await self._emit_completion(event_emitter, content="", usage=total_usage, done=True) # There must be an empty content to avoid breaking the UI
+            await self._emit_completion(event_emitter, content="", usage=total_usage, done=True)  # There must be an empty content to avoid breaking the UI
 
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
 
             # Return the final output to ensure persistence.
-            # Frontend tracks emitted events and persists them after streaming ends.
-            # Explicitly returning the final output guarantees that the message 
-            # is saved, even if the user navigates away prematurely.
-            return final_output.getvalue()
+            return assistant_message
+
 
     async def _run_nonstreaming_loop(
         self,
@@ -903,9 +914,23 @@ class Pipe:
         openwebui_model_id = metadata.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
 
         tools = tools or {}
-        final_output = StringIO()
+        assistant_message = ""
         total_usage: Dict[str, Any] = {}
         reasoning_map: dict[int, str] = {}
+
+        status_indicator = ExpandableStatusIndicator(event_emitter)
+        status_indicator._expanded = True
+        status_indicator._done = False
+
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
+        if model_family in FEATURE_SUPPORT["reasoning"]:
+            assistant_message = await status_indicator.add(
+                assistant_message,
+                status_title="Thinking…",
+                status_content=(
+                    "Reading the question and building a plan to answer it. This may take a moment."
+                ),
+            )
 
         try:
             for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
@@ -924,23 +949,31 @@ class Pipe:
                     if item_type == "message":
                         for content in item.get("content", []):
                             if content.get("type") == "output_text":
-                                final_output.write(content.get("text", ""))
+                                assistant_message += content.get("text", "")
 
                     elif item_type == "reasoning_summary_text":
                         idx = item.get("summary_index", 0)
                         text = item.get("text", "")
                         if text:
                             reasoning_map[idx] = reasoning_map.get(idx, "") + text
+                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
+                            title = title_match[-1].strip() if title_match else "Thinking…"
+                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title="🧠 " + title,
+                                status_content=content,
+                            )
 
                     elif item_type == "reasoning":
-                        parts = "\n\n --- \n\n".join(
+                        parts = "\n\n---".join(
                             reasoning_map[i] for i in sorted(reasoning_map)
                         )
                         snippet = (
                             f'<details type="{__name__}.reasoning" done="true">\n'
                             f"<summary>Done thinking!</summary>\n{parts}</details>"
                         )
-                        final_output.write(snippet)
+                        assistant_message += snippet
                         reasoning_map.clear()
                         if valves.PERSIST_TOOL_RESULTS:
                             hidden_uid_marker = persist_openai_response_items(
@@ -950,7 +983,7 @@ class Pipe:
                                 metadata.get("model", {}).get("id"),
                             )
                             self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            final_output.write(hidden_uid_marker)
+                            assistant_message += hidden_uid_marker
 
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
@@ -961,7 +994,49 @@ class Pipe:
                                 metadata.get("model", {}).get("id"),
                             )
                             self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            final_output.write(hidden_uid_marker)
+                            assistant_message += hidden_uid_marker
+
+                        title = f"Running `{item.get('name', 'unnamed_tool')}`"
+                        content = ""
+
+                        if item_type == "function_call":
+                            title = f"🛠️ Running the {item.get('name', 'unnamed_tool')} tool…"
+                            arguments = json.loads(item.get("arguments") or "{}")
+                            args_formatted = ", ".join(
+                                f"{k}={json.dumps(v)}" for k, v in arguments.items()
+                            )
+                            content = f"```python\n{item.get('name', 'unnamed_tool')}({args_formatted})\n```"
+                        elif item_type == "web_search_call":
+                            title = "🔍 Hmm, let me quickly check online…"
+                            action = item.get("action", {})
+                            if action.get("type") == "search":
+                                query = action.get("query")
+                                if query:
+                                    title = f"🔍 Searching the web for: `{query}`"
+                                else:
+                                    title = "🔍 Searching the web"
+                            elif action.get("type") == "open_page":
+                                title = "🔍 Opening web page…"
+                                url = action.get("url")
+                                if url:
+                                    content = f"URL: `{url}`"
+                        elif item_type == "file_search_call":
+                            title = "📂 Let me skim those files…"
+                        elif item_type == "image_generation_call":
+                            title = "🎨 Let me create that image…"
+                        elif item_type == "local_shell_call":
+                            title = "💻 Let me run that command…"
+                        elif item_type == "mcp_call":
+                            title = "🌐 Let me query the MCP server…"
+                        elif item_type == "reasoning":
+                            title = None
+
+                        if title:
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title=title,
+                                status_content=content,
+                            )
 
                 usage = response.get("usage", {})
                 if usage:
@@ -986,14 +1061,16 @@ class Pipe:
                             openwebui_model_id,
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                        final_output.write(hidden_uid_marker)
+                        assistant_message += hidden_uid_marker
 
                     body.input.extend(fn_outputs)
                 else:
                     break
 
             # Finalize output
-            final_text = final_output.getvalue().strip()
+            final_text = assistant_message.strip()
+            if not status_indicator._done and status_indicator._items:
+                final_text = await status_indicator.finish(final_text)
             return final_text
 
         except Exception as e:  # pragma: no cover - network errors
@@ -1005,6 +1082,8 @@ class Pipe:
                 done=True,
             )
         finally:
+            if not status_indicator._done and status_indicator._items:
+                assistant_message = await status_indicator.finish(assistant_message)
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
@@ -1407,113 +1486,214 @@ class SessionLogger:
 
         return logger
 
-class ExpandableStatusEmitter:
+class ExpandableStatusIndicator:
     """
-    Emits and manages an expandable <details> status block.
-    Updates the provided StringIO buffer automatically.
+    Real‑time, **expandable progress log** for chat assistants
+    ========================================================
+
+    This helper maintains **one** collapsible `<details type="status">` block at
+    the *top* of the assistant’s message.  It lets you incrementally append or
+    edit bullet‑style status lines while automatically re‑emitting the full
+    message to the UI.
+
+    ───────────────────────────────
+    Basic example
+    ───────────────────────────────
+    ```python
+    assistant_message = "Let's work step‑by‑step.\n"
+
+    status = ExpandableStatusIndicator(event_emitter=__event_emitter__)
+
+    assistant_message = await status.add(
+        assistant_message, "Analyzing input"
+    )
+    assistant_message = await status.add(
+        assistant_message, "Retrieving context", "Querying sources…"
+    )
+    assistant_message = await status.update_last_status(
+        assistant_message, new_content="Retrieved 3 documents"
+    )
+    assistant_message = await status.finish(assistant_message)
+    ```
+    Each call *returns* the updated `assistant_message`; always keep the latest
+    string for further processing or output.
+
+    ───────────────────────────────
+    Public API
+    ───────────────────────────────
+    ▸ `add(assistant_message, title, content=None, *, emit=True) -> str`
+        Add a new top‑level bullet; if *title* matches the last bullet,
+        *content* becomes a sub‑bullet instead.
+
+    ▸ `update_last_status(assistant_message, *, new_title=None,
+                          new_content=None, emit=True) -> str`
+        Replace the last bullet’s title and/or its sub‑bullets.
+
+    ▸ `finish(assistant_message, *, emit=True) -> str`
+        Append “Finished in X s”, set `done="true"` and freeze the instance.
+        Subsequent `add`/`update_last_status` calls raise `RuntimeError`.
+
+    ▸ `reset()`
+        Clear bullets and restart the internal timer.
+
+    ▸ `toggle_expanded(on: bool)`
+        Expand/collapse the `<details>` element for future renders.
+
+    Constructor
+    ───────────
+    `ExpandableStatusIndicator(event_emitter=None, *, expanded=False)`
+
+    * `event_emitter` must be an **async** callable accepting
+      `{"type": "chat:message", "data": {"content": <str>}}`.
+      When supplied (and `emit=True`), every status change is pushed to the UI.
+    * `expanded` (default **False**) starts the details block open when true.
+
+    Design guarantees
+    ─────────────────
+    • The status block is always the **first** element in the message.  
+    • Only **one** status block is ever inserted/updated (identified by the
+      `type="status"` attribute).  
+    • Thread‑unsafe on purpose – one instance should service one coroutine.
+
     """
+
+    # Regex reused for fast replacement of the existing block.
+    _BLOCK_RE = re.compile(
+        r"<details\s+type=\"status\".*?</details>",
+        re.DOTALL | re.IGNORECASE,
+    )
 
     def __init__(
         self,
-        event_emitter: Callable[[Dict[str, object]], Awaitable[None]],
-        status_type: str,
-        *,
-        final_output: StringIO,  # <-- Inject final_output here
-        summary_prefix: str = "",
-        separator: str = "---",
-    ):
-        self.event_emitter = event_emitter
-        self.status_type = status_type
-        self.summary_prefix = summary_prefix
-        self.separator = separator
-        self.items: List[Tuple[str, str]] = []
-        self.done: bool = False
-        self.final_output = final_output
-        self._block_re = re.compile(
-            rf'^\s*<details type="{re.escape(self.status_type)}".*?</details>\s*',
-            re.DOTALL
-        )
-
-    async def add_item(
-        self,
-        title: str,
-        content: str = "",
-        *,
-        done: Optional[bool] = False,
+        event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> None:
-        self.items.append((title, content))
-        if done is not None:
-            self.done = bool(done)
-        await self._emit_full()
+        self._event_emitter = event_emitter
+        self._expanded: bool = False
+        self._items: List[Tuple[str, List[str]]] = []
+        self._started = time.perf_counter()
+        self._done: bool = False
+
+    # --------------------------------------------------------------------- #
+    # Public async API                                                      #
+    # --------------------------------------------------------------------- #
+    async def add(
+        self,
+        assistant_message: str,
+        status_title: str,
+        status_content: Optional[str] = None,
+        *,
+        emit: bool = True,
+    ) -> str:
+        """Add a status bullet (or sub‑bullet if *title* repeats)."""
+        self._assert_not_finished("add")
+
+        if not self._items or self._items[-1][0] != status_title:
+            self._items.append((status_title, []))
+
+        if status_content:
+            self._items[-1][1].extend(
+                line.strip() for line in status_content.splitlines() if line.strip()
+            )
+
+        return await self._render(assistant_message, emit)
+
+    async def update_last_status(
+        self,
+        assistant_message: str,
+        *,
+        new_title: Optional[str] = None,
+        new_content: Optional[str] = None,
+        emit: bool = True,
+    ) -> str:
+        """Replace the most recent status title and/or its sub‑bullets."""
+        self._assert_not_finished("update_last_status")
+
+        if not self._items:
+            # no status yet → create one
+            return await self.add(
+                assistant_message,
+                new_title or "Status",
+                new_content,
+                emit=emit,
+            )
+
+        title, subs = self._items[-1]
+        if new_title:
+            title = new_title
+        if new_content is not None:
+            subs = [line.strip() for line in new_content.splitlines() if line.strip()]
+
+        self._items[-1] = (title, subs)
+        return await self._render(assistant_message, emit)
 
     async def finish(
         self,
-        final_title: Optional[str] = None,
-    ) -> None:
-        if final_title:
-            self.items.append((final_title, ""))
-        self.done = True
-        await self._emit_full()
+        assistant_message: str,
+        *,
+        emit: bool = True,
+    ) -> str:
+        """
+        Finalise the status block.
+
+        Adds an elapsed‑time bullet and marks `done="true"`.  Multiple calls are
+        ignored to prevent double “Finished …” lines.
+        """
+        if self._done:
+            return assistant_message  # idempotent
+
+        elapsed = time.perf_counter() - self._started
+        self._items.append((f"Finished in {elapsed:.1f} s", []))
+        self._done = True
+        return await self._render(assistant_message, emit)
 
     def reset(self) -> None:
-        self.items.clear()
-        self.done = False
+        """Erase all statuses and restart the timer (allows safe reuse)."""
+        self._items.clear()
+        self._started = time.perf_counter()
+        self._done = False
 
-    async def _emit_full(self) -> None:
-        original = self.final_output.getvalue()
-        block = self._render_block()
-        updated = (
-            self._block_re.sub(block, original, count=1)
-            if self._block_re.match(original)
-            else f"{block}{original}"
+    def toggle_expanded(self, on: bool) -> None:
+        """Programmatically expand or collapse the details block."""
+        self._expanded = bool(on)
+
+    # --------------------------------------------------------------------- #
+    # Internal helpers                                                      #
+    # --------------------------------------------------------------------- #
+    def _assert_not_finished(self, method: str) -> None:
+        if self._done:
+            raise RuntimeError(
+                f"Cannot call {method}(): status indicator is already finished. "
+                "Call reset() first if you need to start a new run."
+            )
+
+    async def _render(self, assistant_message: str, emit: bool) -> str:
+        status_block = self._render_status_block()
+        updated_message = (
+            self._BLOCK_RE.sub(status_block, assistant_message, 1)
+            if self._BLOCK_RE.search(assistant_message)
+            else f"{status_block}{assistant_message}" # There is no need to add a \n in between the status block and assistant message.  Adding one adds whitespace.
         )
 
-        # Update final_output directly
-        self.final_output.seek(0)
-        self.final_output.truncate(0)
-        self.final_output.write(updated)
+        if emit and self._event_emitter:
+            await self._event_emitter(
+                {"type": "chat:message", "data": {"content": updated_message}} # This replaces the entire message in the UI
+            )
+        return updated_message
 
-        # Emit to frontend
-        await self.event_emitter({"type": "chat:message", "data": {"content": updated}})
+    def _render_status_block(self) -> str:
+        lines: List[str] = []
+        for title, subs in self._items:
+            lines.append(f"- **{title}**")
+            lines.extend(f"  - {sub}" for sub in subs)
 
-    def _render_block(self) -> str:
-        lines = []
-
-        for idx, (title, body) in enumerate(self.items, 1):
-            body_clean = re.sub(r"^\*\*.*?\*\*\s*\n?", "", body.strip())
-
-            lines.append(f"- **Step {idx}: {title.strip('*')}**")
-
-            if body_clean:
-                if body_clean.strip().startswith("```"):
-                    # Indent code block as sub-bullet (2 spaces + dash + 1 space)
-                    indented_body = '\n'.join(
-                        f"      {line}" if i else f"    - {line}"
-                        for i, line in enumerate(body_clean.splitlines())
-                    )
-                    lines.append(indented_body)
-                else:
-                    indented_body = '\n'.join(
-                        f"    - {line.strip()}" for line in body_clean.splitlines() if line.strip()
-                    )
-                    lines.append(indented_body)
-
-        joined = "\n".join(lines) + "\n\n---"
-
-        summary = self.items[-1][0].strip('*')
-        summary_text = f"{self.summary_prefix}{summary}".strip()
+        body_md = "\n".join(lines) if lines else "_No status yet._"
+        summary = self._items[-1][0] if self._items else "Working…"
 
         return (
-            f'<details type="{self.status_type}" done="{str(self.done).lower()}">\n'
-            f"<summary>{summary_text}</summary>\n\n"
-            f"{joined}\n"
-            "</details>"
+            f'<details type="status"{" open" if self._expanded else ""} '
+            f'done="{str(self._done).lower()}">\n'
+            f"<summary>{summary}</summary>\n\n{body_md}\n\n---</details>"
         )
-
-    @staticmethod
-    def _latest_bold(text: str) -> Optional[str]:
-        matches = re.findall(r"\*\*(.+?)\*\*", text)
-        return matches[-1].strip() if matches else None
 
     
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1640,7 +1820,7 @@ CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 _SENTINEL = "[openai_responses:v2:"
 _RE = re.compile(
-    rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{2,30}):"
+    rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{{2,30}}):"
     rf"(?P<ulid>[A-Z0-9]{{{ULID_LENGTH}}})(?:\?(?P<query>[^\]]+))?\]:\s*#",
     re.I,
 )
@@ -1651,12 +1831,6 @@ def _qs(d: dict[str, str]) -> str:
 def _parse_qs(q: str) -> dict[str, str]:
     return dict(p.split("=", 1) for p in q.split("&")) if q else {}
 
-def _encode_base32(value: int, length: int) -> str:
-    chars = []
-    for _ in range(length):
-        chars.append(CROCKFORD_ALPHABET[value & 31])
-        value >>= 5
-    return "".join(reversed(chars))
 
 def generate_item_id() -> str:
     return ''.join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))

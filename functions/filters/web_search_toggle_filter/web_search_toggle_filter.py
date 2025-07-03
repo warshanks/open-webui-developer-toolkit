@@ -5,7 +5,7 @@ description: Instruct the model to search the web for the latest information.
 required_open_webui_version: 0.6.10
 version: 0.2.0
 
-Note: Works best with the OpenAI Responses manifold:
+Note: Designed to work with the OpenAI Responses manifold
       https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold
 """
 from __future__ import annotations
