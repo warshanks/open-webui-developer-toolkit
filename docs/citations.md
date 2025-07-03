@@ -1,38 +1,22 @@
-# Citations in Open WebUI
+# 📚 How Inline Citations Work in Open WebUI
 
-This guide describes how citations work within Open WebUI, including built-in handling and custom emission from backend components such as **pipes**, **filters**, and **tools**.
+Open WebUI supports displaying inline citations as numbered references (e.g., `[1]`) within assistant responses. Users can click these references to view detailed source information.
 
----
-
-## 📚 Overview
-
-Open WebUI supports **inline citations**, allowing assistants to reference external sources directly within chat messages. Citations are displayed as numbered markers (e.g., `[1]`) and clickable references that show detailed source information in a modal window.
-
-There are two main ways citations are handled:
-
-* **Built-in Citations (RAG Templates)**: Automatically provided by built-in retrieval augmented generation (RAG) processes.
-* **Custom Citations (Event Emission)**: Manually emitted by pipes, filters, or tools via events.
+Inline citation functionality consists of the following clear steps:
 
 ---
 
-## ✨ How Built-in Citations Work
+## 1. 📥 Wrapping Snippets in `<source>` Tags
 
-### 1. RAG Template
+Before passing retrieved snippets into the LLM’s system prompt, Open WebUI explicitly wraps each snippet in numbered `<source>` tags. These tags clearly link each piece of context to a unique citation ID, enabling the LLM to reference sources accurately.
 
-Open WebUI instructs the assistant model to insert inline citations **only if** the provided context snippet has a unique source ID:
+### Implementation Details:
 
-```text
-### Task:
-Respond using the provided context, adding inline citations [id] only when the <source> tag explicitly contains an id attribute (e.g., <source id="1">).
-```
+* Each unique snippet gets assigned a sequential numeric ID, starting from `1`.
+* Snippets are placed within `<source>` tags, each explicitly labeled with a unique `id`.
+* Optional source names can be included using the `name` attribute.
 
-*Source: `config.py` lines 2218–2248.*
-
-### 2. Generating `<source>` Tags
-
-Retrieved snippets are wrapped with numbered `<source>` tags, each having a unique, sequentially increasing ID.
-
-**Example implementation:**
+**Example implementation (`middleware.py`, lines 928–946):**
 
 ```python
 citation_idx = {}
@@ -53,64 +37,87 @@ for source in sources:
             )
 ```
 
-*Source: `middleware.py` lines 928–946.*
+### Result:
+
+The resulting context provided to the LLM looks like this:
+
+```html
+<source id="1" name="NASA">299,792,458 meters per second is the exact speed of light in vacuum.</source>
+<source id="2" name="AAA">AAA recommends taking breaks every two hours while driving.</source>
+```
 
 ---
 
-## 🛠️ Emitting Custom Citations
+## 2. 🧠 LLM System Prompt & Citation Markers
 
-Pipes, tools, and filters can manually emit citations via events. Open WebUI supports two main approaches:
+Open WebUI instructs the LLM through its RAG system prompt to insert inline citation markers `[n]` whenever information from these numbered sources is used in its response.
 
-### A. Incremental Emission (Streaming)
+**Example RAG Template instruction (`config.py`, lines 2218–2248):**
 
-Emit each citation individually as it occurs during response streaming.
-
-**Example (Pipe):**
-
-```python
-# 1. Yield citation placeholder in response
-yield "The speed of light is exactly 299,792,458 m/s [1]."
-
-# 2. Emit corresponding citation immediately
-if __event_emitter__:
-    await __event_emitter__({
-        "type": "source",
-        "data": {
-            "source": {"name": "NASA"},
-            "document": [
-                "299,792,458 meters per second is the exact speed of light in vacuum."
-            ],
-            "metadata": [
-                {
-                    "source": "https://science.nasa.gov/ems/03_movinglight/",
-                    "date_accessed": "2025-06-24"
-                }
-            ],
-        },
-    })
+```text
+### Task:
+Respond using the provided context, adding inline citations [id] only when the <source> tag explicitly contains an id attribute (e.g., <source id="1">).
 ```
 
-### B. Single Emission (All at Once)
+Thus, if the assistant references the first snippet, it includes `[1]` in the answer.
 
-Emit citations collectively at the end of the response. This can be combined with incremental text streaming or sent as one complete event.
+---
 
-**Example (Pipe using `chat:completion`):**
+## 3. 🚀 Frontend Parsing and Rendering
+
+The Open WebUI frontend parses these citation markers (`[1]`, `[2]`, etc.) and renders them as clickable references linked directly to the corresponding sources.
+
+* **Citation events** emitted by the backend (type: `"source"` or `"citation"`) are collected and stored alongside the message content.
+* **Markers** are dynamically replaced by clickable UI elements.
+
+**Frontend parsing example (`index.ts`, lines 60–75):**
+
+```typescript
+sourceIds.forEach((sourceId, idx) => {
+    const regex = new RegExp(`\\[${idx + 1}\\]`, 'g');
+    segment = segment.replace(regex, `<source_id data="${idx + 1}" title="${sourceId}" />`);
+});
+```
+
+When clicked, these references open detailed citation modals displaying snippet text and metadata.
+
+---
+
+## 4. 🔧 Emitting Custom Citations (Pipes, Filters, Tools)
+
+Extensions like pipes, filters, and tools can also emit custom citation events directly. Citations can be emitted incrementally during streaming or collectively at the end.
+
+**Incremental Emission Example (pipe):**
+
+```python
+yield "The speed of light is exactly 299,792,458 m/s [1]."
+await __event_emitter__({
+    "type": "source",
+    "data": {
+        "source": {"name": "NASA"},
+        "document": ["299,792,458 meters per second is the exact speed of light in vacuum."],
+        "metadata": [{"source": "https://science.nasa.gov/ems/03_movinglight/", "date_accessed": "2025-06-24"}],
+    },
+})
+```
+
+**Single Emission Example (pipe, `chat:completion`):**
 
 ```python
 await __event_emitter__({
     "type": "chat:completion",
     "data": {
-        "content": "Here’s some health advice based on research [1][2].",
+        "content": "This advice is supported by research [1][2].",
         "done": True,
         "sources": [
             {
                 "source": {"name": "Harvard Health"},
-                "document": ["Mediterranean diet linked to improved cardiovascular outcomes."],
+                "document": ["Mediterranean diet linked to cardiovascular health."],
                 "metadata": [{"source": "https://health.harvard.edu", "date_accessed": "2025-06-24"}],
             },
             {
                 "source": {"name": "Mayo Clinic"},
-                "document": ["Mediterranean diet reduces inflammation markers."],
+                "document": ["Diet reduces inflammation markers."],
                 "metadata": [{"source": "https://mayoclinic.org", "date_accessed": "2025-06-24"}],
             },
         ],
@@ -118,56 +125,13 @@ await __event_emitter__({
 })
 ```
 
-**Hybrid Approach:**
-You can also stream text incrementally and emit citations at the end with an empty `content` field to prevent overwriting the previously streamed text.
-
 ---
 
-## 🌐 Frontend Handling of Citations
+## 5. 💾 Persistence & Best Practices
 
-Open WebUI’s frontend automatically integrates citation data emitted by the backend:
+To ensure citations persist even if the user closes the window mid-response:
 
-### 1. Merging Citation Events
-
-The frontend listens for citation events (`"source"` or `"citation"`) and appends them to the current message’s `sources` list.
-
-```svelte
-if (type === 'source' || type === 'citation') {
-    if (message?.sources) {
-        message.sources.push(data);
-    } else {
-        message.sources = [data];
-    }
-}
-```
-
-*Source: `Chat.svelte` lines 316–339.*
-
-### 2. Rendering Inline Citations
-
-When rendering messages, the frontend scans for citation markers (`[1]`, `[2]`, etc.) and transforms them into clickable links that open detailed modals:
-
-```typescript
-// Replace citation markers with interactive elements
-sourceIds.forEach((sourceId, idx) => {
-    const regex = new RegExp(`\\[${idx + 1}\\]`, 'g');
-    segment = segment.replace(regex, `<source_id data="${idx + 1}" title="${sourceId}" />`);
-});
-```
-
-*Source: `index.ts` lines 60–75.*
-
-### 3. Citations Modal Display
-
-Clicking a citation opens a modal showing the snippet text and metadata like URLs, timestamps, and additional details.
-
----
-
-## 📦 Persistence and Best Practices
-
-* **Always number citations sequentially** `[1]`, `[2]`, `[3]`, etc.
-* **Include empty `content`** in `chat:completion` if only sending citations (prevents UI freezes).
-* **Manually persist citations** in the pipe for robustness, ensuring they remain available even if the user exits mid-response:
+* Manually save emitted citations at the end of the pipe:
 
 ```python
 chat_id = __metadata__.get("chat_id")
@@ -176,33 +140,4 @@ if chat_id and message_id:
     Chats.upsert_message_to_chat_by_id_and_message_id(
         chat_id, message_id, {"sources": emitted_citations}
     )
-```
-
----
-
-## 🚩 Minimal Complete Example Pipe
-
-A simplified, real-world streaming citation pipe:
-
-```python
-class Pipe:
-    async def pipe(
-        self,
-        body: dict[str, Any],
-        __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
-        __metadata__: dict[str, Any] | None = None,
-        *_,
-    ) -> AsyncGenerator[Any, None]:
-
-        response = "Traveling 2790 miles at 60 mph takes about 46.5 hours [1]."
-        citation = {
-            "source": {"name": "Calculator Tool"},
-            "document": ["Evaluated expression '2790 miles / 60 mph = 46.5 hours'"],
-            "metadata": [{"tool": "calculator", "date_accessed": datetime.datetime.utcnow().isoformat()}],
-        }
-
-        for word in response.split():
-            yield word + " "
-            if word.strip(".,!?") == "[1]" and __event_emitter__:
-                await __event_emitter__({"type": "source", "data": citation})
 ```
