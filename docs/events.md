@@ -18,44 +18,6 @@ Basic structure for events:
 
 ---
 
-## ✅ Example: Sending an Immediate Status Update
-
-Use `__event_emitter__` to instantly notify the user of backend activity:
-
-```python
-await __event_emitter__({
-    "type": "status",
-    "data": {"description": "Fetching your data...", "done": False}
-})
-```
-
-This updates the UI immediately.
-
----
-
-## ✅ Example: Prompting User Confirmation
-
-Use `__event_call__` to prompt the frontend and wait for the user's decision:
-
-```python
-confirmed = await __event_call__({
-    "type": "confirmation",
-    "data": {
-        "title": "Confirm Deletion",
-        "message": "Are you sure you want to delete this item?"
-    }
-})
-
-if confirmed:
-    # Proceed with deletion
-else:
-    # Operation aborted by user
-```
-
-Backend logic pauses until a response is received.
-
----
-
 ## 📑 Supported Event Types
 
 | Event Type                                       | Notes                                                                |
