@@ -8,6 +8,8 @@ This guide covers:
 * Custom citations (emitted via Pipes, Filters, Tools)
 * Frontend parsing and persistence
 
+> 📖 **Further Reading:** [Citations Pipe Example](functions/pipes/citations_example)
+
 ---
 
 ## 🔍 Built-In Citations (RAG/Web Search)
