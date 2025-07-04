@@ -46,9 +46,14 @@ For example:
 ```python
 async def pipe(
     self,
-    body: dict,
-    __event_emitter__: Callable[[dict], Awaitable[None]] = None,
-    __event_call__: Callable[[dict], Awaitable[Any]] = None,
+    body: dict[str, Any],
+    __user__: dict[str, Any],
+    __request__: Request,
+    __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
+    __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],
+    __files__: list[dict[str, Any]],
+    __metadata__: dict[str, Any],
+    __tools__: dict[str, Any],
 ):
     # Send a status update
     await __event_emitter__({
