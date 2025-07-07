@@ -199,13 +199,19 @@ await __event_emitter__({
     "type": "files",  # or "chat:message:files"
     "data": {
         "files": [
-            {"name": "report.pdf", "url": "/files/report.pdf"}
+            {"type": "image", "url": "https://example.com/generated.png"}
         ]
     }
 })
 ```
 
-This will make the frontend show the file (here *report.pdf*) as an attachment in the chat message.
+Each file object must include a `type` (for example `"image"` or `"file"`) and a
+`url`. Optional fields like `name` or `size` can also be supplied.  The frontend
+uses `type` to determine whether to render the file inline as an image or as a
+downloadable item.
+
+This event updates the message attachments in the UI but does not persist files
+to the database automatically.
 
 ---
 
