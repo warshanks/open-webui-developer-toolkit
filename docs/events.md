@@ -244,14 +244,24 @@ This replaces the conversation’s tags with the provided list.
 Add references or citations to support your message (commonly used for RAG or code execution results):
 
 ```python
-await __event_emitter__({
-    "type": "citation",  # or "source"
-    "data": {
-        "sources": [
-            {"title": "Event Docs", "url": "https://example.com/docs/events"}
-        ]
-    }
-})
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "source",        # "source" (preferred) or "citation"
+                    "data": {
+                        "source": {"name": "NASA"},
+                        "document": [
+                            "299 792 458 metres per second is the exact speed of light in vacuum."
+                        ],
+                        "metadata": [
+                            {
+                                "source": "https://science.nasa.gov/ems/03_movinglight/",
+                                "date_accessed": "2025-06-24"
+                            }
+                        ],
+                    },
+                }
+            )
 ```
 
 This event can add a list of source links or citations to the message (the UI typically displays them as reference links or footnotes).
