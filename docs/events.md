@@ -190,25 +190,44 @@ The frontend marks the chat as complete and prominently displays the error, ensu
 
 ---
 
+Here's the section rewritten clearly, using documentation best practices to enhance readability and clarity:
+
+---
+
 #### ✅ Attaching Files (`chat:message:files` / `files`)
 
-The `files` event attaches files to the current chat message. Files must first be uploaded and registered with Open WebUI's storage backend and database to ensure availability and security.
+The `files` event attaches files to the current chat message, making them appear as downloadable attachments or inline images in the Open WebUI frontend.
 
-##### ⚙️ How to Properly Save & Attach Files
+> **Important:** Emitting a `files` event alone **does not automatically upload or save files**. You must explicitly handle uploading and persistence.
 
-Always follow this three-step flow to correctly handle files in Open WebUI:
+---
 
-1. **Upload via Storage Provider** – use `Storage.upload_file()` and never write directly to `UPLOAD_DIR`.
-2. **Register File in Database** – call `Files.insert_new_file()` immediately after upload.
-3. **Emit the Files Event** – send the event with the download URL using `__event_emitter__`.
+##### How to Upload, Register, and Attach Files Correctly
+
+Always follow this three-step pattern when attaching files to ensure they persist and remain accessible:
+
+1. **Upload the file** using `Storage.upload_file()`.
+   **Never write directly to `UPLOAD_DIR`.**
+
+2. **Register the uploaded file** by creating a database record via `Files.insert_new_file()`.
+
+3. **Emit a `files` event** to inform the frontend UI about the newly uploaded file.
+
+For example:
 
 ```python
-import io, uuid, mimetypes
+import io
+import uuid
+import mimetypes
 from open_webui.storage.provider import Storage
 from open_webui.models.files import Files, FileForm
 
+# Generate unique identifiers
 file_id = str(uuid.uuid4())
-filename = f"{file_id}_plot.png"
+original_filename = "plot.png"
+stored_filename = f"{file_id}_{original_filename}"
+
+# Optional: Tags for cloud storage providers (e.g., AWS S3)
 tags = {
     "OpenWebUI-User-Email": user.email,
     "OpenWebUI-User-Id": user.id,
@@ -216,34 +235,38 @@ tags = {
     "OpenWebUI-File-Id": file_id,
 }
 
-# 1. Upload through storage provider (works for local, S3, GCS, Azure)
-contents, file_path = Storage.upload_file(io.BytesIO(png_bytes), filename, tags)
+# Step 1: Upload file via storage provider
+contents, file_path = Storage.upload_file(
+    io.BytesIO(png_bytes),
+    stored_filename,
+    tags=tags  # Optional; omit or pass empty dict {} if not needed
+)
 
-# 2. Register file in the database
+# Step 2: Register the file in the database
 Files.insert_new_file(
     user.id,
     FileForm(
         id=file_id,
-        filename="plot.png",
+        filename=original_filename,
         path=file_path,
         meta={
-            "name": "plot.png",
-            "content_type": mimetypes.guess_type("plot.png")[0] or "image/png",
+            "name": original_filename,
+            "content_type": mimetypes.guess_type(original_filename)[0] or "application/octet-stream",
             "size": len(contents),
-            "data": {},
+            "data": {},  # Optional additional metadata
         },
     ),
 )
 
-# 3. Emit the file event to the UI
+# Step 3: Emit files event to frontend UI
 await __event_emitter__({
     "type": "files",
     "data": {
         "files": [
             {
                 "id": file_id,
-                "type": "image",
-                "name": "plot.png",
+                "type": "image",  # "file" for generic downloads
+                "name": original_filename,
                 "url": f"/api/v1/files/{file_id}/content",
             }
         ]
@@ -251,29 +274,34 @@ await __event_emitter__({
 })
 ```
 
-**Important notes:**
+---
 
-* **Allowed extensions** are enforced by `ALLOWED_FILE_EXTENSIONS` unless `internal=True`.
-* Setting `process=True` on upload triggers automatic processing for documents or audio.
-* Read files later with `Storage.get_file(file.path)`.
-* To delete, call `Storage.delete_file(file.path)` and `Files.delete_file_by_id(file_id)`.
-* Tags supplied on upload propagate to cloud providers when tagging is enabled.
+##### Explanation of Each Step
 
-Example attachments for different file types:
+| Step         | Method                    | Purpose                                                                    | Required? |
+| ------------ | ------------------------- | -------------------------------------------------------------------------- | --------- |
+| **Upload**   | `Storage.upload_file()`   | Stores file bytes safely, handling cloud/local storage.                    | ✅ Yes     |
+| **Register** | `Files.insert_new_file()` | Creates DB record ensuring persistence, availability, and proper security. | ✅ Yes     |
+| **Emit**     | `__event_emitter__`       | Sends the attachment info to frontend UI.                                  | ✅ Yes     |
 
-```python
-await __event_emitter__({
-    "type": "files",
-    "data": {
-        "files": [
-            {"id": img_id, "type": "image", "name": "graph.png", "url": f"/api/v1/files/{img_id}/content"},
-            {"id": pdf_id, "type": "file", "name": "report.pdf", "url": f"/api/v1/files/{pdf_id}/content"},
-        ]
-    },
-})
-```
 
 ---
+
+##### Best Practices & Important Notes
+
+* **Allowed file extensions** are enforced via `ALLOWED_FILE_EXTENSIONS` unless explicitly bypassed with `internal=True`.
+* **Automatic processing (`process=True`)** automatically triggers extraction (transcription, embeddings) on supported uploads—control explicitly as needed.
+* **Reading files later**: always use:
+
+  ```python
+  contents = Storage.get_file(file.path)
+  ```
+* **Deleting files**: remove both storage and database entries explicitly:
+
+  ```python
+  Storage.delete_file(file.path)
+  Files.delete_file_by_id(file_id)
+  ```
 
 #### ✅ Updating Conversation Title (`chat:title`)
 
