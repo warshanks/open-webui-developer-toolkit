@@ -188,19 +188,11 @@ await __event_emitter__({
 
 The frontend marks the chat as complete and prominently displays the error, ensuring users aren’t left waiting indefinitely.
 
----
-
-Here's the section rewritten clearly, using documentation best practices to enhance readability and clarity:
-
----
-
 #### ✅ Attaching Files (`chat:message:files` / `files`)
 
 The `files` event attaches files to the current chat message, making them appear as downloadable attachments or inline images in the Open WebUI frontend.
 
 > **Important:** Emitting a `files` event alone **does not automatically upload or save files**. You must explicitly handle uploading and persistence.
-
----
 
 ##### How to Upload, Register, and Attach Files Correctly
 
@@ -274,8 +266,6 @@ await __event_emitter__({
 })
 ```
 
----
-
 ##### Explanation of Each Step
 
 | Step         | Method                    | Purpose                                                                    | Required? |
@@ -284,8 +274,6 @@ await __event_emitter__({
 | **Register** | `Files.insert_new_file()` | Creates DB record ensuring persistence, availability, and proper security. | ✅ Yes     |
 | **Emit**     | `__event_emitter__`       | Sends the attachment info to frontend UI.                                  | ✅ Yes     |
 
-
----
 
 ##### Best Practices & Important Notes
 
