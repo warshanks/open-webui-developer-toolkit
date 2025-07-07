@@ -241,30 +241,40 @@ This replaces the conversation’s tags with the provided list.
 
 #### ✅ Citations and Sources (`source` or `citation`)
 
-Add references or citations to support your message (commonly used for RAG or code execution results):
+Emit citation data alongside numbered placeholders in your message text. The
+frontend pairs each `[n]` marker with the corresponding entry from the emitted
+`sources` list.
 
 ```python
-        if __event_emitter__:
-            await __event_emitter__(
-                {
-                    "type": "source",        # "source" (preferred) or "citation"
-                    "data": {
-                        "source": {"name": "NASA"},
-                        "document": [
-                            "299 792 458 metres per second is the exact speed of light in vacuum."
-                        ],
-                        "metadata": [
-                            {
-                                "source": "https://science.nasa.gov/ems/03_movinglight/",
-                                "date_accessed": "2025-06-24"
-                            }
-                        ],
-                    },
-                }
-            )
+if __event_emitter__:
+    await __event_emitter__(
+        {
+            "type": "source",        # "source" (preferred) or "citation" for backwards compatibility
+            "data": {
+                "source": {"name": "NASA"},
+                "document": [
+                    "299 792 458 metres per second is the exact speed of light in vacuum."
+                ],
+                "metadata": [
+                    {
+                        "source": "https://science.nasa.gov/ems/03_movinglight/",
+                        "date_accessed": "2025-06-24",
+                    }
+                ],
+            },
+        }
+    )
 ```
 
-This event can add a list of source links or citations to the message (the UI typically displays them as reference links or footnotes).
+You can stream citations incrementally (yield text such as `[1]` then emit a
+matching `source` event) or send them all at once using
+`{"type": "chat:completion", "data": {"content": "", "sources": [...]}}` at the
+end of the response. See the
+[Citations Example Pipe](../functions/pipes/citations_example) for a full
+demonstration.
+
+This event lets you attach source links or documents to a message. The UI will
+render the markers as clickable references and display their details in a modal.
 
 ---
 
