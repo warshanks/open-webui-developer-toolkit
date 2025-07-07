@@ -266,15 +266,6 @@ await __event_emitter__({
 })
 ```
 
-##### Explanation of Each Step
-
-| Step         | Method                    | Purpose                                                                    | Required? |
-| ------------ | ------------------------- | -------------------------------------------------------------------------- | --------- |
-| **Upload**   | `Storage.upload_file()`   | Stores file bytes safely, handling cloud/local storage.                    | ✅ Yes     |
-| **Register** | `Files.insert_new_file()` | Creates DB record ensuring persistence, availability, and proper security. | ✅ Yes     |
-| **Emit**     | `__event_emitter__`       | Sends the attachment info to frontend UI.                                  | ✅ Yes     |
-
-
 ##### Best Practices & Important Notes
 
 * **Allowed file extensions** are enforced via `ALLOWED_FILE_EXTENSIONS` unless explicitly bypassed with `internal=True`.
