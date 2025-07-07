@@ -26,7 +26,7 @@ Each event is represented as a dictionary with a **type** and **data** payload:
 | **`chat:message:delta`** / **`message`**         | Stream partial text content (append incremental chunks of a response).                    |
 | **`chat:message`** / **`replace`**               | Replace or set the entire message content (usually used to finalize a streamed response). |
 | **`chat:completion`**                            | Explicitly denote the final completion of a chat response (advanced use).                 |
-| **`chat:message:files`** / **`files`**           | Attach or update files associated with a message (for uploads or outputs).                |
+| **`chat:message:files`** / **`files`**           | Attach files to the current message (see [Attaching Files](#-attaching-files-chatmessagefiles--files)). |
 | **`chat:title`**                                 | Dynamically set or update the conversation title.                                         |
 | **`chat:tags`**                                  | Update tags associated with the conversation.                                             |
 | **`source`** / **`citation`**                    | Add reference citations or other source data to a message.                                |
@@ -190,28 +190,88 @@ The frontend marks the chat as complete and prominently displays the error, ensu
 
 ---
 
-#### ✅ Attaching Files (`chat:message:files` or `files`)
+#### ✅ Attaching Files (`chat:message:files` / `files`)
 
-Attach or update files in the current message (e.g. providing a generated report or image as output):
+The `files` event attaches files to the current chat message. Files must first be uploaded and registered with Open WebUI's storage backend and database to ensure availability and security.
+
+##### ⚙️ How to Properly Save & Attach Files
+
+Always follow this three-step flow to correctly handle files in Open WebUI:
+
+1. **Upload via Storage Provider** – use `Storage.upload_file()` and never write directly to `UPLOAD_DIR`.
+2. **Register File in Database** – call `Files.insert_new_file()` immediately after upload.
+3. **Emit the Files Event** – send the event with the download URL using `__event_emitter__`.
 
 ```python
+import io, uuid, mimetypes
+from open_webui.storage.provider import Storage
+from open_webui.models.files import Files, FileForm
+
+file_id = str(uuid.uuid4())
+filename = f"{file_id}_plot.png"
+tags = {
+    "OpenWebUI-User-Email": user.email,
+    "OpenWebUI-User-Id": user.id,
+    "OpenWebUI-User-Name": user.name,
+    "OpenWebUI-File-Id": file_id,
+}
+
+# 1. Upload through storage provider (works for local, S3, GCS, Azure)
+contents, file_path = Storage.upload_file(io.BytesIO(png_bytes), filename, tags)
+
+# 2. Register file in the database
+Files.insert_new_file(
+    user.id,
+    FileForm(
+        id=file_id,
+        filename="plot.png",
+        path=file_path,
+        meta={
+            "name": "plot.png",
+            "content_type": mimetypes.guess_type("plot.png")[0] or "image/png",
+            "size": len(contents),
+            "data": {},
+        },
+    ),
+)
+
+# 3. Emit the file event to the UI
 await __event_emitter__({
-    "type": "files",  # or "chat:message:files"
+    "type": "files",
     "data": {
         "files": [
-            {"type": "image", "url": "https://example.com/generated.png"}
+            {
+                "id": file_id,
+                "type": "image",
+                "name": "plot.png",
+                "url": f"/api/v1/files/{file_id}/content",
+            }
         ]
-    }
+    },
 })
 ```
 
-Each file object must include a `type` (for example `"image"` or `"file"`) and a
-`url`. Optional fields like `name` or `size` can also be supplied.  The frontend
-uses `type` to determine whether to render the file inline as an image or as a
-downloadable item.
+**Important notes:**
 
-This event updates the message attachments in the UI but does not persist files
-to the database automatically.
+* **Allowed extensions** are enforced by `ALLOWED_FILE_EXTENSIONS` unless `internal=True`.
+* Setting `process=True` on upload triggers automatic processing for documents or audio.
+* Read files later with `Storage.get_file(file.path)`.
+* To delete, call `Storage.delete_file(file.path)` and `Files.delete_file_by_id(file_id)`.
+* Tags supplied on upload propagate to cloud providers when tagging is enabled.
+
+Example attachments for different file types:
+
+```python
+await __event_emitter__({
+    "type": "files",
+    "data": {
+        "files": [
+            {"id": img_id, "type": "image", "name": "graph.png", "url": f"/api/v1/files/{img_id}/content"},
+            {"id": pdf_id, "type": "file", "name": "report.pdf", "url": f"/api/v1/files/{pdf_id}/content"},
+        ]
+    },
+})
+```
 
 ---
 
@@ -286,19 +346,19 @@ render the markers as clickable references and display their details in a modal.
 
 #### ✅ Notifications (`notification`)
 
-Show a toast notification to the user (non-intrusive alert at the bottom/top of the app):
+Before Open WebUI 0.7 notifications used `{kind, message}`. Modern versions expect `{type, content}`:
 
 ```python
 await __event_emitter__({
     "type": "notification",
     "data": {
-        "kind": "success",  # could be "info", "warning", "error"
-        "message": "Your data was successfully saved!"
+        "type": "success",  # "success", "info", "warning", or "error"
+        "content": "File uploaded successfully!"
     }
 })
 ```
 
-This will display a small **Success** notification to the user. (The `kind` or type field indicates the style of notification.)
+The `type` field controls the toast style while `content` is the displayed text.
 
 ---
 
