@@ -286,10 +286,10 @@ await __event_emitter__({
   ```
 * **Deleting files**: remove both storage and database entries explicitly:
 
-  ```python
+```python
 Storage.delete_file(file.path)        # Remove actual file data (disk/cloud)
 Files.delete_file_by_id(file_id)      # Remove file metadata and references from DB
-  ```
+```
 
 #### ✅ Updating Conversation Title (`chat:title`)
 
