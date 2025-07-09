@@ -667,9 +667,6 @@ class Pipe:
                 __event_call__,
             )
 
-
-
-        
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
