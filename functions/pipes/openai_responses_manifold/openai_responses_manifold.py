@@ -17,6 +17,7 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
+import textwrap
 from typing import Tuple
 import asyncio
 import datetime
@@ -685,7 +686,6 @@ class Pipe:
         total_usage: dict[str, Any] = {}
 
         status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
-        status_indicator._expanded = True  # Force status indicator to be expanded by default
         status_indicator._done = False
 
         # Emit initial "thinking" block:
@@ -866,6 +866,15 @@ class Pipe:
                         if hidden_uid_marker:
                             assistant_message += hidden_uid_marker
                             await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+
+
+                    # Add status indicator with result
+                    for output in function_outputs:
+                        assistant_message = await status_indicator.add(
+                            assistant_message,
+                            status_title="🛠️ Received tool result",
+                            status_content=f"```python\n{output.get('output', '')}\n```",
+                        )
                     body.input.extend(function_outputs)
                 else:
                     break
@@ -919,7 +928,6 @@ class Pipe:
         reasoning_map: dict[int, str] = {}
 
         status_indicator = ExpandableStatusIndicator(event_emitter)
-        status_indicator._expanded = True
         status_indicator._done = False
 
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
@@ -1052,18 +1060,25 @@ class Pipe:
                 # Run tools if requested
                 calls = [i for i in items if i.get("type") == "function_call"]
                 if calls:
-                    fn_outputs = await self._execute_function_calls(calls, tools)
+                    function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
                         hidden_uid_marker = persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
-                            fn_outputs,
+                            function_outputs,
                             openwebui_model_id,
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         assistant_message += hidden_uid_marker
 
-                    body.input.extend(fn_outputs)
+                    # Add status indicator with result
+                    for output in function_outputs:
+                        assistant_message = await status_indicator.add(
+                            assistant_message,
+                            status_title="🛠️ Received tool result",
+                            status_content=f"```python\n{output.get('output', '')}\n```",
+                        )
+                    body.input.extend(function_outputs)
                 else:
                     break
 
@@ -1536,9 +1551,6 @@ class ExpandableStatusIndicator:
     ▸ `reset()`
         Clear bullets and restart the internal timer.
 
-    ▸ `toggle_expanded(on: bool)`
-        Expand/collapse the `<details>` element for future renders.
-
     Constructor
     ───────────
     `ExpandableStatusIndicator(event_emitter=None, *, expanded=False)`
@@ -1559,8 +1571,7 @@ class ExpandableStatusIndicator:
 
     # Regex reused for fast replacement of the existing block.
     _BLOCK_RE = re.compile(
-        r"<details\s+type=\"status\".*?</details>",
-        re.DOTALL | re.IGNORECASE,
+        r"<details\s+type=\"status\".*?</details>", re.DOTALL | re.IGNORECASE
     )
 
     def __init__(
@@ -1568,7 +1579,6 @@ class ExpandableStatusIndicator:
         event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> None:
         self._event_emitter = event_emitter
-        self._expanded: bool = False
         self._items: List[Tuple[str, List[str]]] = []
         self._started = time.perf_counter()
         self._done: bool = False
@@ -1584,16 +1594,14 @@ class ExpandableStatusIndicator:
         *,
         emit: bool = True,
     ) -> str:
-        """Add a status bullet (or sub‑bullet if *title* repeats)."""
+        """Append a new status bullet (or extend the last one if title repeats)."""
         self._assert_not_finished("add")
 
         if not self._items or self._items[-1][0] != status_title:
             self._items.append((status_title, []))
 
         if status_content:
-            self._items[-1][1].extend(
-                line.strip() for line in status_content.splitlines() if line.strip()
-            )
+            self._items[-1][1].append(status_content.strip())
 
         return await self._render(assistant_message, emit)
 
@@ -1605,23 +1613,19 @@ class ExpandableStatusIndicator:
         new_content: Optional[str] = None,
         emit: bool = True,
     ) -> str:
-        """Replace the most recent status title and/or its sub‑bullets."""
+        """Replace the most recent status bullet’s title and/or its content."""
         self._assert_not_finished("update_last_status")
 
         if not self._items:
-            # no status yet → create one
             return await self.add(
-                assistant_message,
-                new_title or "Status",
-                new_content,
-                emit=emit,
+                assistant_message, new_title or "Status", new_content, emit=emit
             )
 
         title, subs = self._items[-1]
         if new_title:
             title = new_title
         if new_content is not None:
-            subs = [line.strip() for line in new_content.splitlines() if line.strip()]
+            subs = [new_content.strip()]
 
         self._items[-1] = (title, subs)
         return await self._render(assistant_message, emit)
@@ -1632,66 +1636,53 @@ class ExpandableStatusIndicator:
         *,
         emit: bool = True,
     ) -> str:
-        """
-        Finalise the status block.
-
-        Adds an elapsed‑time bullet and marks `done="true"`.  Multiple calls are
-        ignored to prevent double “Finished …” lines.
-        """
         if self._done:
-            return assistant_message  # idempotent
-
+            return assistant_message
         elapsed = time.perf_counter() - self._started
         self._items.append((f"Finished in {elapsed:.1f} s", []))
         self._done = True
         return await self._render(assistant_message, emit)
 
-    def reset(self) -> None:
-        """Erase all statuses and restart the timer (allows safe reuse)."""
-        self._items.clear()
-        self._started = time.perf_counter()
-        self._done = False
-
-    def toggle_expanded(self, on: bool) -> None:
-        """Programmatically expand or collapse the details block."""
-        self._expanded = bool(on)
-
-    # --------------------------------------------------------------------- #
-    # Internal helpers                                                      #
-    # --------------------------------------------------------------------- #
+    # ------------------------------------------------------------------ #
+    # Rendering helpers                                                  #
+    # ------------------------------------------------------------------ #
     def _assert_not_finished(self, method: str) -> None:
         if self._done:
             raise RuntimeError(
-                f"Cannot call {method}(): status indicator is already finished. "
-                "Call reset() first if you need to start a new run."
+                f"Cannot call {method}(): status indicator is already finished."
             )
 
     async def _render(self, assistant_message: str, emit: bool) -> str:
-        status_block = self._render_status_block()
-        updated_message = (
-            self._BLOCK_RE.sub(status_block, assistant_message, 1)
+        block = self._render_status_block()
+        full_msg = (
+            self._BLOCK_RE.sub(block, assistant_message, 1)
             if self._BLOCK_RE.search(assistant_message)
-            else f"{status_block}{assistant_message}" # There is no need to add a \n in between the status block and assistant message.  Adding one adds whitespace.
+            else f"{block}{assistant_message}"
         )
-
         if emit and self._event_emitter:
-            await self._event_emitter(
-                {"type": "chat:message", "data": {"content": updated_message}} # This replaces the entire message in the UI
-            )
-        return updated_message
+            await self._event_emitter({"type": "chat:message", "data": {"content": full_msg}})
+        return full_msg
 
     def _render_status_block(self) -> str:
         lines: List[str] = []
+
         for title, subs in self._items:
-            lines.append(f"- **{title}**")
-            lines.extend(f"  - {sub}" for sub in subs)
+            lines.append(f"- **{title}**")  # top-level bullet
+
+            for sub in subs:
+                # Indent entire sub-item by 2 spaces; prepend "- " exactly once.
+                sub_lines = sub.splitlines()
+                if sub_lines:
+                    lines.append(f"  - {sub_lines[0]}")  # first line with dash
+                    # All subsequent lines indented 4 spaces to align with markdown
+                    if len(sub_lines) > 1:
+                        lines.extend(textwrap.indent("\n".join(sub_lines[1:]), "    ").splitlines())
 
         body_md = "\n".join(lines) if lines else "_No status yet._"
         summary = self._items[-1][0] if self._items else "Working…"
 
         return (
-            f'<details type="status"{" open" if self._expanded else ""} '
-            f'done="{str(self._done).lower()}">\n'
+            f'<details type="status" done="{str(self._done).lower()}">\n'
             f"<summary>{summary}</summary>\n\n{body_md}\n\n---</details>"
         )
 
