@@ -46,9 +46,14 @@ For example:
 ```python
 async def pipe(
     self,
-    body: dict,
-    __event_emitter__: Callable[[dict], Awaitable[None]] = None,
-    __event_call__: Callable[[dict], Awaitable[Any]] = None,
+    body: dict[str, Any],
+    __user__: dict[str, Any],
+    __request__: Request,
+    __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]],
+    __event_call__: Callable[[dict[str, Any]], Awaitable[Any]],
+    __files__: list[dict[str, Any]],
+    __metadata__: dict[str, Any],
+    __tools__: dict[str, Any],
 ):
     # Send a status update
     await __event_emitter__({
@@ -57,7 +62,7 @@ async def pipe(
     })
 ```
 
-> **Note:** Only parameters that you explicitly declare in the function signature  will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.
+> **Note:** Only parameters that you explicitly declare in the function signature  will be injected. If you leave out `__event_emitter__` or `__event_call__`, those helpers will not be available in your function.  See [Under the Hood](#-under-the-hood) for further details on how this works.
 
 ---
 
