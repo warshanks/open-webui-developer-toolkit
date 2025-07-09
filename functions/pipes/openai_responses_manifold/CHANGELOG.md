@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ## [0.8.19] - 2025-07-09
 - Refactored deep research flow and removed redundant helper functions.
 
+## [0.8.20] - 2025-07-10
+- Simplified deep research logic via _run_deep_research_request.
+- Added valves for clarification and rewrite models.
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 
