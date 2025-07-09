@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.19
+version: 0.8.20
 license: MIT
 """
 
@@ -574,6 +574,14 @@ class Pipe:
             default=DEEP_RESEARCH_REWRITE_PROMPT,
             description="Prompt used to rewrite the request into a structured instruction set.",
         )
+        DEEP_RESEARCH_CLARIFY_MODEL: str = Field(
+            default="gpt-4.1",
+            description="Model used to generate clarifying questions before deep research runs.",
+        )
+        DEEP_RESEARCH_REWRITE_MODEL: str = Field(
+            default="gpt-4.1",
+            description="Model used to rewrite the user's request prior to deep research execution.",
+        )
         DEEP_RESEARCH_DEFAULT_TOOLS: List[str] = Field(
             default_factory=lambda: list(DEEP_RESEARCH_DEFAULT_TOOLS),
             description="Default tools enabled for deep research runs.",
@@ -648,52 +656,22 @@ class Pipe:
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
+        if model_family in FEATURE_SUPPORT["deep_research"]:
+            return await self._run_deep_research_request(
+                completions_body,
+                responses_body,
+                valves,
+                __event_emitter__,
+                __metadata__,
+                __tools__,
+                __event_call__,
+            )
 
-        # ─── Deep Research Flow -------------------------------------------------
-        is_dr = model_family in FEATURE_SUPPORT["deep_research"]
-        phase = _detect_dr_phase(completions_body.messages) if is_dr else None
 
-        if is_dr and phase is None and valves.DEEP_RESEARCH_ENABLE_CLARIFICATION:
-            user_text = _extract_plain_text(completions_body.messages[-1].get("content"))
-            clarify = await self._run_task_model_request({
-                "model": responses_body.model,
-                "instructions": valves.DEEP_RESEARCH_CLARIFY_PROMPT,
-                "input": user_text,
-            }, valves)
-            return clarify + wrap_marker(create_marker("dr_state", metadata={"phase": "clarify"}))
 
-        if is_dr and phase == "clarify" and valves.DEEP_RESEARCH_ENABLE_REWRITING:
-            orig_text = _extract_plain_text(_find_prior_user_message(completions_body.messages).get("content"))
-            clar_text = _extract_plain_text(completions_body.messages[-1].get("content"))
-            combined = f"Original:\n{orig_text}\n\nClarifications:\n{clar_text}"
-
-            rewritten = await self._run_task_model_request({
-                "model": responses_body.model,
-                "instructions": valves.DEEP_RESEARCH_REWRITE_PROMPT,
-                "input": combined,
-            }, valves)
-
-            if __event_call__:
-                confirm = await __event_call__({
-                    "type": "input",
-                    "data": {
-                        "title": "Deep Research",
-                        "message": "Review / edit the prompt then press submit",
-                        "placeholder": rewritten,
-                    },
-                })
-                if isinstance(confirm, str) and confirm.strip():
-                    rewritten = confirm.strip()
-
-            responses_body.instructions = valves.DEEP_RESEARCH_SYSTEM_MESSAGE
-            responses_body.input = rewritten
-            responses_body.tools = ResponsesBody.transform_tools(valves.DEEP_RESEARCH_DEFAULT_TOOLS, strict=True)
-            responses_body.reasoning = {"summary": valves.DEEP_RESEARCH_REASONING_SUMMARY}
-            phase = "execute"
-
+        
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
-            self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
         # Add Open WebUI Tools (if any) to the ResponsesBody.
@@ -764,8 +742,6 @@ class Pipe:
                 responses_body, valves, __event_emitter__, __metadata__, __tools__
             )
 
-        if is_dr and phase == "execute":
-            result += wrap_marker(create_marker("dr_state", metadata={"phase": "done"}))
 
         return result
 
@@ -792,6 +768,7 @@ class Pipe:
         # Emit initial "thinking" block:
         # If reasoning model, write "Thinking…" to the expandable status emitter.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
+
         if model_family in FEATURE_SUPPORT["reasoning"]:
             assistant_message = await status_indicator.add(
                 assistant_message,
@@ -1032,6 +1009,7 @@ class Pipe:
         status_indicator._done = False
 
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", body.model)
+
         if model_family in FEATURE_SUPPORT["reasoning"]:
             assistant_message = await status_indicator.add(
                 assistant_message,
@@ -1241,6 +1219,93 @@ class Pipe:
         message = "".join(text_parts)
 
         return message
+
+    async def _run_deep_research_request(
+        self,
+        completions_body: CompletionsBody,
+        responses_body: ResponsesBody,
+        valves: Pipe.Valves,
+        event_emitter: Callable[[Dict[str, Any]], Awaitable[None]],
+        metadata: dict[str, Any],
+        tools: list[dict[str, Any]] | dict[str, Any] | None,
+        event_call: Callable[[dict[str, Any]], Awaitable[Any]] | None,
+    ) -> str:
+        """Run the entire Deep Research workflow."""
+
+        phase = _detect_dr_phase(completions_body.messages)
+
+        if phase is None and valves.DEEP_RESEARCH_ENABLE_CLARIFICATION:
+            user_text = _extract_plain_text(completions_body.messages[-1].get("content"))
+            clarify_body = ResponsesBody(
+                model=valves.DEEP_RESEARCH_CLARIFY_MODEL,
+                instructions=valves.DEEP_RESEARCH_CLARIFY_PROMPT,
+                input=user_text,
+                stream=responses_body.stream,
+            )
+            if clarify_body.stream:
+                clarify = await self._run_streaming_loop(
+                    clarify_body, valves, event_emitter, metadata, tools or {}
+                )
+            else:
+                clarify = await self._run_nonstreaming_loop(
+                    clarify_body, valves, event_emitter, metadata, tools or {}
+                )
+            return clarify + wrap_marker(create_marker("dr_state", metadata={"phase": "clarify"}))
+
+        if phase == "clarify" and valves.DEEP_RESEARCH_ENABLE_REWRITING:
+            orig_text = _extract_plain_text(
+                _find_prior_user_message(completions_body.messages).get("content")
+            )
+            clar_text = _extract_plain_text(completions_body.messages[-1].get("content"))
+            combined = f"Original:\n{orig_text}\n\nClarifications:\n{clar_text}"
+
+            rewrite_body = ResponsesBody(
+                model=valves.DEEP_RESEARCH_REWRITE_MODEL,
+                instructions=valves.DEEP_RESEARCH_REWRITE_PROMPT,
+                input=combined,
+                stream=responses_body.stream,
+            )
+
+            if rewrite_body.stream:
+                rewritten = await self._run_streaming_loop(
+                    rewrite_body, valves, event_emitter, metadata, tools or {}
+                )
+            else:
+                rewritten = await self._run_nonstreaming_loop(
+                    rewrite_body, valves, event_emitter, metadata, tools or {}
+                )
+
+            if event_call:
+                confirm = await event_call(
+                    {
+                        "type": "input",
+                        "data": {
+                            "title": "Deep Research",
+                            "message": "Review / edit the prompt then press submit",
+                            "placeholder": rewritten,
+                        },
+                    }
+                )
+                if isinstance(confirm, str) and confirm.strip():
+                    rewritten = confirm.strip()
+
+            responses_body.instructions = valves.DEEP_RESEARCH_SYSTEM_MESSAGE
+            responses_body.input = rewritten
+            responses_body.tools = ResponsesBody.transform_tools(
+                valves.DEEP_RESEARCH_DEFAULT_TOOLS, strict=True
+            )
+            responses_body.reasoning = {"summary": valves.DEEP_RESEARCH_REASONING_SUMMARY}
+
+        if responses_body.stream:
+            result = await self._run_streaming_loop(
+                responses_body, valves, event_emitter, metadata, tools or {}
+            )
+        else:
+            result = await self._run_nonstreaming_loop(
+                responses_body, valves, event_emitter, metadata, tools or {}
+            )
+
+        return result + wrap_marker(create_marker("dr_state", metadata={"phase": "done"}))
 
     # 4.5 LLM HTTP Request Helpers
     async def send_openai_responses_streaming_request(
