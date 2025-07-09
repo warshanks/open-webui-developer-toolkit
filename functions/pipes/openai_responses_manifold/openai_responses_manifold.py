@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.21
+version: 0.8.22
 license: MIT
 """
 
@@ -1287,19 +1287,47 @@ class Pipe:
         metadata: dict[str, Any],
         tools: list[dict[str, Any]] | dict[str, Any] | None,
     ) -> str:
-        """Run the entire Deep Research workflow."""
+        """Execute the multi-phase Deep Research workflow.
+
+        This helper orchestrates three separate model calls using the existing
+        chat history.  Each step swaps the system prompt while leaving the prior
+        messages intact and appends a hidden ``dr_state`` marker to signal the
+        next phase.
+
+        1. **Clarify** – When no ``dr_state`` marker is present the most recent
+           user message is treated as the initial request.  The clarifier model
+           is invoked with ``DEEP_RESEARCH_CLARIFY_PROMPT`` and the full chat
+           history so far.  Its response ends with ``dr_state:clarify``.
+
+        2. **Rewrite** – Triggered once the user has answered the clarifying
+           questions.  The rewriting model uses the entire conversation with
+           ``DEEP_RESEARCH_REWRITE_PROMPT`` to produce a structured research
+           prompt.  That prompt is persisted as a hidden developer message and
+           returned with markers referencing the stored item and
+           ``dr_state:confirm``.
+
+        3. **Confirm/Execute** – When ``dr_state:confirm`` is detected the stored
+           developer message is retrieved and appended to the conversation.  The
+           system prompt becomes ``DEEP_RESEARCH_SYSTEM_MESSAGE`` and the deep
+           research model is called with web search enabled.  The final reply
+           includes ``dr_state:done``.
+
+        Each stage simply reuses the accumulated chat history, ensuring context
+        is preserved across the entire workflow.
+        """
 
         # Correctly unpack the phase, ulid, idx (index of last assistant dr_state marker)
         phase, _, idx = _detect_dr_phase(completions_body.messages)
 
         # PHASE 1: CLARIFY (ask clarifying questions)
         if phase is None and valves.DEEP_RESEARCH_ENABLE_CLARIFICATION:
-            user_text = _extract_plain_text(completions_body.messages[-1].get("content"))
             clarify_body = ResponsesBody(
                 model=valves.DEEP_RESEARCH_CLARIFY_MODEL,
                 instructions=valves.DEEP_RESEARCH_CLARIFY_PROMPT,
                 input=ResponsesBody.transform_messages_to_input(
-                    [{"role": "user", "content": user_text}]
+                    completions_body.messages,
+                    chat_id=metadata.get("chat_id"),
+                    openwebui_model_id=metadata.get("model", {}).get("id"),
                 ),
                 stream=responses_body.stream,
             )
@@ -1315,17 +1343,13 @@ class Pipe:
 
         # PHASE 2: REWRITE (rewrite as structured research prompt)
         if phase == "clarify" and valves.DEEP_RESEARCH_ENABLE_REWRITING:
-            # Find the user message just before the latest assistant message
-            prior_user_msg = _find_prior_user_message(completions_body.messages)
-            orig_text = _extract_plain_text(prior_user_msg.get("content")) if prior_user_msg else ""
-            clar_text = _extract_plain_text(completions_body.messages[-1].get("content"))
-            combined = f"Original:\n{orig_text}\n\nClarifications:\n{clar_text}"
-
             rewrite_body = ResponsesBody(
                 model=valves.DEEP_RESEARCH_REWRITE_MODEL,
                 instructions=valves.DEEP_RESEARCH_REWRITE_PROMPT,
                 input=ResponsesBody.transform_messages_to_input(
-                    [{"role": "user", "content": combined}]
+                    completions_body.messages,
+                    chat_id=metadata.get("chat_id"),
+                    openwebui_model_id=metadata.get("model", {}).get("id"),
                 ),
                 stream=responses_body.stream,
             )
@@ -1343,7 +1367,13 @@ class Pipe:
             hidden_uid_marker = persist_openai_response_items(
                 metadata.get("chat_id"),
                 metadata.get("message_id"),
-                [{"role": "developer", "content": [{"type": "input_text", "text": rewritten}]}],
+                [
+                    {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [{"type": "input_text", "text": rewritten}],
+                    }
+                ],
                 metadata.get("model", {}).get("id"),
             )
 
@@ -1351,18 +1381,44 @@ class Pipe:
             return (
                 rewritten
                 + hidden_uid_marker
+                + wrap_marker(create_marker("dr_state", metadata={"phase": "confirm"}))
             )
 
         # PHASE 3: CONFIRM/EXECUTE (user said start, now actually run the research request)
         if phase == "confirm":
-            # Find most recent user message (should be the rewritten prompt)
-            prior_user_msg = _find_prior_user_message(completions_body.messages)
-            prompt = _extract_plain_text(prior_user_msg.get("content")) if prior_user_msg else ""
-            if not prompt or not prompt.strip():
-                raise ValueError("Deep-research prompt could not be recovered; ensure the previous user message contains the rewritten prompt.")
+            # Retrieve the persisted rewrite prompt from the previous assistant message
+            rewrite_msg = completions_body.messages[idx]
+            rewrite_text = _extract_plain_text(rewrite_msg.get("content"))
+            item_ids = [
+                mk["ulid"]
+                for mk in extract_markers(rewrite_text, parsed=True)
+                if mk.get("item_type") == "message"
+            ]
+            items = fetch_openai_response_items(
+                metadata.get("chat_id"),
+                item_ids,
+                openwebui_model_id=metadata.get("model", {}).get("id"),
+            )
+            prompt = ""
+            for item in items.values():
+                if item.get("role") == "developer":
+                    prompt = _extract_plain_text(item.get("content"))
+                    break
+            if not prompt:
+                raise ValueError(
+                    "Deep-research prompt could not be recovered; ensure the rewrite step stored the prompt."
+                )
+
+            history = completions_body.messages[: idx + 1] + [
+                {"role": "developer", "content": prompt}
+            ]
 
             responses_body.instructions = valves.DEEP_RESEARCH_SYSTEM_MESSAGE
-            responses_body.input = prompt.strip()
+            responses_body.input = ResponsesBody.transform_messages_to_input(
+                history,
+                chat_id=metadata.get("chat_id"),
+                openwebui_model_id=metadata.get("model", {}).get("id"),
+            )
             responses_body.tools = [
                 {
                 "type": "web_search_preview"
