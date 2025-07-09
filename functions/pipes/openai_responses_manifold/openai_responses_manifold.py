@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.17
+version: 0.8.18
 license: MIT
 """
 
@@ -52,10 +52,33 @@ FEATURE_SUPPORT = {
     "function_calling": {"gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
     "reasoning": {"o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
     "reasoning_summary": {"o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
-    
-    # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
 }
+
+# Default prompts and settings for Deep Research flow
+DEEP_RESEARCH_SYSTEM_MESSAGE = (
+    "You are a professional researcher producing a structured, citation-rich "
+    "report with quantitative insights.  Begin with a \u2264150-word executive "
+    "summary. Use inline citations after each claim. Suggest clear data "
+    "visualizations (tables/charts). Prioritize reliable sources (peer-reviewed, "
+    "institutional, direct industry data). Maintain analytical, concise style. "
+    "Use user's request language unless otherwise specified."
+)
+
+DEEP_RESEARCH_CLARIFY_PROMPT = (
+    "Ask minimal, impactful clarifying questions to refine the user's research "
+    "request (3\u20136 bullets max).  Use natural, conversational first-person "
+    "phrasing. Return questions as Markdown bullets."
+)
+
+DEEP_RESEARCH_REWRITE_PROMPT = (
+    "Rewrite the clarified context into a clear, structured instruction checklist "
+    "for the researcher.  Enumerate key sections explicitly; specify output aids "
+    "(charts/tables); mark open-ended dimensions clearly; adhere to first-person "
+    "user perspective; truncate at 16k tokens."
+)
+
+DEEP_RESEARCH_DEFAULT_TOOLS = ["web_search_preview", "code_interpreter"]
 
 DETAILS_RE = re.compile(
     r"<details\b[^>]*>.*?</details>|!\[.*?]\(.*?\)",
@@ -530,6 +553,35 @@ class Pipe:
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
+
+        DEEP_RESEARCH_SYSTEM_MESSAGE: str = Field(
+            default=DEEP_RESEARCH_SYSTEM_MESSAGE,
+            description="System message used when executing deep research queries.",
+        )
+        DEEP_RESEARCH_ENABLE_CLARIFICATION: bool = Field(
+            default=True,
+            description="Ask clarifying questions before running deep research.",
+        )
+        DEEP_RESEARCH_CLARIFY_PROMPT: str = Field(
+            default=DEEP_RESEARCH_CLARIFY_PROMPT,
+            description="Prompt used to generate clarifying questions for deep research.",
+        )
+        DEEP_RESEARCH_ENABLE_REWRITING: bool = Field(
+            default=True,
+            description="Rewrite the request into an instruction list before executing research.",
+        )
+        DEEP_RESEARCH_REWRITE_PROMPT: str = Field(
+            default=DEEP_RESEARCH_REWRITE_PROMPT,
+            description="Prompt used to rewrite the request into a structured instruction set.",
+        )
+        DEEP_RESEARCH_DEFAULT_TOOLS: List[str] = Field(
+            default_factory=lambda: list(DEEP_RESEARCH_DEFAULT_TOOLS),
+            description="Default tools enabled for deep research runs.",
+        )
+        DEEP_RESEARCH_REASONING_SUMMARY: Literal["auto", "concise", "detailed"] = Field(
+            default="auto",
+            description="Reasoning summary style when running deep research models.",
+        )
     
     class UserValves(BaseModel):
         """Per-user valve overrides."""
@@ -597,6 +649,57 @@ class Pipe:
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
 
+        # ─── Deep Research Flow -------------------------------------------------
+        is_deep_research = model_family in FEATURE_SUPPORT["deep_research"]
+        dr_phase = _detect_dr_phase(completions_body.messages) if is_deep_research else None
+
+        if is_deep_research and dr_phase is None and valves.DEEP_RESEARCH_ENABLE_CLARIFICATION:
+            last_user = completions_body.messages[-1] if completions_body.messages else {}
+            user_text = _extract_plain_text(last_user.get("content"))
+            clarify = await self._run_deep_research_prompt(
+                responses_body.model,
+                valves.DEEP_RESEARCH_CLARIFY_PROMPT,
+                user_text,
+                valves,
+            )
+            marker = wrap_marker(create_marker("dr_state", metadata={"phase": "clarify"}))
+            return clarify + marker
+
+        if is_deep_research and dr_phase == "clarify" and valves.DEEP_RESEARCH_ENABLE_REWRITING:
+            original_msg = _find_prior_user_message(completions_body.messages) or {}
+            orig_text = _extract_plain_text(original_msg.get("content"))
+            clar_text = _extract_plain_text(completions_body.messages[-1].get("content"))
+            combined = f"Original:\n{orig_text}\n\nClarifications:\n{clar_text}"
+            rewritten = await self._run_deep_research_prompt(
+                responses_body.model,
+                valves.DEEP_RESEARCH_REWRITE_PROMPT,
+                combined,
+                valves,
+            )
+            confirmed = rewritten
+            if __event_call__:
+                resp = await __event_call__({
+                    "type": "input",
+                    "data": {
+                        "title": "Deep Research",
+                        "message": "Review the rewritten research prompt below and submit when ready",
+                        "placeholder": rewritten,
+                    },
+                })
+                if isinstance(resp, str) and resp.strip():
+                    confirmed = resp
+                elif isinstance(resp, dict):
+                    confirmed = resp.get("text") or resp.get("content") or resp.get("input", confirmed)
+
+            responses_body.instructions = valves.DEEP_RESEARCH_SYSTEM_MESSAGE
+            responses_body.input = confirmed
+            responses_body.tools = [
+                {"type": t} if isinstance(t, str) else t for t in valves.DEEP_RESEARCH_DEFAULT_TOOLS
+            ]
+            responses_body.reasoning = responses_body.reasoning or {}
+            responses_body.reasoning["summary"] = valves.DEEP_RESEARCH_REASONING_SUMMARY
+            dr_phase = "execute"
+
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
@@ -662,11 +765,18 @@ class Pipe:
             
         # Send to OpenAI Responses API
         if responses_body.stream:
-            # Return async generator for partial text
-            return await self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            result = await self._run_streaming_loop(
+                responses_body, valves, __event_emitter__, __metadata__, __tools__
+            )
         else:
-            # Return final text (non-streaming)
-            return await self._run_nonstreaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            result = await self._run_nonstreaming_loop(
+                responses_body, valves, __event_emitter__, __metadata__, __tools__
+            )
+
+        if is_deep_research and dr_phase == "execute":
+            result += wrap_marker(create_marker("dr_state", metadata={"phase": "done"}))
+
+        return result
 
     # 4.3 Core Multi-Turn Handlers
     async def _run_streaming_loop(
@@ -1140,6 +1250,23 @@ class Pipe:
         message = "".join(text_parts)
 
         return message
+
+    async def _run_deep_research_prompt(
+        self,
+        model: str,
+        instructions: str,
+        user_text: str,
+        valves: Pipe.Valves,
+    ) -> str:
+        """Helper to run a single non-streaming deep research prompt."""
+
+        body = {
+            "model": model,
+            "instructions": instructions,
+            "input": user_text,
+            "stream": False,
+        }
+        return await self._run_task_model_request(body, valves)
       
     # 4.5 LLM HTTP Request Helpers
     async def send_openai_responses_streaming_request(
@@ -1741,6 +1868,47 @@ def persist_openai_response_items(
 
     Chats.update_chat_by_id(chat_id, chat_model.chat)
     return "".join(hidden_uid_markers)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deep Research Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _extract_plain_text(content: Any) -> str:
+    """Return plain text from string or block content."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                txt = block.get("text")
+                if txt:
+                    parts.append(txt)
+        return " ".join(parts)
+    return ""
+
+
+def _detect_dr_phase(messages: list[dict]) -> str | None:
+    """Return the most recent deep research phase or ``None``."""
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant" or not msg.get("content"):
+            continue
+        content = msg["content"]
+        if contains_marker(content):
+            for mk in extract_markers(content, parsed=True):
+                if mk["item_type"] == "dr_state":
+                    return mk["metadata"].get("phase")
+    return None
+
+
+def _find_prior_user_message(messages: list[dict]) -> Optional[dict]:
+    """Return the user message preceding the latest assistant message."""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "assistant":
+            break
+    for j in range(i - 1, -1, -1):
+        if messages[j].get("role") == "user":
+            return messages[j]
+    return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
