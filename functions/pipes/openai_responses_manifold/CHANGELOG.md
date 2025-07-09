@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Added Deep Research clarification and rewriting workflow.
 - Enabled support for o3-deep-research and o4-mini-deep-research models.
 
+## [0.8.19] - 2025-07-09
+- Refactored deep research flow and removed redundant helper functions.
+
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 
