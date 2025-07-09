@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Removed event_call confirmation step; rewrite draft is sent as a message.
 - Fixed input list bug causing 'str' object has no attribute 'extend'.
 - Clarify and rewrite models use web search tool when supported.
+## [0.8.22] - 2025-07-12
+- Improved Deep Research flow:
+  - Reused full chat history for clarify, rewrite and execute phases.
+  - Persisted rewritten prompt as a developer message and emitted confirm marker.
+  - Retrieved persisted prompt when executing the research request.
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 
