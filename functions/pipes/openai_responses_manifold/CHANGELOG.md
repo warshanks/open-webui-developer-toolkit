@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ## [0.8.20] - 2025-07-10
 - Simplified deep research logic via _run_deep_research_request.
 - Added valves for clarification and rewrite models.
+## [0.8.21] - 2025-07-11
+- Removed event_call confirmation step; rewrite draft is sent as a message.
+- Fixed input list bug causing 'str' object has no attribute 'extend'.
+- Clarify and rewrite models use web search tool when supported.
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 

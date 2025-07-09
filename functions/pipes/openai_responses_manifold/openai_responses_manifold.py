@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.20
+version: 0.8.21
 license: MIT
 """
 
@@ -664,7 +664,6 @@ class Pipe:
                 __event_emitter__,
                 __metadata__,
                 __tools__,
-                __event_call__,
             )
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
@@ -1225,7 +1224,6 @@ class Pipe:
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]],
         metadata: dict[str, Any],
         tools: list[dict[str, Any]] | dict[str, Any] | None,
-        event_call: Callable[[dict[str, Any]], Awaitable[Any]] | None,
     ) -> str:
         """Run the entire Deep Research workflow."""
 
@@ -1236,9 +1234,24 @@ class Pipe:
             clarify_body = ResponsesBody(
                 model=valves.DEEP_RESEARCH_CLARIFY_MODEL,
                 instructions=valves.DEEP_RESEARCH_CLARIFY_PROMPT,
-                input=user_text,
+                input=ResponsesBody.transform_messages_to_input(
+                    [{"role": "user", "content": user_text}]
+                ),
                 stream=responses_body.stream,
             )
+
+            if re.sub(r"-\d{4}-\d{2}-\d{2}$", "", clarify_body.model) in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH_TOOL:
+                clarify_body.tools = [
+                    {
+                        "type": "web_search_preview",
+                        "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
+                        **(
+                            {"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)}
+                            if valves.WEB_SEARCH_USER_LOCATION
+                            else {}
+                        ),
+                    }
+                ]
             if clarify_body.stream:
                 clarify = await self._run_streaming_loop(
                     clarify_body, valves, event_emitter, metadata, tools or {}
@@ -1259,9 +1272,24 @@ class Pipe:
             rewrite_body = ResponsesBody(
                 model=valves.DEEP_RESEARCH_REWRITE_MODEL,
                 instructions=valves.DEEP_RESEARCH_REWRITE_PROMPT,
-                input=combined,
+                input=ResponsesBody.transform_messages_to_input(
+                    [{"role": "user", "content": combined}]
+                ),
                 stream=responses_body.stream,
             )
+
+            if re.sub(r"-\d{4}-\d{2}-\d{2}$", "", rewrite_body.model) in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH_TOOL:
+                rewrite_body.tools = [
+                    {
+                        "type": "web_search_preview",
+                        "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
+                        **(
+                            {"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)}
+                            if valves.WEB_SEARCH_USER_LOCATION
+                            else {}
+                        ),
+                    }
+                ]
 
             if rewrite_body.stream:
                 rewritten = await self._run_streaming_loop(
@@ -1272,22 +1300,53 @@ class Pipe:
                     rewrite_body, valves, event_emitter, metadata, tools or {}
                 )
 
-            if event_call:
-                confirm = await event_call(
-                    {
-                        "type": "input",
-                        "data": {
-                            "title": "Deep Research",
-                            "message": "Review / edit the prompt then press submit",
-                            "placeholder": rewritten,
-                        },
-                    }
+            hidden_marker = ""
+            if metadata.get("chat_id") and metadata.get("message_id"):
+                hidden_marker = persist_openai_response_items(
+                    metadata["chat_id"],
+                    metadata["message_id"],
+                    [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": rewritten}],
+                        }
+                    ],
+                    metadata.get("model", {}).get("id", ""),
                 )
-                if isinstance(confirm, str) and confirm.strip():
-                    rewritten = confirm.strip()
+
+            return (
+                rewritten
+                + hidden_marker
+                + wrap_marker(create_marker("dr_state", metadata={"phase": "confirm"}))
+            )
+
+        if phase == "confirm":
+            prompt = None
+            if metadata.get("chat_id"):
+                for msg in reversed(completions_body.messages):
+                    if msg.get("role") != "assistant" or not msg.get("content"):
+                        continue
+                    if contains_marker(msg["content"]):
+                        mk_list = [mk for mk in extract_markers(msg["content"], parsed=True) if mk["item_type"] == "message"]
+                        if mk_list:
+                            items = fetch_openai_response_items(
+                                metadata["chat_id"],
+                                [m["ulid"] for m in mk_list],
+                                openwebui_model_id=metadata.get("model", {}).get("id"),
+                            )
+                            for m in mk_list:
+                                item = items.get(m["ulid"])
+                                if item and item.get("role") == "user":
+                                    prompt = _extract_plain_text(item.get("content"))
+                                    break
+                        if prompt:
+                            break
+            prior = _find_prior_user_message(completions_body.messages)
+            prompt = prompt or _extract_plain_text(prior.get("content") if prior else "")
 
             responses_body.instructions = valves.DEEP_RESEARCH_SYSTEM_MESSAGE
-            responses_body.input = rewritten
+            responses_body.input = prompt
             responses_body.tools = ResponsesBody.transform_tools(
                 valves.DEEP_RESEARCH_DEFAULT_TOOLS, strict=True
             )
