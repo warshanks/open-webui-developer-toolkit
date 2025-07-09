@@ -3,7 +3,12 @@
 All notable changes to the OpenAI Responses Manifold pipeline are documented in this file.
 
 
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.8.18] - 2025-07-08
+- Added Deep Research clarification and rewriting workflow.
+- Enabled support for o3-deep-research and o4-mini-deep-research models.
 
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.

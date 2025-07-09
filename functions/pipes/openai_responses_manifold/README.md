@@ -35,7 +35,7 @@
 | Expandable status output | ✅ GA | 2025-07-01 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
-| Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
+| Deep Search Support | ✅ GA | 2025-07-08 | Added support for o3-deep-research and o4-mini-deep-research models. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
 | File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
