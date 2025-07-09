@@ -66,16 +66,78 @@ DEEP_RESEARCH_SYSTEM_MESSAGE = (
 )
 
 DEEP_RESEARCH_CLARIFY_PROMPT = (
-    "Ask minimal, impactful clarifying questions to refine the user's research "
-    "request (3\u20136 bullets max).  Use natural, conversational first-person "
-    "phrasing. Return questions as Markdown bullets."
+    """
+    You will be given a research task by a user. Your job is NOT to complete the task yet, but instead to ask clarifying questions that would help you or another researcher produce a more specific, efficient, and relevant answer.
+
+    GUIDELINES:
+    1. **Maximize Relevance**
+    - Ask questions that are *directly necessary* to scope the research output.
+    - Consider what information would change the structure, depth, or direction of the answer.
+
+    2. **Surface Missing but Critical Dimensions**
+    - Identify essential attributes that were not specified in the user’s request (e.g., preferences, time frame, budget, audience).
+    - Ask about each one *explicitly*, even if it feels obvious or typical.
+
+    3. **Do Not Invent Preferences**
+    - If the user did not mention a preference, *do not assume it*. Ask about it clearly and neutrally.
+
+    4. **Use the First Person**
+    - Phrase your questions from the perspective of the assistant or researcher talking to the user (e.g., “Could you clarify...” or “Do you have a preference for...”)
+
+    5. **Use a Bulleted List if Multiple Questions**
+    - If there are multiple open questions, list them clearly in bullet format for readability.
+
+    6. **Avoid Overasking**
+    - Prioritize the 3 questions that would most reduce ambiguity or scope creep. You don't need to ask *everything*, just the most pivotal unknowns.
+
+    7. **Include Examples Where Helpful**
+    - If asking about preferences (e.g., travel style, report format), briefly list examples to help the user answer.
+
+    8. **Format for Conversational Use**
+    - The output should sound helpful and conversational—not like a form. Aim for a natural tone while still being precise.
+    """
 )
 
 DEEP_RESEARCH_REWRITE_PROMPT = (
-    "Rewrite the clarified context into a clear, structured instruction checklist "
-    "for the researcher.  Enumerate key sections explicitly; specify output aids "
-    "(charts/tables); mark open-ended dimensions clearly; adhere to first-person "
-    "user perspective; truncate at 16k tokens."
+    """
+    You will be given a research task by a user. Your job is to produce a set of instructions for a researcher that will complete the task. Do NOT complete the task yourself, just provide instructions on how to complete it.
+
+    GUIDELINES:
+    1. **Maximize Specificity and Detail**
+    - Include all known user preferences and explicitly list key attributes or dimensions to consider.
+    - It is of utmost importance that all details from the user are included in the instructions.
+
+    2. **Fill in Unstated But Necessary Dimensions as Open-Ended**
+    - If certain attributes are essential for a meaningful output but the user has not provided them, explicitly state that they are open-ended or default to no specific constraint.
+
+    3. **Avoid Unwarranted Assumptions**
+    - If the user has not provided a particular detail, do not invent one.
+    - Instead, state the lack of specification and guide the researcher to treat it as flexible or accept all possible options.
+
+    4. **Use the First Person**
+    - Phrase the request from the perspective of the user.
+
+    5. **Tables**
+    - If you determine that including a table will help illustrate, organize, or enhance the information in the research output, you must explicitly request that the researcher provide them.
+    Examples:
+    - Product Comparison (Consumer): When comparing different smartphone models, request a table listing each model's features, price, and consumer ratings side-by-side.
+    - Project Tracking (Work): When outlining project deliverables, create a table showing tasks, deadlines, responsible team members, and status updates.
+    - Budget Planning (Consumer): When creating a personal or household budget, request a table detailing income sources, monthly expenses, and savings goals.
+    Competitor Analysis (Work): When evaluating competitor products, request a table with key metrics, such as market share, pricing, and main differentiators.
+
+    6. **Headers and Formatting**
+    - You should include the expected output format in the prompt.
+    - If the user is asking for content that would be best returned in a structured format (e.g. a report, plan, etc.), ask the researcher to format as a report with the appropriate headers and formatting that ensures clarity and structure.
+
+    7. **Language**
+    - If the user input is in a language other than English, tell the researcher to respond in this language, unless the user query explicitly asks for the response in a different language.
+
+    8. **Sources**
+    - If specific sources should be prioritized, specify them in the prompt.
+    - For product and travel research, prefer linking directly to official or primary websites (e.g., official brand sites, manufacturer pages, or reputable e-commerce platforms like Amazon for user reviews) rather than aggregator sites or SEO-heavy blogs.
+    - For academic or scientific queries, prefer linking directly to the original paper or official journal publication rather than survey papers or secondary summaries.
+    - If the query is in a specific language, prioritize sources published in that language.
+    """
 )
 
 DEEP_RESEARCH_DEFAULT_TOOLS = ["web_search_preview", "code_interpreter"]
@@ -1227,8 +1289,10 @@ class Pipe:
     ) -> str:
         """Run the entire Deep Research workflow."""
 
-        phase = _detect_dr_phase(completions_body.messages)
+        # Correctly unpack the phase, ulid, idx (index of last assistant dr_state marker)
+        phase, _, idx = _detect_dr_phase(completions_body.messages)
 
+        # PHASE 1: CLARIFY (ask clarifying questions)
         if phase is None and valves.DEEP_RESEARCH_ENABLE_CLARIFICATION:
             user_text = _extract_plain_text(completions_body.messages[-1].get("content"))
             clarify_body = ResponsesBody(
@@ -1239,19 +1303,6 @@ class Pipe:
                 ),
                 stream=responses_body.stream,
             )
-
-            if re.sub(r"-\d{4}-\d{2}-\d{2}$", "", clarify_body.model) in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH_TOOL:
-                clarify_body.tools = [
-                    {
-                        "type": "web_search_preview",
-                        "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
-                        **(
-                            {"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)}
-                            if valves.WEB_SEARCH_USER_LOCATION
-                            else {}
-                        ),
-                    }
-                ]
             if clarify_body.stream:
                 clarify = await self._run_streaming_loop(
                     clarify_body, valves, event_emitter, metadata, tools or {}
@@ -1262,10 +1313,11 @@ class Pipe:
                 )
             return clarify + wrap_marker(create_marker("dr_state", metadata={"phase": "clarify"}))
 
+        # PHASE 2: REWRITE (rewrite as structured research prompt)
         if phase == "clarify" and valves.DEEP_RESEARCH_ENABLE_REWRITING:
-            orig_text = _extract_plain_text(
-                _find_prior_user_message(completions_body.messages).get("content")
-            )
+            # Find the user message just before the latest assistant message
+            prior_user_msg = _find_prior_user_message(completions_body.messages)
+            orig_text = _extract_plain_text(prior_user_msg.get("content")) if prior_user_msg else ""
             clar_text = _extract_plain_text(completions_body.messages[-1].get("content"))
             combined = f"Original:\n{orig_text}\n\nClarifications:\n{clar_text}"
 
@@ -1278,19 +1330,6 @@ class Pipe:
                 stream=responses_body.stream,
             )
 
-            if re.sub(r"-\d{4}-\d{2}-\d{2}$", "", rewrite_body.model) in FEATURE_SUPPORT["web_search_tool"] and valves.ENABLE_WEB_SEARCH_TOOL:
-                rewrite_body.tools = [
-                    {
-                        "type": "web_search_preview",
-                        "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
-                        **(
-                            {"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)}
-                            if valves.WEB_SEARCH_USER_LOCATION
-                            else {}
-                        ),
-                    }
-                ]
-
             if rewrite_body.stream:
                 rewritten = await self._run_streaming_loop(
                     rewrite_body, valves, event_emitter, metadata, tools or {}
@@ -1300,68 +1339,54 @@ class Pipe:
                     rewrite_body, valves, event_emitter, metadata, tools or {}
                 )
 
-            hidden_marker = ""
-            if metadata.get("chat_id") and metadata.get("message_id"):
-                hidden_marker = persist_openai_response_items(
-                    metadata["chat_id"],
-                    metadata["message_id"],
-                    [
-                        {
-                            "type": "message",
-                            "role": "user",
-                            "content": [{"type": "input_text", "text": rewritten}],
-                        }
-                    ],
-                    metadata.get("model", {}).get("id", ""),
-                )
+            # Persist the rewritten prompt as a hidden marker
+            hidden_uid_marker = persist_openai_response_items(
+                metadata.get("chat_id"),
+                metadata.get("message_id"),
+                [{"role": "developer", "content": [{"type": "input_text", "text": rewritten}]}],
+                metadata.get("model", {}).get("id"),
+            )
 
+            # Output rewritten prompt for user to confirm (user can simply reply 'start' or similar)
             return (
                 rewritten
-                + hidden_marker
-                + wrap_marker(create_marker("dr_state", metadata={"phase": "confirm"}))
+                + hidden_uid_marker
             )
 
+        # PHASE 3: CONFIRM/EXECUTE (user said start, now actually run the research request)
         if phase == "confirm":
-            prompt = None
-            if metadata.get("chat_id"):
-                for msg in reversed(completions_body.messages):
-                    if msg.get("role") != "assistant" or not msg.get("content"):
-                        continue
-                    if contains_marker(msg["content"]):
-                        mk_list = [mk for mk in extract_markers(msg["content"], parsed=True) if mk["item_type"] == "message"]
-                        if mk_list:
-                            items = fetch_openai_response_items(
-                                metadata["chat_id"],
-                                [m["ulid"] for m in mk_list],
-                                openwebui_model_id=metadata.get("model", {}).get("id"),
-                            )
-                            for m in mk_list:
-                                item = items.get(m["ulid"])
-                                if item and item.get("role") == "user":
-                                    prompt = _extract_plain_text(item.get("content"))
-                                    break
-                        if prompt:
-                            break
-            prior = _find_prior_user_message(completions_body.messages)
-            prompt = prompt or _extract_plain_text(prior.get("content") if prior else "")
+            # Find most recent user message (should be the rewritten prompt)
+            prior_user_msg = _find_prior_user_message(completions_body.messages)
+            prompt = _extract_plain_text(prior_user_msg.get("content")) if prior_user_msg else ""
+            if not prompt or not prompt.strip():
+                raise ValueError("Deep-research prompt could not be recovered; ensure the previous user message contains the rewritten prompt.")
 
             responses_body.instructions = valves.DEEP_RESEARCH_SYSTEM_MESSAGE
-            responses_body.input = prompt
-            responses_body.tools = ResponsesBody.transform_tools(
-                valves.DEEP_RESEARCH_DEFAULT_TOOLS, strict=True
-            )
+            responses_body.input = prompt.strip()
+            responses_body.tools = [
+                {
+                "type": "web_search_preview"
+                },
+            ]
             responses_body.reasoning = {"summary": valves.DEEP_RESEARCH_REASONING_SUMMARY}
 
-        if responses_body.stream:
-            result = await self._run_streaming_loop(
-                responses_body, valves, event_emitter, metadata, tools or {}
-            )
-        else:
-            result = await self._run_nonstreaming_loop(
-                responses_body, valves, event_emitter, metadata, tools or {}
-            )
+            # Write the responses_body to debug
+            self.logger.debug("Deep Research ResponsesBody: %s", json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False))
 
-        return result + wrap_marker(create_marker("dr_state", metadata={"phase": "done"}))
+            if responses_body.stream:
+                result = await self._run_streaming_loop(
+                    responses_body, valves, event_emitter, metadata, tools or {}
+                )
+            else:
+                result = await self._run_nonstreaming_loop(
+                    responses_body, valves, event_emitter, metadata, tools or {}
+                )
+
+            return result + wrap_marker(create_marker("dr_state", metadata={"phase": "done"}))
+
+        # FALLTHROUGH (should not reach here)
+        raise RuntimeError("Deep Research flow: phase could not be determined or handled.")
+
 
     # 4.5 LLM HTTP Request Helpers
     async def send_openai_responses_streaming_request(
@@ -1972,28 +1997,26 @@ def _extract_plain_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict):
-                txt = block.get("text")
-                if txt:
-                    parts.append(txt)
-        return " ".join(parts)
+        return " ".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("text")
+        )
     return ""
 
-
-def _detect_dr_phase(messages: list[dict]) -> str | None:
-    """Return the most recent deep research phase or ``None``."""
-    for msg in reversed(messages):
-        if msg.get("role") != "assistant" or not msg.get("content"):
+def _detect_dr_phase(messages: list[dict]) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    """Return (phase, ulid, index) if last assistant message contains a dr_state marker."""
+    for idx in range(len(messages) - 1, -1, -1):
+        m = messages[idx]
+        if m.get("role") != "assistant":
             continue
-        content = msg["content"]
-        if contains_marker(content):
-            for mk in extract_markers(content, parsed=True):
-                if mk["item_type"] == "dr_state":
-                    return mk["metadata"].get("phase")
-    return None
-
+        text = _extract_plain_text(m.get("content"))
+        if contains_marker(text):
+            for mk in extract_markers(text, parsed=True):
+                if mk.get("item_type") == "dr_state":
+                    return mk["metadata"].get("phase"), mk["ulid"], idx
+        break
+    return None, None, None
 
 def _find_prior_user_message(messages: list[dict]) -> Optional[dict]:
     """Return the user message preceding the latest assistant message."""
@@ -2004,6 +2027,7 @@ def _find_prior_user_message(messages: list[dict]) -> Optional[dict]:
         if messages[j].get("role") == "user":
             return messages[j]
     return None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. General-Purpose Utility Functions (Data transforms & patches)
