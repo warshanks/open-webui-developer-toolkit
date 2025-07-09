@@ -26,7 +26,7 @@ Each event is represented as a dictionary with a **type** and **data** payload:
 | **`chat:message:delta`** / **`message`**         | Stream partial text content (append incremental chunks of a response).                    |
 | **`chat:message`** / **`replace`**               | Replace or set the entire message content (usually used to finalize a streamed response). |
 | **`chat:completion`**                            | Explicitly denote the final completion of a chat response (advanced use).                 |
-| **`chat:message:files`** / **`files`**           | Attach or update files associated with a message (for uploads or outputs).                |
+| **`chat:message:files`** / **`files`**           | Attach files to the current message (see [Attaching Files](#-attaching-files-chatmessagefiles--files)). |
 | **`chat:title`**                                 | Dynamically set or update the conversation title.                                         |
 | **`chat:tags`**                                  | Update tags associated with the conversation.                                             |
 | **`source`** / **`citation`**                    | Add reference citations or other source data to a message.                                |
@@ -193,26 +193,99 @@ await __event_emitter__({
 
 The frontend marks the chat as complete and prominently displays the error, ensuring users aren’t left waiting indefinitely.
 
----
+#### ✅ Attaching Files (`chat:message:files` / `files`)
 
-#### ✅ Attaching Files (`chat:message:files` or `files`)
+The `files` event attaches files to the current chat message, making them appear as downloadable attachments or inline images in the Open WebUI frontend.
 
-Attach or update files in the current message (e.g. providing a generated report or image as output):
+> **Important:** Emitting a `files` event alone **does not automatically upload or save files**. You must explicitly handle uploading and persistence.
+
+##### How to Upload, Register, and Attach Files Correctly
+
+Always follow this three-step pattern when attaching files to ensure they persist and remain accessible:
+
+1. **Upload the file** using `Storage.upload_file()`.
+   **Never write directly to `UPLOAD_DIR`.**
+
+2. **Register the uploaded file** by creating a database record via `Files.insert_new_file()`.
+
+3. **Emit a `files` event** to inform the frontend UI about the newly uploaded file.
+
+For example:
 
 ```python
+import io
+import uuid
+import mimetypes
+from open_webui.storage.provider import Storage
+from open_webui.models.files import Files, FileForm
+
+# Generate unique identifiers
+file_id = str(uuid.uuid4())
+original_filename = "plot.png"
+stored_filename = f"{file_id}_{original_filename}"
+
+# Optional: Tags for cloud storage providers (e.g., AWS S3)
+tags = {
+    "OpenWebUI-User-Email": user.email,
+    "OpenWebUI-User-Id": user.id,
+    "OpenWebUI-User-Name": user.name,
+    "OpenWebUI-File-Id": file_id,
+}
+
+# Step 1: Upload file via storage provider
+contents, file_path = Storage.upload_file(
+    io.BytesIO(png_bytes),
+    stored_filename,
+    tags=tags  # Optional; omit or pass empty dict {} if not needed
+)
+
+# Step 2: Register the file in the database
+Files.insert_new_file(
+    user.id,
+    FileForm(
+        id=file_id,
+        filename=original_filename,
+        path=file_path,
+        meta={
+            "name": original_filename,
+            "content_type": mimetypes.guess_type(original_filename)[0] or "application/octet-stream",
+            "size": len(contents),
+            "data": {},  # Optional additional metadata
+        },
+    ),
+)
+
+# Step 3: Emit files event to frontend UI
 await __event_emitter__({
-    "type": "files",  # or "chat:message:files"
+    "type": "files",
     "data": {
         "files": [
-            {"name": "report.pdf", "url": "/files/report.pdf"}
+            {
+                "id": file_id,
+                "type": "image",  # "file" for generic downloads
+                "name": original_filename,
+                "url": f"/api/v1/files/{file_id}/content",
+            }
         ]
-    }
+    },
 })
 ```
 
-This will make the frontend show the file (here *report.pdf*) as an attachment in the chat message.
+##### Best Practices & Important Notes
 
----
+* **Allowed file extensions** are enforced via `ALLOWED_FILE_EXTENSIONS` unless explicitly bypassed with `internal=True`.
+* **Automatic processing (`process=True`)** automatically triggers extraction (transcription, embeddings) on supported uploads—control explicitly as needed.
+* **Reading files later**: always use:
+
+  ```python
+  contents = Storage.get_file(file.path)
+  ```
+* **Deleting files**: remove both storage and database entries explicitly:
+
+```python
+Storage.delete_file(file.path)        # Remove actual file data (disk/cloud)
+Files.delete_file_by_id(file_id)      # Remove file metadata and references from DB
+```
 
 #### ✅ Updating Conversation Title (`chat:title`)
 
@@ -246,38 +319,58 @@ This replaces the conversation’s tags with the provided list.
 
 #### ✅ Citations and Sources (`source` or `citation`)
 
-Add references or citations to support your message (commonly used for RAG or code execution results):
+Emit citation data alongside numbered placeholders in your message text. The
+frontend pairs each `[n]` marker with the corresponding entry from the emitted
+`sources` list.
 
 ```python
-await __event_emitter__({
-    "type": "citation",  # or "source"
-    "data": {
-        "sources": [
-            {"title": "Event Docs", "url": "https://example.com/docs/events"}
-        ]
-    }
-})
+if __event_emitter__:
+    await __event_emitter__(
+        {
+            "type": "source",        # "source" (preferred) or "citation" for backwards compatibility
+            "data": {
+                "source": {"name": "NASA"},
+                "document": [
+                    "299 792 458 metres per second is the exact speed of light in vacuum."
+                ],
+                "metadata": [
+                    {
+                        "source": "https://science.nasa.gov/ems/03_movinglight/",
+                        "date_accessed": "2025-06-24",
+                    }
+                ],
+            },
+        }
+    )
 ```
 
-This event can add a list of source links or citations to the message (the UI typically displays them as reference links or footnotes).
+You can stream citations incrementally (yield text such as `[1]` then emit a
+matching `source` event) or send them all at once using
+`{"type": "chat:completion", "data": {"content": "", "sources": [...]}}` at the
+end of the response. See the
+[Citations Example Pipe](../functions/pipes/citations_example) for a full
+demonstration.
+
+This event lets you attach source links or documents to a message. The UI will
+render the markers as clickable references and display their details in a modal.
 
 ---
 
 #### ✅ Notifications (`notification`)
 
-Show a toast notification to the user (non-intrusive alert at the bottom/top of the app):
+Before Open WebUI 0.7 notifications used `{kind, message}`. Modern versions expect `{type, content}`:
 
 ```python
 await __event_emitter__({
     "type": "notification",
     "data": {
-        "kind": "success",  # could be "info", "warning", "error"
-        "message": "Your data was successfully saved!"
+        "type": "success",  # "success", "info", "warning", or "error"
+        "content": "File uploaded successfully!"
     }
 })
 ```
 
-This will display a small **Success** notification to the user. (The `kind` or type field indicates the style of notification.)
+The `type` field controls the toast style while `content` is the displayed text.
 
 ---
 
