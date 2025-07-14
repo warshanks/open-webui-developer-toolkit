@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.18
+version: 0.8.19
 license: MIT
 """
 
@@ -683,6 +683,9 @@ class Pipe:
         openwebui_model = metadata.get("model", {}).get("id", "")
         assistant_message = ""
         total_usage: dict[str, Any] = {}
+        url_to_no: dict[str, int] = {}
+        next_no: int = 1
+        emitted_citations: list[dict] = []
 
         status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
         status_indicator._done = False
@@ -718,12 +721,68 @@ class Pipe:
                         delta = event.get("delta", "")
                         if delta:
                             assistant_message += delta
-                            await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+                            await event_emitter({"type": "chat:message",
+                                                 "data": {"content": assistant_message}})
                         continue
 
-                    # Placeholder for annotation emitting
-                    # Note: If we emit annotation numbers (e.g., [1]), we will need to remove them before passing through the model as it will break caching.
                     if etype == "response.output_text.annotation.added":
+                        anno = event["annotation"]
+                        a_type = anno.get("type")
+
+                        if a_type == "url_citation":
+                            clean_url = (anno.get("url") or "").split("?")[0]
+                            key = clean_url
+                        elif a_type == "file_citation":
+                            key = f"file:{anno.get('file_id', anno.get('filename'))}"
+                        elif a_type == "container_file_citation":
+                            key = f"container:{anno.get('container_id')}:{anno.get('file_id')}"
+                        else:
+                            key = json.dumps(anno, sort_keys=True)
+
+                        if key in url_to_no:
+                            n = url_to_no[key]
+                        else:
+                            n = next_no
+                            url_to_no[key] = n
+                            next_no += 1
+
+                            if a_type == "url_citation":
+                                title = anno.get("title") or clean_url
+                                citation_payload = {
+                                    "document": [title],
+                                    "metadata": [{"ordinal": n, "source": title}],
+                                    "source": {"name": clean_url, "url": clean_url},
+                                }
+                            elif a_type == "file_citation":
+                                fname = anno.get("filename", "file")
+                                quote = anno.get("quote") or anno.get("text") or "Referenced file"
+                                citation_payload = {
+                                    "document": [quote],
+                                    "metadata": [{"ordinal": n, "file_id": anno.get("file_id")}],
+                                    "source": {"name": fname},
+                                }
+                            elif a_type == "container_file_citation":
+                                fname = anno.get("filename", "output file")
+                                citation_payload = {
+                                    "document": [f"Generated file: {fname}"],
+                                    "metadata": [{"ordinal": n,
+                                                  "container_id": anno.get("container_id"),
+                                                  "file_id": anno.get("file_id")}],
+                                    "source": {"name": fname},
+                                }
+                            else:
+                                citation_payload = {
+                                    "document": ["Unsupported citation type"],
+                                    "metadata": [{"ordinal": n}],
+                                    "source": {"name": a_type},
+                                }
+
+                            await event_emitter({"type": "citation", "data": citation_payload})
+                            emitted_citations.append(citation_payload)
+
+                        assistant_message += f" [{n}]"
+                        await event_emitter({"type": "chat:message",
+                                             "data": {"content": assistant_message}})
                         continue
 
                     if etype == "response.reasoning_summary_text.done":
@@ -899,6 +958,13 @@ class Pipe:
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
+
+            chat_id = metadata.get("chat_id")
+            message_id = metadata.get("message_id")
+            if chat_id and message_id and emitted_citations:
+                Chats.upsert_message_to_chat_by_id_and_message_id(
+                    chat_id, message_id, {"sources": emitted_citations}
+                )
 
             # Return the final output to ensure persistence.
             return assistant_message
