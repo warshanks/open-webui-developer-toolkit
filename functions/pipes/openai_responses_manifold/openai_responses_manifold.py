@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.17
+version: 0.8.18
 license: MIT
 """
 
@@ -263,22 +263,21 @@ class ResponsesBody(BaseModel):
         """
         Build an OpenAI Responses-API `input` array from Open WebUI-style messages.
 
-        If `chat_id` and `openwebui_model_id` is provided AND messages contain empty-link
-        encoded item references, the function looks up the persisted items from database
-        and embeds them in the correct order.
+        Parameters `chat_id` and `openwebui_model_id` are optional. When both are
+        supplied and the messages contain empty-link encoded item references, the
+        function fetches persisted items from the database and injects them in the
+        correct order. When either parameter is missing, the messages are simply
+        converted without attempting to fetch persisted items.
 
         Returns
         -------
         List[dict] : The fully-formed `input` list for the OpenAI Responses API.
         """
 
-        if (chat_id is None) != (openwebui_model_id is None):
-            raise ValueError("If either 'chat_id' or 'openwebui_model_id' is provided, both must be specified.")
-
         required_item_ids: set[str] = set()
 
-        # Gather all markers from assistant messages (if chat_id is provided)
-        if chat_id:
+        # Gather all markers from assistant messages (if both IDs are provided)
+        if chat_id and openwebui_model_id:
             for m in messages:
                 if (
                     m.get("role") == "assistant"
@@ -288,9 +287,9 @@ class ResponsesBody(BaseModel):
                     for mk in extract_markers(m["content"], parsed=True):
                         required_item_ids.add(mk["ulid"])
 
-        # Fetch persisted items if chat_id is provided and there are encoded item IDs
+        # Fetch persisted items if both IDs are provided and there are encoded item IDs
         items_lookup: dict[str, dict] = {}
-        if chat_id and required_item_ids:
+        if chat_id and openwebui_model_id and required_item_ids:
             items_lookup = fetch_openai_response_items(
                 chat_id,
                 list(required_item_ids),

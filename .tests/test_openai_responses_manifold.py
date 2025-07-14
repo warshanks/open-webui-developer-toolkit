@@ -187,8 +187,14 @@ def test_transform_messages_various(monkeypatch):
     ]
     assert out[1]["content"][1]["image_url"] == "u"
     assert out[1]["content"][2] == {"type": "unknown", "value": 1}
-    with pytest.raises(ValueError):
-        mod.ResponsesBody.transform_messages_to_input(msgs, chat_id="c1")
+    # chat_id without model_id should still transform without raising
+    out2 = mod.ResponsesBody.transform_messages_to_input(msgs, chat_id="c1")
+    assert len(out2) == len(out)
+    # model_id without chat_id should also transform without raising
+    out3 = mod.ResponsesBody.transform_messages_to_input(
+        msgs, openwebui_model_id="model"
+    )
+    assert len(out3) == len(out)
 
 
 def test_transform_messages_missing_item(monkeypatch, dummy_chats):

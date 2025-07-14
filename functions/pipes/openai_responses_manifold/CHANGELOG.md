@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 
+## [0.8.18] - 2025-07-14
+- Made `chat_id` and `openwebui_model_id` optional in
+  `transform_messages_to_input` so Notes without a chat reference no longer
+  raise an exception. This enables full compatibility with the new Open WebUI
+  Notes feature.
+
 ## [0.8.16] - 2025-06-28
 - Fixed custom separator handling in `ExpandableStatusEmitter`.
 - Corrected `Tuple` import for type hints.
