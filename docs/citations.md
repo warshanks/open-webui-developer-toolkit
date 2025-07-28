@@ -171,12 +171,6 @@ sourceIds.forEach((sourceId, idx) => {
 
 Clicking a reference opens a detailed modal displaying the source snippet and metadata.
 
-### Controlling the inline citation style
-
-The `openai_responses` pipe exposes a `CITATION_STYLE` valve. Set this to
-`"name"` if you prefer the source name (for example `example.com`) to appear
-inside the brackets instead of the default numeric form (`[1]`).
-
 ---
 
 ## 💾 Persistence & Best Practices
