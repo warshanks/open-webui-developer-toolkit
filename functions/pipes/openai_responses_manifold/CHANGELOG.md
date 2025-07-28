@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ## [0.8.19] - 2025-07-15
 - Added inline citation support with `[n]` markers and `citation` events.
 
+## [0.8.20] - 2025-07-16
+- Simplified inline citation handling and added `CITATION_STYLE` valve for optional name-based markers.
+
 ## [0.8.16] - 2025-06-28
 - Fixed custom separator handling in `ExpandableStatusEmitter`.
 - Corrected `Tuple` import for type hints.
