@@ -173,6 +173,19 @@ Clicking a reference opens a detailed modal displaying the source snippet and me
 
 ---
 
+## 🎛 Controlling Citation Style
+
+The `openai_responses` pipe exposes a `CITATION_STYLE` valve to change how citation markers look:
+
+```text
+CITATION_STYLE = "number"       # [1] (default)
+CITATION_STYLE = "source_name"  # [example.com]
+```
+
+Only the visible marker changes—the citation event always contains the full source name and URL.
+
+---
+
 ## 💾 Persistence & Best Practices
 
 To ensure citations persist even if the user interrupts the response:

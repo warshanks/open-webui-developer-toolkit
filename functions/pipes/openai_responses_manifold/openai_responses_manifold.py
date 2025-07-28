@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.19
+version: 0.8.20
 license: MIT
 """
 
@@ -483,6 +483,10 @@ class Pipe:
             default="auto",
             description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
+        CITATION_STYLE: Literal["number", "source_name"] = Field(
+            default="number",
+            description="Inline citation marker style: 'number' shows [n]; 'source_name' shows the source title instead.",
+        )
         MAX_TOOL_CALLS: Optional[int] = Field(
             default=None,
             description=(
@@ -683,7 +687,7 @@ class Pipe:
         openwebui_model = metadata.get("model", {}).get("id", "")
         assistant_message = ""
         total_usage: dict[str, Any] = {}
-        url_to_no: dict[str, int] = {}
+        citation_map: dict[str, int] = {}
         next_no: int = 1
         emitted_citations: list[dict] = []
 
@@ -728,61 +732,33 @@ class Pipe:
                     if etype == "response.output_text.annotation.added":
                         anno = event["annotation"]
                         a_type = anno.get("type")
+                        key = (anno.get("url") or a_type).split("?")[0]
+                        title = anno.get("title") or key
 
-                        if a_type == "url_citation":
-                            clean_url = (anno.get("url") or "").split("?")[0]
-                            key = clean_url
-                        elif a_type == "file_citation":
-                            key = f"file:{anno.get('file_id', anno.get('filename'))}"
-                        elif a_type == "container_file_citation":
-                            key = f"container:{anno.get('container_id')}:{anno.get('file_id')}"
-                        else:
-                            key = json.dumps(anno, sort_keys=True)
+                        # 1) ordinal
+                        n = citation_map.setdefault(key, len(citation_map) + 1)
 
-                        if key in url_to_no:
-                            n = url_to_no[key]
-                        else:
-                            n = next_no
-                            url_to_no[key] = n
-                            next_no += 1
-
-                            if a_type == "url_citation":
-                                title = anno.get("title") or clean_url
-                                citation_payload = {
-                                    "document": [title],
-                                    "metadata": [{"ordinal": n, "source": title}],
-                                    "source": {"name": clean_url, "url": clean_url},
-                                }
-                            elif a_type == "file_citation":
-                                fname = anno.get("filename", "file")
-                                quote = anno.get("quote") or anno.get("text") or "Referenced file"
-                                citation_payload = {
-                                    "document": [quote],
-                                    "metadata": [{"ordinal": n, "file_id": anno.get("file_id")}],
-                                    "source": {"name": fname},
-                                }
-                            elif a_type == "container_file_citation":
-                                fname = anno.get("filename", "output file")
-                                citation_payload = {
-                                    "document": [f"Generated file: {fname}"],
-                                    "metadata": [{"ordinal": n,
-                                                  "container_id": anno.get("container_id"),
-                                                  "file_id": anno.get("file_id")}],
-                                    "source": {"name": fname},
-                                }
-                            else:
-                                citation_payload = {
-                                    "document": ["Unsupported citation type"],
-                                    "metadata": [{"ordinal": n}],
-                                    "source": {"name": a_type},
-                                }
-
+                        # 2) emit citation event once per key
+                        if n == next_no:
+                            doc_field = str(n) if valves.CITATION_STYLE == "number" else title
+                            citation_payload = {
+                                "document": [doc_field],
+                                "metadata": [{"ordinal": n}],
+                                "source": {"name": title, "url": key},
+                            }
                             await event_emitter({"type": "citation", "data": citation_payload})
                             emitted_citations.append(citation_payload)
+                            next_no += 1
 
+                        # 3) append placeholder [n]
                         assistant_message += f" [{n}]"
-                        await event_emitter({"type": "chat:message",
-                                             "data": {"content": assistant_message}})
+
+                        # 4) strip the markdown link *if it exists* – match by TITLE only
+                        link_pattern = rf"\[{re.escape(title)}\]\([^)]+\)"
+                        assistant_message = re.sub(link_pattern, "", assistant_message, count=1)
+
+                        # 5) re-emit assistant chunk
+                        await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
                         continue
 
                     if etype == "response.reasoning_summary_text.done":

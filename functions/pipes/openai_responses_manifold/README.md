@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.18 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.20 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
@@ -34,7 +34,7 @@
 | Response item persistence | ✅ GA | 2025-06-27 | Persists items via newline-wrapped comment markers (v2) that embed type, 16-character ULIDs and metadata. |
 | Open WebUI Notes compatibility | ✅ GA | 2025-07-14 | Works with ephemeral Notes that omit `chat_id`. |
 | Expandable status output | ✅ GA | 2025-07-01 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
-| Inline citation events | ✅ GA | 2025-07-15 | Sources appear inline as `[n]` with clickable popups. |
+| Inline citation events | ✅ GA | 2025-07-28 | Valve `CITATION_STYLE` controls `[n]` vs source name. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
 | Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
