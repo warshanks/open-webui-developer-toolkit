@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.17
+version: 0.8.20
 license: MIT
 """
 
@@ -32,6 +32,7 @@ import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
+from urllib.parse import urlparse
 
 # Third-party imports
 import aiohttp
@@ -263,22 +264,21 @@ class ResponsesBody(BaseModel):
         """
         Build an OpenAI Responses-API `input` array from Open WebUI-style messages.
 
-        If `chat_id` and `openwebui_model_id` is provided AND messages contain empty-link
-        encoded item references, the function looks up the persisted items from database
-        and embeds them in the correct order.
+        Parameters `chat_id` and `openwebui_model_id` are optional. When both are
+        supplied and the messages contain empty-link encoded item references, the
+        function fetches persisted items from the database and injects them in the
+        correct order. When either parameter is missing, the messages are simply
+        converted without attempting to fetch persisted items.
 
         Returns
         -------
         List[dict] : The fully-formed `input` list for the OpenAI Responses API.
         """
 
-        if (chat_id is None) != (openwebui_model_id is None):
-            raise ValueError("If either 'chat_id' or 'openwebui_model_id' is provided, both must be specified.")
-
         required_item_ids: set[str] = set()
 
-        # Gather all markers from assistant messages (if chat_id is provided)
-        if chat_id:
+        # Gather all markers from assistant messages (if both IDs are provided)
+        if chat_id and openwebui_model_id:
             for m in messages:
                 if (
                     m.get("role") == "assistant"
@@ -288,9 +288,9 @@ class ResponsesBody(BaseModel):
                     for mk in extract_markers(m["content"], parsed=True):
                         required_item_ids.add(mk["ulid"])
 
-        # Fetch persisted items if chat_id is provided and there are encoded item IDs
+        # Fetch persisted items if both IDs are provided and there are encoded item IDs
         items_lookup: dict[str, dict] = {}
-        if chat_id and required_item_ids:
+        if chat_id and openwebui_model_id and required_item_ids:
             items_lookup = fetch_openai_response_items(
                 chat_id,
                 list(required_item_ids),
@@ -684,6 +684,8 @@ class Pipe:
         openwebui_model = metadata.get("model", {}).get("id", "")
         assistant_message = ""
         total_usage: dict[str, Any] = {}
+        ordinal_by_url: dict[str, int] = {}
+        emitted_citations: list[dict] = []
 
         status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
         status_indicator._done = False
@@ -719,29 +721,55 @@ class Pipe:
                         delta = event.get("delta", "")
                         if delta:
                             assistant_message += delta
-                            await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+                            await event_emitter({"type": "chat:message",
+                                                 "data": {"content": assistant_message}})
                         continue
 
-                    # Placeholder for annotation emitting
-                    # Note: If we emit annotation numbers (e.g., [1]), we will need to remove them before passing through the model as it will break caching.
                     if etype == "response.output_text.annotation.added":
-                        continue
+                        ann = event["annotation"]
+                        url = ann.get("url", "").removesuffix("?utm_source=openai")
+                        title = ann.get("title", "").strip()
+                        domain = urlparse(url).netloc.lower().lstrip('www.')
 
-                    if etype == "response.reasoning_summary_text.done":
-                        text = event.get("text", "")
-                        if text:
-                            # Extract bolded title from the last pair of **...**
-                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
-                            title = title_match[-1].strip() if title_match else "Thinking…"
+                        # Have we already cited this URL?
+                        already_cited = url in ordinal_by_url
 
-                            # Remove bolded titles from the content to avoid duplication
-                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
+                        if already_cited:
+                            # Reuse the original citation number
+                            citation_number = ordinal_by_url[url]
+                        else:
+                            # Assign next available number to this new citation URL
+                            citation_number = len(ordinal_by_url) + 1
+                            ordinal_by_url[url] = citation_number
 
-                            assistant_message = await status_indicator.add(
-                                assistant_message,
-                                status_title="🧠 " + title,
-                                status_content=content,
-                            )
+                            # Emit the citation event now, because it's new
+                            citation_payload = {
+                                "source": {"name": domain, "url": url},
+                                "document": [title],  # or snippet if you have it
+                                "metadata": [{
+                                    "source": url,
+                                    "date_accessed": datetime.date.today().isoformat(),
+                                }],
+                            }
+                            await event_emitter({"type": "source", "data": citation_payload})
+                            emitted_citations.append(citation_payload)
+
+                        # Insert the citation marker into the message text
+                        assistant_message += f" [{citation_number}]"
+
+                        # Remove the markdown link originally printed by the model
+                        assistant_message = re.sub(
+                            rf"\(\s*\[\s*{re.escape(domain)}\s*\]\([^)]+\)\s*\)",
+                            " ",
+                            assistant_message,
+                            count=1,
+                        ).strip()
+
+                        # Send updated assistant message chunk to UI
+                        await event_emitter({
+                            "type": "chat:message",
+                            "data": {"content": assistant_message},
+                        })
                         continue
 
                     # ─── Emit status updates for in-progress items ──────────────────────
@@ -900,6 +928,13 @@ class Pipe:
             # Clear logs
             logs_by_msg_id.clear()
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
+
+            chat_id = metadata.get("chat_id")
+            message_id = metadata.get("message_id")
+            if chat_id and message_id and emitted_citations:
+                Chats.upsert_message_to_chat_by_id_and_message_id(
+                    chat_id, message_id, {"sources": emitted_citations}
+                )
 
             # Return the final output to ensure persistence.
             return assistant_message

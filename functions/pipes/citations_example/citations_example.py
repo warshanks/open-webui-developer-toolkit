@@ -40,7 +40,7 @@ class Pipe:
         sources = {
             # [1]: Most complex (function_call + function_call_output clearly separate)
             "[1]": {
-                "source": {"name": f"Tool Call(s)"},
+                "source": {"name": "Tool Call(s)"},
                 "document": [
                     "Calculator tool executed to evaluate '2790 miles / 60 mph'.",
                     "Calculator tool returned result: '46.5 hours'."
