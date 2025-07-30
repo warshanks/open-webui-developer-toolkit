@@ -32,6 +32,7 @@ import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
+from urllib.parse import urlparse
 
 # Third-party imports
 import aiohttp
@@ -483,10 +484,6 @@ class Pipe:
             default="auto",
             description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
-        CITATION_STYLE: Literal["number", "source_name"] = Field(
-            default="number",
-            description="Inline citation marker style: 'number' shows [n]; 'source_name' shows the source title instead.",
-        )
         MAX_TOOL_CALLS: Optional[int] = Field(
             default=None,
             description=(
@@ -687,8 +684,7 @@ class Pipe:
         openwebui_model = metadata.get("model", {}).get("id", "")
         assistant_message = ""
         total_usage: dict[str, Any] = {}
-        citation_map: dict[str, int] = {}
-        next_no: int = 1
+        ordinal_by_url: dict[str, int] = {}
         emitted_citations: list[dict] = []
 
         status_indicator = ExpandableStatusIndicator(event_emitter) # Custom class for simplifying the <details> expandable status updates
@@ -730,52 +726,50 @@ class Pipe:
                         continue
 
                     if etype == "response.output_text.annotation.added":
-                        anno = event["annotation"]
-                        a_type = anno.get("type")
-                        key = (anno.get("url") or a_type).split("?")[0]
-                        title = anno.get("title") or key
+                        ann = event["annotation"]
+                        url = ann.get("url", "").removesuffix("?utm_source=openai")
+                        title = ann.get("title", "").strip()
+                        domain = urlparse(url).netloc.lower().lstrip('www.')
 
-                        # 1) ordinal
-                        n = citation_map.setdefault(key, len(citation_map) + 1)
+                        # Have we already cited this URL?
+                        already_cited = url in ordinal_by_url
 
-                        # 2) emit citation event once per key
-                        if n == next_no:
-                            doc_field = str(n) if valves.CITATION_STYLE == "number" else title
+                        if already_cited:
+                            # Reuse the original citation number
+                            citation_number = ordinal_by_url[url]
+                        else:
+                            # Assign next available number to this new citation URL
+                            citation_number = len(ordinal_by_url) + 1
+                            ordinal_by_url[url] = citation_number
+
+                            # Emit the citation event now, because it's new
                             citation_payload = {
-                                "document": [doc_field],
-                                "metadata": [{"ordinal": n}],
-                                "source": {"name": title, "url": key},
+                                "source": {"name": domain, "url": url},
+                                "document": [title],  # or snippet if you have it
+                                "metadata": [{
+                                    "source": url,
+                                    "date_accessed": datetime.date.today().isoformat(),
+                                }],
                             }
-                            await event_emitter({"type": "citation", "data": citation_payload})
+                            await event_emitter({"type": "source", "data": citation_payload})
                             emitted_citations.append(citation_payload)
-                            next_no += 1
 
-                        # 3) append placeholder [n]
-                        assistant_message += f" [{n}]"
+                        # Insert the citation marker into the message text
+                        assistant_message += f" [{citation_number}]"
 
-                        # 4) strip the markdown link *if it exists* – match by TITLE only
-                        link_pattern = rf"\[{re.escape(title)}\]\([^)]+\)"
-                        assistant_message = re.sub(link_pattern, "", assistant_message, count=1)
+                        # Remove the markdown link originally printed by the model
+                        assistant_message = re.sub(
+                            rf"\(\s*\[\s*{re.escape(domain)}\s*\]\([^)]+\)\s*\)",
+                            " ",
+                            assistant_message,
+                            count=1,
+                        ).strip()
 
-                        # 5) re-emit assistant chunk
-                        await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
-                        continue
-
-                    if etype == "response.reasoning_summary_text.done":
-                        text = event.get("text", "")
-                        if text:
-                            # Extract bolded title from the last pair of **...**
-                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
-                            title = title_match[-1].strip() if title_match else "Thinking…"
-
-                            # Remove bolded titles from the content to avoid duplication
-                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
-
-                            assistant_message = await status_indicator.add(
-                                assistant_message,
-                                status_title="🧠 " + title,
-                                status_content=content,
-                            )
+                        # Send updated assistant message chunk to UI
+                        await event_emitter({
+                            "type": "chat:message",
+                            "data": {"content": assistant_message},
+                        })
                         continue
 
                     # ─── Emit status updates for in-progress items ──────────────────────
