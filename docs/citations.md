@@ -151,6 +151,61 @@ await __event_emitter__({
 
 ---
 
+## ⚙️ Backend Citation Handling
+
+Inline citation metadata is generated server‑side in
+`backend/open_webui/utils/middleware.py`.
+
+1. **Collecting sources** – tools and retrieval steps append dictionaries to a
+   `sources` array. Tool output is wrapped using logic around lines 253–267:
+   ```python
+   sources.append({
+       "source": {"name": f"TOOL:{tool_name}"},
+       "document": [tool_result],
+       "metadata": [{"source": f"TOOL:{tool_name}", "parameters": tool_function_params}],
+       "tool_result": True,
+   })
+   ```【F:external/open-webui/backend/open_webui/utils/middleware.py†L253-L267】
+
+2. **Assigning citation numbers** – when sources exist, a `citation_idx_map`
+   assigns each unique `metadata.source` or `source.id` a sequential number. Each
+   snippet is wrapped with `<source id="n">` where `n` is the assigned index:
+   ```python
+   citation_idx_map = {}
+   for source in sources:
+       is_tool_result = source.get("tool_result", False)
+       if "document" in source and not is_tool_result:
+           for document_text, document_metadata in zip(source["document"], source["metadata"]):
+               source_name = source.get("source", {}).get("name", None)
+               source_id = (
+                   document_metadata.get("source", None)
+                   or source.get("source", {}).get("id", None)
+                   or "N/A"
+               )
+               if source_id not in citation_idx_map:
+                   citation_idx_map[source_id] = len(citation_idx_map) + 1
+               context_string += (
+                   f'<source id="{citation_idx_map[source_id]}"'
+                   + (f' name="{source_name}"' if source_name else "")
+                   + f">{document_text}</source>\n"
+               )
+   ```【F:external/open-webui/backend/open_webui/utils/middleware.py†L956-L981】
+
+3. **Emitting citation data** – after context construction the `sources` array
+   is attached to chat events so the frontend can render modals
+   (lines&nbsp;1013–1021):
+   ```python
+   sources = [s for s in sources if s.get("source", {}).get("name", "") or s.get("source", {}).get("id", "")]
+   if len(sources) > 0:
+       events.append({"sources": sources})
+   ```【F:external/open-webui/backend/open_webui/utils/middleware.py†L1013-L1021】
+
+The system prompt instructing the model to add `[n]` markers when a matching
+`<source id="n">` tag exists is defined in
+`backend/open_webui/config.py` around lines&nbsp;2320–2358.
+
+---
+
 ## 🖥 Frontend Parsing & Rendering
 
 The frontend parses inline citation markers `[1]`, `[2]`, etc., and renders them as clickable references.
@@ -169,7 +224,66 @@ sourceIds.forEach((sourceId, idx) => {
 });
 ```
 
-Clicking a reference opens a detailed modal displaying the source snippet and metadata.
+The `replaceTokens` helper at
+`src/lib/utils/index.ts` performs this replacement and ensures that numbers map
+to the collected `sourceIds` list.【F:external/open-webui/src/lib/utils/index.ts†L33-L78】
+
+`ContentRenderer.svelte` builds `sourceIds` from the incoming citation payload.
+When `metadata.name` is present it is used; otherwise the UI falls back to the
+top-level `source.name` or raw `metadata.source` URL. This logic lives around
+lines&nbsp;136–165:
+```svelte
+sourceIds={(sources ?? []).reduce((acc, s) => {
+    let ids = [];
+    s.document.forEach((document, index) => {
+        const metadata = s.metadata?.[index];
+        const id = metadata?.source ?? 'N/A';
+        if (metadata?.name) {
+            ids.push(metadata.name);
+            return ids;
+        }
+        if (id.startsWith('http://') || id.startsWith('https://')) {
+            ids.push(id);
+        } else {
+            ids.push(s?.source?.name ?? id);
+        }
+        return ids;
+    });
+    acc = [...acc, ...ids];
+    return acc.filter((item, index) => acc.indexOf(item) === index);
+}, [])}
+```【F:external/open-webui/src/lib/components/chat/Messages/ContentRenderer.svelte†L136-L165】
+
+`Citations.svelte` groups multiple documents under the same `id` so that one
+reference can represent several snippets. The reducer between lines 45–88 merges
+documents sharing a common `metadata.source` or `source.id` into a single entry.
+```svelte
+citations = sources.reduce((acc, source) => {
+    source.document.forEach((document, index) => {
+        const metadata = source.metadata?.[index];
+        const id = metadata?.source ?? source?.source?.id ?? 'N/A';
+        let _source = source?.source;
+        if (metadata?.name) {
+            _source = { ..._source, name: metadata.name };
+        }
+        if (id.startsWith('http://') || id.startsWith('https://')) {
+            _source = { ..._source, name: id, url: id };
+        }
+        const existingSource = acc.find((item) => item.id === id);
+        if (existingSource) {
+            existingSource.document.push(document);
+            existingSource.metadata.push(metadata);
+            if (distance !== undefined) existingSource.distances.push(distance);
+        } else {
+            acc.push({ id, source: _source, document: [document], metadata: metadata ? [metadata] : [], distances: distance !== undefined ? [distance] : undefined });
+        }
+    });
+    return acc;
+}, []);
+```【F:external/open-webui/src/lib/components/chat/Messages/Citations.svelte†L45-L88】
+
+Clicking a reference opens a detailed modal displaying the grouped source snippet
+and metadata.
 
 ---
 
