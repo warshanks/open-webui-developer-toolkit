@@ -8,13 +8,9 @@ version: 0.3.1
 """
 
 from __future__ import annotations
-import datetime
-import json
-import logging
 from typing import Any, Awaitable, Callable, Literal
 from pydantic import BaseModel, Field
 from open_webui.models.models import Models
-from open_webui.models.chats import Chats
 
 class Filter:
     class Valves(BaseModel):
