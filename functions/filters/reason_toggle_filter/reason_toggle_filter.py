@@ -8,18 +8,17 @@ version: 0.3.1
 """
 
 from __future__ import annotations
-import datetime
-import json
-import logging
 from typing import Any, Awaitable, Callable, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from open_webui.models.models import Models
-from open_webui.models.chats import Chats
 
 class Filter:
     class Valves(BaseModel):
         MODEL: str = "o4-mini"
         REASONING_EFFORT: Literal["low", "medium", "high", "not set"] = "not set"
+        priority: int = Field(
+            default=0, description="Priority level for the filter operations."
+        )
 
     def __init__(self) -> None:
         self.valves = self.Valves()

@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.14 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.20 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
@@ -31,9 +31,13 @@
 | Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
 | Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
 | Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
-| Response item persistence | ✅ GA | 2025-06-17 | Persists items via newline-wrapped markers (v1) that embed type, ULID and metadata. |
+| Response item persistence | ✅ GA | 2025-06-27 | Persists items via newline-wrapped comment markers (v2) that embed type, 16-character ULIDs and metadata. |
+| Open WebUI Notes compatibility | ✅ GA | 2025-07-14 | Works with ephemeral Notes that omit `chat_id`. |
+| Expandable status output | ✅ GA | 2025-07-01 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
+| Inline citation events | ✅ GA | 2025-07-28 | Valve `CITATION_STYLE` controls `[n]` vs source name. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
+| Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
 | File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
@@ -53,6 +57,10 @@
 * **Debug logging**
   Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
   Can be configured **globally** via the pipe valve OR **per user** via user valve.
+
+* **Expandable status blocks**
+  Tool progress is shown using `<details type="openai_responses.expandable_status">` blocks.
+  The `ExpandableStatusEmitter` helper simplifies adding new steps programmatically.
 
 * **Truncation strategy**
   Use the `TRUNCATION` valve to control how long prompts are handled:
@@ -80,6 +88,8 @@ The manifold should work with any model that supports the responses API. Confirm
 | gpt-4o | ✅ |
 | o3 | ✅ |
 | o3-pro | ✅ |
+| o3-deep-research | ❌ |
+| o4-mini-deep-research | ❌ |
 
 ---
 
@@ -149,45 +159,53 @@ body = {
 }
 ```
 
-### Current Solution: Invisible Marker Encoding
-Open WebUI doesn't display markdown links that have no visible label (`[](<url>)`). We can use these hidden markdown links to store references (unique IDs) to response items we've saved elsewhere.
+### Invisible Marker Strategy (v2):
+Open WebUI ignores content enclosed within markdown comments (`[hidden comment]: #`), making them ideal for embedding hidden metadata directly into assistant responses. We can use these hidden markdown comments to store references (unique IDs) to response items we've saved elsewhere. [Learn more about markdown comments →](https://www.markdownguide.org/hacks/#comments)
 
 Here's how it works:
 
-1. We save the full OpenAI responses separately using the built-in method `Chats.update_chat_by_id()`. Each saved response has its own unique ID (e.g, 01HX4Y2VW5VR2Z2HDQ5QY9REHB).
-```json
-"01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
-  "model": "gpt-4o",
-  "created_at": 1718073601,
-  "payload": {
-    "type": "function_call",
-    "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
-    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-    "name": "calculator",
-    "arguments": "{\"expression\":\"34234*pi\"}",
-    "status": "completed"
-  },
-  "message_id": "msg_9fz4qx7e"
-}
+1. **Persist Response Items:**
+   We store the complete OpenAI response items using Open WebUI’s built-in method, `Chats.update_chat_by_id()`. Each item receives a unique 16-character identifier:
+
+   ```json
+   "01HX4Y2VW5VR2Z2H": {
+     "model": "gpt-4o",
+     "created_at": 1718073601,
+     "payload": {
+       "type": "function_call",
+       "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
+       "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
+       "name": "calculator",
+       "arguments": "{\"expression\":\"34234*pi\"}",
+       "status": "completed"
+     },
+     "message_id": "msg_9fz4qx7e"
+   }
+   ```
+
+2. **Embed Invisible Markers:**
+  We yield these IDs as invisible markdown link, e.g.,
+
+  ```text
+  [openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H]: #
+  ```
+  so they are permanently embedded in `body["messages"]["content"]`.
+
+3. **Reconstruct Message History:**
+   Later, the manifold detects these invisible comment markers, retrieves the associated stored response items, and accurately reconstructs the full message history—including all hidden intermediate responses—in their original order.
+
+#### Marker Specification
+For future extensibility, each invisible comment marker adheres to this structured format:
+
 ```
-3. We yield these IDs as invisible markdown links, like `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB)`, so they are permanently embedded in `body["messages"]["contents"]`.
-
-4. Later, the manifold identifies these hidden IDs, retrieves the stored responses, and reconstructs the full message history—including any hidden messages—in the correct order.
-
-#### Marker specification
-For future extensibility, each hidden link contains a structured marker string we can reliably parse:
-
-```
-\n\n[](openai_responses:v1:<item_type>:<ulid>[?model=<model_id>&key=value&...])\n\n
+\n[openai_responses:v2:<item_type>:<id>[?model=<model_id>&key=value...]]: #\n
 ```
 
-* `<item_type>` — the literal OpenAI event type such as `function_call` or
-  `reasoning`.
-* `<ulid>` — a 26‑character ULID used as the database key.
-* Optional query parameters store metadata (the originating model ID is stored
-  under `model`).
+* `<item_type>` – The exact OpenAI event type (`function_call`, `reasoning`, etc.).
+* `<id>` – A unique 16-character ID used as the database key.
+* Optional metadata via query parameters (e.g., the originating model ID under `model`).
 
-We surround the hidden markdown link with `\n\n` line breaks to ensure the marker does not disrupt adjacent markdown formatting or content rendering.
+Markers are enclosed within markdown comment syntax (`[comment]: # (comment content)`) and surrounded by line breaks (`\n`) to ensure invisibility without disrupting markdown formatting or content flow.
 
 _**Why not embed the entire JSON?**_
 Embedding only a marker avoids leaking large payloads into the clipboard while still giving the backend enough information to find the stored data.
@@ -227,7 +245,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 * We persist the payload in the chat db using a unquie identifier.
 
 ```json
-"01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+"01HX4Y2VW5VR2Z2H": {
   "model": "gpt-4o",
   "created_at": 1718073601,
   "payload": {
@@ -242,7 +260,7 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We immediately yield `[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)` so the marker is permanently embedded into `body["messages"]["content"]`.
+* We immediately yield `[openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H] #` so the marker is permanently embedded into `body["messages"]["content"]`.
 
 ---
 
@@ -267,7 +285,12 @@ Finally, the assistant sends the human-readable message:
 #### 📌 **Final Stream (Invisible markers + Response)**:
 
 ```
-[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)[](openai_responses:v1:function_call_output:01HX4Y2VW6B091XE84F5G0Z8NF?model=openai_responses.gpt-4o)The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28.
+
+[openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H?model=openai_responses.gpt-4o]: #
+
+[openai_responses:v2:function_call_output:01HX4Y2VW6B091XE?model=openai_responses.gpt-4o]: #
+
+The result of \(34234 \times \pi\) is approximately 107,549.28.
 ```
 
 *(Invisible markers precede the visible text in this example however OpenAI can have additional tool calls or reasoning at any point.)*
@@ -301,7 +324,7 @@ Finally, the assistant sends the human-readable message:
           "parentId": "933ea7dc-d9aa-4981-a447-b06846376136",
           "childrenIds": [],
           "role": "assistant",
-          "content": "[](openai_responses:v1:function_call:01HX4Y2VW5VR2Z2HDQ5QY9REHB?model=openai_responses.gpt-4o)[](openai_responses:v1:function_call_output:01HX4Y2VW6B091XE84F5G0Z8NF?model=openai_responses.gpt-4o)The result of \\( 34234 \\times \\pi \\) is approximately 107,549.28."
+          "content": "[openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H?model=openai_responses.gpt-4o]: #\n[openai_responses:v2:function_call_output:01HX4Y2VW6B091XE?model=openai_responses.gpt-4o]: #\nThe result of \\(34234 \\times \\pi\\) is approximately 107,549.28."
           "model": "openai_responses.gpt-4o",
           "modelName": "OpenAI: GPT-4o ★★☆☆",
           "timestamp": 1749686545,
@@ -332,7 +355,7 @@ Finally, the assistant sends the human-readable message:
     "openai_responses_pipe": {
       "__v": 3,
       "items": {
-        "01HX4Y2VW5VR2Z2HDQ5QY9REHB": {
+        "01HX4Y2VW5VR2Z2H": {
           "model": "gpt-4o",
           "created_at": 1749686551,
           "payload": {
@@ -345,7 +368,7 @@ Finally, the assistant sends the human-readable message:
           },
           "message_id": "9ce5b52c-189b-4cbf-a5f3-421d6cef79b1"
         },
-        "01HX4Y2VW6B091XE84F5G0Z8NF": {
+        "01HX4Y2VW6B091XE": {
           "model": "gpt-4o",
           "created_at": 1749686552,
           "payload": {
@@ -361,8 +384,8 @@ Finally, the assistant sends the human-readable message:
           "role": "assistant",
           "done": true,
           "item_ids": [
-            "01HX4Y2VW5VR2Z2HDQ5QY9REHB",
-            "01HX4Y2VW6B091XE84F5G0Z8NF"
+            "01HX4Y2VW5VR2Z2H",
+            "01HX4Y2VW6B091XE"
           ]
         }
       }
