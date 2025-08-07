@@ -117,10 +117,9 @@ For more details, see [Introducing GPT‑5 for Developers →](https://openai.co
 
 One common point of confusion:  
 - **In ChatGPT**, “GPT‑5” isn’t a single model — it’s a **mix** of reasoning, minimal‑reasoning, and non‑reasoning models, chosen automatically by a **model router** ([learn more](https://openai.com/index/introducing-gpt-5-for-developers/)).  
-- **In the API**, `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are always **reasoning models** tuned for developers — reasoning is enabled by default.  
+- **In the API**, `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are **reasoning models** tuned for developers — reasoning is enabled by default.  
 - **`gpt-5` with reasoning set to `minimal`** is *not* the same as ChatGPT’s non‑reasoning GPT‑5.  
-- To use **the exact non‑reasoning GPT‑5 from ChatGPT**, use `gpt-5-chat-latest`.  
-- **Note:** `gpt-5-chat-latest` does *not* support advanced tools like function calling or web search.
+- To use **the exact non‑reasoning GPT‑5 from ChatGPT**, use `gpt-5-chat-latest`.  This model will typically be the best chat experience for quick well written answers (although unfortunately doesn't support function calling or web search 🙁)
 
 ---
 
