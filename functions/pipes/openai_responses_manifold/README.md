@@ -102,6 +102,31 @@ The manifold should work with any model that supports the responses API. Confirm
 
 ---
 
+Got it — here’s a concise, clear **"What You Need to Know"** section you can drop into your README so people understand how to set up GPT‑5 series models in the manifold:
+
+---
+
+## 🧠 GPT‑5 Model Support — What You Need to Know
+
+The OpenAI Responses Manifold supports the **full GPT‑5 family** in the API:
+
+- `gpt-5`  
+- `gpt-5-mini`  
+- `gpt-5-nano`  
+- `gpt-5-chat-latest` (non‑reasoning ChatGPT variant)
+
+For more details, see [Introducing GPT‑5 for Developers →](https://openai.com/index/introducing-gpt-5-for-developers/)
+
+### 🚧 Important Differences Between ChatGPT and API Versions
+
+One common point of confusion:  
+- **GPT‑5 in ChatGPT** is **not one model** — it’s a *system* that uses **reasoning**, **minimal‑reasoning**, and **non‑reasoning** models, selected dynamically by a **model router** ([learn more](https://openai.com/index/introducing-gpt-5-for-developers/)).  
+- **GPT‑5 in the API** (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) are **reasoning models** tuned for developers — they will reason by default.  
+- gpt-5 with reasoning set to minimal is not the same as the non‑reasoning GPT‑5 used in ChatGPT.
+- To get the exact non‑reasoning GPT‑5 from ChatGPT, use gpt-5-chat-latest.
+
+---
+
 # The Magic Behind this Pipe
 ### Persisting Non-Message Items (function_call, function_call_results, reasoning tokens, etc..)
 
