@@ -650,15 +650,23 @@ class Pipe:
                 )
                 return
             
-        # Enable reasoning summary, if supported and enabled
-        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
-            responses_body.reasoning = responses_body.reasoning or {}
+        # Enable reasoning summary only if the caller explicitly provided a
+        # ``reasoning`` parameter.
+        if (
+            model_family in FEATURE_SUPPORT["reasoning_summary"]
+            and valves.ENABLE_REASONING_SUMMARY
+            and responses_body.reasoning is not None
+        ):
             responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
-        # Enable persistence of encrypted reasoning tokens, if supported and store=False
+        # Enable persistence of encrypted reasoning tokens only when
+        # ``reasoning`` was explicitly requested and store=False.
         # TODO make this configurable via valves since some orgs might not be approved for encrypted content
-        # Note storing encrypted contents is only supported when store = False
-        if model_family in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+        if (
+            model_family in FEATURE_SUPPORT["reasoning"]
+            and responses_body.store is False
+            and responses_body.reasoning is not None
+        ):
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
 
