@@ -356,10 +356,13 @@ class ResponsesBody(BaseModel):
                     if segment["type"] == "marker":
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
-                        if item:
+                        # Skip persisted reasoning; it is no longer carried across messages.
+                        if item and item.get("type") != "reasoning":
                             openai_input.append(item)
                         else:
-                            logging.warning(f"Missing persisted item for ID: {mk['ulid']}")
+                            logging.getLogger(__name__).debug(
+                                "Skipping persisted reasoning item %s", mk.get("ulid")
+                            )
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "role": "assistant",
@@ -650,22 +653,17 @@ class Pipe:
                 )
                 return
             
-        # Enable reasoning summary only if the caller explicitly provided a
-        # ``reasoning`` parameter.
+        # Enable reasoning summary if enabled and supported
         if (
             model_family in FEATURE_SUPPORT["reasoning_summary"]
             and valves.ENABLE_REASONING_SUMMARY
-            and responses_body.reasoning is not None
         ):
             responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
 
-        # Enable persistence of encrypted reasoning tokens only when
-        # ``reasoning`` was explicitly requested and store=False.
-        # TODO make this configurable via valves since some orgs might not be approved for encrypted content
+        # Enable persistence of encrypted reasoning tokens if enabled and supported
         if (
             model_family in FEATURE_SUPPORT["reasoning"]
             and responses_body.store is False
-            and responses_body.reasoning is not None
         ):
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
@@ -812,8 +810,9 @@ class Pipe:
                         if item_type in ("message"):
                             continue
 
-                        # persist the item if it is not a message (function_call, reasoning, etc.)
-                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                        # Persist only non-message, non-reasoning items.
+                        # Reasoning is ephemeral (in-turn only).
+                        if valves.PERSIST_TOOL_RESULTS and item_type not in ("message", "reasoning"):
                             hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
@@ -1031,15 +1030,6 @@ class Pipe:
                         )
                         assistant_message += snippet
                         reasoning_map.clear()
-                        if valves.PERSIST_TOOL_RESULTS:
-                            hidden_uid_marker = persist_openai_response_items(
-                                metadata.get("chat_id"),
-                                metadata.get("message_id"),
-                                [item],
-                                metadata.get("model", {}).get("id"),
-                            )
-                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            assistant_message += hidden_uid_marker
 
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
