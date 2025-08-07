@@ -91,6 +91,11 @@ class CompletionsBody(BaseModel):
             self.model = self.model.removesuffix("-high")
             self.reasoning_effort = "high"
 
+        # Normalize pseudo-model IDs
+        if self.model in {"gpt-5-thinking"}:
+            self.model = self.model.removesuffix("-thinking")
+            self.reasoning_effort = "high"
+
         return self
 
 class ResponsesBody(BaseModel):
