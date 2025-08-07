@@ -124,10 +124,6 @@ One common point of confusion:
 
 ---
 
-If you want, I can follow this with a **fast comparison table** showing API vs ChatGPT differences — that way it’s instantly clear which model supports which features. Want me to do that?
-
----
-
 # The Magic Behind this Pipe
 ### Persisting Non-Message Items (function_call, function_call_results, reasoning tokens, etc..)
 
