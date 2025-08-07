@@ -357,7 +357,7 @@ class ResponsesBody(BaseModel):
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
                         # Skip persisted reasoning; it is no longer carried across messages.
-                        if item and item.get("type") != "reasoning":
+                        if isinstance(item, dict) and item.get("type") != "reasoning":
                             openai_input.append(item)
                         else:
                             logging.getLogger(__name__).debug(
@@ -654,11 +654,11 @@ class Pipe:
                 return
             
         # Enable reasoning summary if enabled and supported
-        if (
-            model_family in FEATURE_SUPPORT["reasoning_summary"]
-            and valves.ENABLE_REASONING_SUMMARY
-        ):
-            responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
+        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+            # Ensure reasoning param is a mutable dict so we can safely assign to it
+            reasoning_params = dict(responses_body.reasoning or {})
+            reasoning_params["summary"] = valves.ENABLE_REASONING_SUMMARY
+            responses_body.reasoning = reasoning_params
 
         # Enable persistence of encrypted reasoning tokens if enabled and supported
         if (
