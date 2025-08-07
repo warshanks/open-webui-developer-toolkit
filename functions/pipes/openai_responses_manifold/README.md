@@ -1,7 +1,9 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.20 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+Supports OpenAI's GPT‑5 model family in the API—`gpt-5`, `gpt-5-mini`, and `gpt-5-nano`. These are reasoning models tuned for developers. The non‑reasoning ChatGPT variant is exposed as `gpt-5-chat-latest`. Pseudo‑model aliases like `gpt-5-high`, `gpt-5-thinking`, `gpt-5-minimal`, `gpt-5-mini-minimal`, and `gpt-5-nano-minimal` automatically toggle the `reasoning_effort` level. `gpt-5-mini-minimal` is ideal as a hidden task model in Open WebUI.
+
+⚠️ **Version 0.8.21 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
@@ -24,11 +26,11 @@
 | Feature | Status | Last updated | Notes |
 | --- | --- | --- | --- |
 | Native function calling | ✅ GA | 2025-06-04 | Automatically enabled for supported models. |
-| Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
-| Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
+| Visible reasoning summaries | ✅ GA | 2025-08-07 | Available for o‑series models only. Requires `reasoning` parameter. |
+| Encrypted reasoning tokens | ✅ GA | 2025-08-07 | Persists reasoning context across turns. Requires `reasoning` parameter. |
 | Optimized token caching | ✅ GA | 2025-06-03 | Save up to ~50–75 % on supported models. |
 | Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
-| Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
+| Task model support | ✅ GA | 2025-08-07 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). `gpt-5-mini-minimal` is recommended as a hidden task model. |
 | Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
 | Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
 | Response item persistence | ✅ GA | 2025-06-27 | Persists items via newline-wrapped comment markers (v2) that embed type, 16-character ULIDs and metadata. |
@@ -50,9 +52,9 @@
 ### Other Features
 
 * **Pseudo-model aliases**
-  You can list `o3-mini-high` and `o4-mini-high` in the `MODELS` valve just like regular models.
-  These are **virtual aliases** (not real OpenAI models) that automatically map to `o3-mini` and `o4-mini` with `reasoning_effort` set to `"high"`.
-  This allows you to enable advanced reasoning without needing to set custom parameters manually.
+  You can list `o3-mini-high`, `o4-mini-high`, `gpt-5-high`, `gpt-5-thinking`, `gpt-5-minimal`, `gpt-5-mini-minimal`, and `gpt-5-nano-minimal` in the `MODELS` valve just like regular models.
+  These are **virtual aliases** (not real OpenAI models) that automatically map to the underlying model and set `reasoning_effort` to `"high"` or `"minimal"` as indicated.
+  For example, `gpt-5-thinking` uses `gpt-5` with `reasoning_effort="high"`, while the `*-minimal` variants run with minimal reasoning and are handy for task models like a hidden `gpt-5-mini-minimal`.
 
 * **Debug logging**
   Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
@@ -80,8 +82,15 @@
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
+
+* **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are reasoning models. The non‑reasoning ChatGPT model is available as `gpt-5-chat-latest`. Pseudo‑model IDs like `gpt-5-high`, `gpt-5-thinking`, and the `*-minimal` variants are also recognized.
+
 | Model ID | Status |
 | --- | --- |
+| gpt-5 | ✅ |
+| gpt-5-mini | ✅ |
+| gpt-5-nano | ✅ |
+| gpt-5-chat-latest | ✅ |
 | chatgpt-4o-latest | ✅ |
 | codex-mini-latest | ✅ |
 | gpt-4.1 | ✅ |
@@ -90,6 +99,36 @@ The manifold should work with any model that supports the responses API. Confirm
 | o3-pro | ✅ |
 | o3-deep-research | ❌ |
 | o4-mini-deep-research | ❌ |
+
+---
+
+## 🧠 GPT‑5 Model Support — What You Need to Know
+
+The OpenAI Responses Manifold supports the **full GPT‑5 family** in the API:
+
+- `gpt-5`
+- `gpt-5-mini`
+- `gpt-5-nano`
+- `gpt-5-chat-latest` (non‑reasoning ChatGPT variant)
+
+Pseudo‑model IDs are also available to adjust reasoning effort:
+
+- `gpt-5-high` / `gpt-5-thinking` → `gpt-5` with `reasoning_effort="high"`
+- `gpt-5-minimal` → `gpt-5` with `reasoning_effort="minimal"`
+- `gpt-5-mini-minimal` → `gpt-5-mini` with `reasoning_effort="minimal"`
+- `gpt-5-nano-minimal` → `gpt-5-nano` with `reasoning_effort="minimal"`
+
+The `*-minimal` variants are handy for background tasks; `gpt-5-mini-minimal` is typically added as a hidden task model in Open WebUI.
+
+For more details, see [Introducing GPT‑5 for Developers →](https://openai.com/index/introducing-gpt-5-for-developers/)
+
+### 🚧 Important Differences Between ChatGPT and API Versions
+
+One common point of confusion:  
+- **In ChatGPT**, “GPT‑5” isn’t a single model — it’s a **mix** of reasoning, minimal‑reasoning, and non‑reasoning models, chosen automatically by a **model router** ([learn more](https://openai.com/index/introducing-gpt-5-for-developers/)).  
+- **In the API**, `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are **reasoning models** tuned for developers — reasoning is enabled by default.  
+- **`gpt-5` with reasoning set to `minimal`** is *not* the same as ChatGPT’s non‑reasoning GPT‑5.  
+- To use **the exact non‑reasoning GPT‑5 from ChatGPT**, use `gpt-5-chat-latest`.  This model will typically be the best chat experience for quick well written answers (although unfortunately doesn't support function calling or web search 🙁)
 
 ---
 

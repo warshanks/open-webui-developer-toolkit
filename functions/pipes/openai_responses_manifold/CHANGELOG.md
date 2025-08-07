@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Simplified citation handling and removed duplicate markdown links.
 - Added `CITATION_STYLE` valve to choose number or source name markers.
 
+## [0.8.21] - 2025-08-07
+- Only include `reasoning` parameter when explicitly provided.
+
 ## [0.8.16] - 2025-06-28
 - Fixed custom separator handling in `ExpandableStatusEmitter`.
 - Corrected `Tuple` import for type hints.

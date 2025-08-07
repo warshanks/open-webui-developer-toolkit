@@ -51,8 +51,8 @@ FEATURE_SUPPORT = {
     "web_search_tool": {"gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o3-pro", "o4-mini", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's built-in web search tool.
     "image_gen_tool": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
     "function_calling": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
-    "reasoning": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-chat-latest", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
-    "reasoning_summary": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-chat-latest", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "reasoning": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
+    "reasoning_summary": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
 
     # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
@@ -95,6 +95,11 @@ class CompletionsBody(BaseModel):
         if self.model in {"gpt-5-thinking"}:
             self.model = self.model.removesuffix("-thinking")
             self.reasoning_effort = "high"
+
+        # Normalize pseudo-model IDs
+        if self.model in {"gpt-5-minimal", "gpt-5-mini-minimal", "gpt-5-nano-minimal"}:
+            self.model = self.model.removesuffix("-minimal")
+            self.reasoning_effort = "minimal"
 
         return self
 
@@ -356,10 +361,13 @@ class ResponsesBody(BaseModel):
                     if segment["type"] == "marker":
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
-                        if item:
+                        # Skip persisted reasoning; it is no longer carried across messages.
+                        if isinstance(item, dict) and item.get("type") != "reasoning":
                             openai_input.append(item)
                         else:
-                            logging.warning(f"Missing persisted item for ID: {mk['ulid']}")
+                            logging.getLogger(__name__).debug(
+                                "Skipping persisted reasoning item %s", mk.get("ulid")
+                            )
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "role": "assistant",
@@ -615,13 +623,18 @@ class Pipe:
                 strict = True
             )
 
-        # Add web_search tool, if supported and enabled.
-        if model_family in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False)):
+        # Add web_search tool only if supported, enabled, and effort != minimal
+        # Noted that web search doesn't seem to work when effort = minimal.
+        if (
+            model_family in FEATURE_SUPPORT["web_search_tool"]
+            and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False))
+            and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
+        ):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search_preview",
                 "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
-                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}), # Consider using Open WebUI User's location if available instead.
+                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}),
             })
 
         # Append remote MCP servers (experimental)
@@ -650,15 +663,18 @@ class Pipe:
                 )
                 return
             
-        # Enable reasoning summary, if supported and enabled
+        # Enable reasoning summary if enabled and supported
         if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
-            responses_body.reasoning = responses_body.reasoning or {}
-            responses_body.reasoning["summary"] = valves.ENABLE_REASONING_SUMMARY
+            # Ensure reasoning param is a mutable dict so we can safely assign to it
+            reasoning_params = dict(responses_body.reasoning or {})
+            reasoning_params["summary"] = valves.ENABLE_REASONING_SUMMARY
+            responses_body.reasoning = reasoning_params
 
-        # Enable persistence of encrypted reasoning tokens, if supported and store=False
-        # TODO make this configurable via valves since some orgs might not be approved for encrypted content
-        # Note storing encrypted contents is only supported when store = False
-        if model_family in FEATURE_SUPPORT["reasoning"] and responses_body.store is False:
+        # Enable persistence of encrypted reasoning tokens if enabled and supported
+        if (
+            model_family in FEATURE_SUPPORT["reasoning"]
+            and responses_body.store is False
+        ):
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
 
@@ -804,8 +820,9 @@ class Pipe:
                         if item_type in ("message"):
                             continue
 
-                        # persist the item if it is not a message (function_call, reasoning, etc.)
-                        if valves.PERSIST_TOOL_RESULTS and item_type != "message":
+                        # Persist only non-message, non-reasoning items.
+                        # Reasoning is ephemeral (in-turn only).
+                        if valves.PERSIST_TOOL_RESULTS and item_type not in ("message", "reasoning"):
                             hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
@@ -1023,15 +1040,6 @@ class Pipe:
                         )
                         assistant_message += snippet
                         reasoning_map.clear()
-                        if valves.PERSIST_TOOL_RESULTS:
-                            hidden_uid_marker = persist_openai_response_items(
-                                metadata.get("chat_id"),
-                                metadata.get("message_id"),
-                                [item],
-                                metadata.get("model", {}).get("id"),
-                            )
-                            self.logger.debug("Persisted item: %s", hidden_uid_marker)
-                            assistant_message += hidden_uid_marker
 
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
