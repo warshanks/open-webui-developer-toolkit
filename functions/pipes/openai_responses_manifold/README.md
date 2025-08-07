@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.20 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+⚠️ **Version 0.8.21 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
@@ -24,8 +24,8 @@
 | Feature | Status | Last updated | Notes |
 | --- | --- | --- | --- |
 | Native function calling | ✅ GA | 2025-06-04 | Automatically enabled for supported models. |
-| Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
-| Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
+| Visible reasoning summaries | ✅ GA | 2025-08-07 | Available for o‑series models only. Requires `reasoning` parameter. |
+| Encrypted reasoning tokens | ✅ GA | 2025-08-07 | Persists reasoning context across turns. Requires `reasoning` parameter. |
 | Optimized token caching | ✅ GA | 2025-06-03 | Save up to ~50–75 % on supported models. |
 | Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
 | Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
