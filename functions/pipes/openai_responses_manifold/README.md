@@ -1,6 +1,8 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
+Supports OpenAI's GPT‑5 model family in the API—`gpt-5`, `gpt-5-mini`, and `gpt-5-nano`. These are reasoning models tuned for developers. The non‑reasoning ChatGPT variant is exposed as `gpt-5-chat-latest`.
+
 ⚠️ **Version 0.8.21 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
 ## Setup Instructions
@@ -80,8 +82,15 @@
 
 ### Tested models
 The manifold should work with any model that supports the responses API. Confirmed with:
+
+* **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are reasoning models. The non‑reasoning ChatGPT model is available as `gpt-5-chat-latest`.
+
 | Model ID | Status |
 | --- | --- |
+| gpt-5 | ✅ |
+| gpt-5-mini | ✅ |
+| gpt-5-nano | ✅ |
+| gpt-5-chat-latest | ✅ |
 | chatgpt-4o-latest | ✅ |
 | codex-mini-latest | ✅ |
 | gpt-4.1 | ✅ |
