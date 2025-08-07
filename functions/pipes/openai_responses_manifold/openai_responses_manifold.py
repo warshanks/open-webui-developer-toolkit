@@ -87,7 +87,7 @@ class CompletionsBody(BaseModel):
         self.model = self.model.removeprefix("openai_responses.")
 
         # Normalize pseudo-model IDs
-        if self.model in {"o3-mini-high", "o4-mini-high"}:
+        if self.model in {"o3-mini-high", "o4-mini-high", "gpt-5-high"}:
             self.model = self.model.removesuffix("-high")
             self.reasoning_effort = "high"
 
