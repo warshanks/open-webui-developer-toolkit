@@ -102,10 +102,6 @@ The manifold should work with any model that supports the responses API. Confirm
 
 ---
 
-Got it — here’s a concise, clear **"What You Need to Know"** section you can drop into your README so people understand how to set up GPT‑5 series models in the manifold:
-
----
-
 ## 🧠 GPT‑5 Model Support — What You Need to Know
 
 The OpenAI Responses Manifold supports the **full GPT‑5 family** in the API:
