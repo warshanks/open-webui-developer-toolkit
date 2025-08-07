@@ -96,6 +96,11 @@ class CompletionsBody(BaseModel):
             self.model = self.model.removesuffix("-thinking")
             self.reasoning_effort = "high"
 
+        # Normalize pseudo-model IDs
+        if self.model in {"gpt-5-minimal", "gpt-5-mini-minimal", "gpt-5-nano-minimal"}:
+            self.model = self.model.removesuffix("-minimal")
+            self.reasoning_effort = "minimal"
+
         return self
 
 class ResponsesBody(BaseModel):
@@ -618,13 +623,18 @@ class Pipe:
                 strict = True
             )
 
-        # Add web_search tool, if supported and enabled.
-        if model_family in FEATURE_SUPPORT["web_search_tool"] and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False)):
+        # Add web_search tool only if supported, enabled, and effort != minimal
+        # Noted that web search doesn't seem to work when effort = minimal.
+        if (
+            model_family in FEATURE_SUPPORT["web_search_tool"]
+            and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False))
+            and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
+        ):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
                 "type": "web_search_preview",
                 "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
-                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}), # Consider using Open WebUI User's location if available instead.
+                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}),
             })
 
         # Append remote MCP servers (experimental)
