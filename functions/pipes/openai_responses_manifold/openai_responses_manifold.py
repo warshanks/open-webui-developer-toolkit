@@ -483,7 +483,7 @@ class Pipe:
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
         MODEL_ID: str = Field(
-            default="gpt-4.1, gpt-4o",
+            default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
         )
         ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(

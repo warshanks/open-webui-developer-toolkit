@@ -3,8 +3,6 @@
 
 Supports OpenAI's GPT-5 model family in the API — [`Learn more about GPT-5 support`](#gpt-5-model-support-api--manifold).
 
-⚠️ **Version 0.8.21 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
-
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
    <img width="894" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
