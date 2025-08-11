@@ -5,6 +5,7 @@
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
+   
    <img width="894" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
 2. Paste one of the following links:
 
@@ -37,6 +38,7 @@
 | Inline citation events | ✅ GA | 2025-07-28 | Valve `CITATION_STYLE` controls `[n]` vs source name. |
 | Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
 | Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
+| Regenerate buttons → verbosity mapping | ✅ GA | 2025-08-11 | Maps WebUI “Add Details”/“More Concise” to OpenAI `text.verbosity` = `high`/`low` on GPT-5 family. |
 | Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
 | Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
 | Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
@@ -72,6 +74,9 @@
 * **Custom parameter support**
   Pass OpenAI-compatible fields via Open WebUI's **Custom Parameters**.
   For convenience, `max_tokens` is automatically translated to `max_output_tokens`.
+
+* **Regenerate buttons `text.verbosity`**
+  When the last user input is **“Add Details”** or **“More Concise”**, the manifold sets `text.verbosity` to `high`/`low` on supported GPT-5 models.
 
 * **Remote MCP server integration** (experimental)
   Set the `REMOTE_MCP_SERVERS_JSON` valve to a JSON object or array describing [Remote MCP](https://platform.openai.com/docs/guides/tools-remote-mcp) servers.
