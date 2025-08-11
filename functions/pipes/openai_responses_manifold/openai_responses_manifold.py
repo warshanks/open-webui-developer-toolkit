@@ -559,7 +559,7 @@ class Pipe:
         )
 
         # 9) Privacy & caching
-        USER_ID_FIELD: Literal["id", "email"] = Field(
+        PROMPT_CACHE_KEY: Literal["id", "email"] = Field(
             default="id",
             description=(
                 "Controls which user identifier is sent in the 'user' parameter to OpenAI. "
@@ -616,7 +616,7 @@ class Pipe:
         """
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         openwebui_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
-        user_identifier = __user__[valves.USER_ID_FIELD]  # Use 'id' or 'email' as configured
+        user_identifier = __user__[valves.PROMPT_CACHE_KEY]  # Use 'id' or 'email' as configured
         features = __metadata__.get("features", {}).get("openai_responses", {}) # Custom location that this manifold uses to store feature flags
 
         # Set up session logger with session_id and log level
@@ -634,7 +634,7 @@ class Pipe:
 
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
-            user=user_identifier,
+            prompt_cache_key=user_identifier,
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
 
