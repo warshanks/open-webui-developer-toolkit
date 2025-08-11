@@ -558,6 +558,17 @@ class Pipe:
             description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
 
+        SERVICE_TIER: Literal["auto", "default", "flex", "priority"] = Field(
+            default="auto",
+            description=(
+            "Specifies the processing type used for serving the request. "
+            "If set to 'auto', the request will be processed with the service tier configured in the Project settings. "
+            "If set to 'default', the request will be processed with the standard pricing and performance for the selected model. "
+            "If set to 'flex' or 'priority', the request will be processed with the corresponding service tier. "
+            "When not set, the default behavior is 'auto'."
+            ),
+        )
+
         # 9) Privacy & caching
         PROMPT_CACHE_KEY: Literal["id", "email"] = Field(
             default="id",
@@ -635,6 +646,7 @@ class Pipe:
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
             prompt_cache_key=user_identifier,
+            service_tier=valves.SERVICE_TIER,
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
 
