@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.21
+version: 0.8.24
 license: MIT
 """
 
@@ -53,6 +53,7 @@ FEATURE_SUPPORT = {
     "function_calling": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
     "reasoning": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
     "reasoning_summary": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "verbosity": {"gpt-5", "gpt-5-mini", "gpt-5-nano"}, # Supports OpenAI's verbosity parameter.
 
     # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
@@ -83,23 +84,36 @@ class CompletionsBody(BaseModel):
     def normalize_model(self) -> "CompletionsBody":
         """Normalize model: strip 'openai_responses.' prefix and map '-high' pseudo-models."""
         
-        # Strip prefix if present
-        self.model = self.model.removeprefix("openai_responses.")
+        # Remove prefix if present
+        m = (self.model or "").strip()
+        if m.startswith("openai_responses."):
+            m = m[len("openai_responses."):]
 
-        # Normalize pseudo-model IDs
-        if self.model in {"o3-mini-high", "o4-mini-high", "gpt-5-high"}:
-            self.model = self.model.removesuffix("-high")
-            self.reasoning_effort = "high"
+        key = m.lower()
 
-        # Normalize pseudo-model IDs
-        if self.model in {"gpt-5-thinking"}:
-            self.model = self.model.removesuffix("-thinking")
-            self.reasoning_effort = "high"
+        # Alias mapping: pseudo ID -> (real model, reasoning effort)
+        aliases = {
+            # GPT-5 Thinking family
+            "gpt-5-thinking": ("gpt-5", None),
+            "gpt-5-thinking-minimal": ("gpt-5", "minimal"),
+            "gpt-5-thinking-high": ("gpt-5", "high"),
+            "gpt-5-thinking-mini": ("gpt-5-mini", None),
+            "gpt-5-thinking-mini-minimal": ("gpt-5-mini", "minimal"),
+            "gpt-5-thinking-nano": ("gpt-5-nano", None),
+            "gpt-5-thinking-nano-minimal": ("gpt-5-nano", "minimal"),
 
-        # Normalize pseudo-model IDs
-        if self.model in {"gpt-5-minimal", "gpt-5-mini-minimal", "gpt-5-nano-minimal"}:
-            self.model = self.model.removesuffix("-minimal")
-            self.reasoning_effort = "minimal"
+            # Backwards compatibility
+            "o3-mini-high": ("o3-mini", "high"),
+            "o4-mini-high": ("o4-mini", "high"),
+        }
+
+        if key in aliases:
+            real, effort = aliases[key]
+            self.model = real
+            if effort:
+                self.reasoning_effort = effort  # type: ignore[assignment]
+        else:
+            self.model = key  # pass through official IDs as lowercase
 
         return self
 
@@ -361,13 +375,7 @@ class ResponsesBody(BaseModel):
                     if segment["type"] == "marker":
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
-                        # Skip persisted reasoning; it is no longer carried across messages.
-                        if isinstance(item, dict) and item.get("type") != "reasoning":
-                            openai_input.append(item)
-                        else:
-                            logging.getLogger(__name__).debug(
-                                "Skipping persisted reasoning item %s", mk.get("ulid")
-                            )
+                        openai_input.append(item)
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "role": "assistant",
@@ -461,6 +469,7 @@ class ResponsesBody(BaseModel):
 class Pipe:
     # 4.1 Configuration Schemas
     class Valves(BaseModel):
+        # 1) Connection & Auth
         BASE_URL: str = Field(
             default=((os.getenv("OPENAI_API_BASE_URL") or "").strip() or "https://api.openai.com/v1"),
             description="The base URL to use with the OpenAI SDK. Defaults to the official OpenAI API endpoint. Supports LiteLLM and other custom endpoints.",
@@ -469,14 +478,48 @@ class Pipe:
             default=(os.getenv("OPENAI_API_KEY") or "").strip() or "sk-xxxxx",
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
+
+        # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-4.1, gpt-4o",
+            default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
         )
-        ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
-            default=None,
-            description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for unsupported models. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+
+        # 3) Reasoning & summaries
+        REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
+            default="disabled",
+            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
+        PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = Field(
+            default="disabled",
+            description="REQUIRES VERIFIED OPENAI ORG. If verified, highly recommend using 'response' or 'conversation' for best results. If `disabled` (default) = never request encrypted reasoning tokens; if `response` = request tokens so the model can carry reasoning across tool calls for the current response; If `conversation` = also persist tokens for future messages in this chat (higher token usage; quality may vary).",
+        )
+        
+        # 4) Tool execution behavior
+        PARALLEL_TOOL_CALLS: bool = Field(
+            default=True,
+            description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
+        )
+        MAX_TOOL_CALLS: Optional[int] = Field(
+            default=None,
+            description=(
+                "Maximum number of individual tool or function calls the model can make "
+                "within a single response. Applies to the total number of calls across "
+                "all built-in tools. Further tool-call attempts beyond this limit will be ignored."
+            )
+        )
+        MAX_FUNCTION_CALL_LOOPS: int = Field(
+            default=10,
+            description=(
+                "Maximum number of full execution cycles (loops) allowed per request. "
+                "Each loop involves the model generating one or more function/tool calls, "
+                "executing all requested functions, and feeding the results back into the model. "
+                "Looping stops when this limit is reached or when the model no longer requests "
+                "additional tool or function calls."
+            )
+        )
+
+        # 6) Web search
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
             description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
@@ -489,36 +532,14 @@ class Pipe:
             default=None,
             description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
         )
-        PARALLEL_TOOL_CALLS: bool = Field(
-            default=True,
-            description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
-        )
-        TRUNCATION: Literal["auto", "disabled"] = Field(
-            default="auto",
-            description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
-        )
-        MAX_TOOL_CALLS: Optional[int] = Field(
-            default=None,
-            description=(
-                "Maximum number of individual tool or function calls the model can make "
-                "within a single response. Applies to the total number of calls across "
-                "all built-in tools. Further tool-call attempts beyond this limit will be ignored."
-            )
-        )
-        MAX_FUNCTION_CALL_LOOPS: int = Field(
-            default=5,
-            description=(
-                "Maximum number of full execution cycles (loops) allowed per request. "
-                "Each loop involves the model generating one or more function/tool calls, "
-                "executing all requested functions, and feeding the results back into the model. "
-                "Looping stops when this limit is reached or when the model no longer requests "
-                "additional tool or function calls."
-            )
-        )
+
+        # 7) Persistence
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
+
+        # 8) Integrations
         REMOTE_MCP_SERVERS_JSON: Optional[str] = Field(
             default=None,
             description=(
@@ -531,19 +552,40 @@ class Pipe:
                 '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never","allowed_tools": ["ask_question"]}]'
             ),
         )
-        USER_ID_FIELD: Literal["id", "email"] = Field(
+
+        TRUNCATION: Literal["auto", "disabled"] = Field(
+            default="auto",
+            description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
+        )
+
+        SERVICE_TIER: Literal["auto", "default", "flex", "priority"] = Field(
+            default="auto",
+            description=(
+            "Specifies the processing type used for serving the request. "
+            "If set to 'auto', the request will be processed with the service tier configured in the Project settings. "
+            "If set to 'default', the request will be processed with the standard pricing and performance for the selected model. "
+            "If set to 'flex' or 'priority', the request will be processed with the corresponding service tier. "
+            "When not set, the default behavior is 'auto'."
+            ),
+        )
+
+        # 9) Privacy & caching
+        PROMPT_CACHE_KEY: Literal["id", "email"] = Field(
             default="id",
             description=(
                 "Controls which user identifier is sent in the 'user' parameter to OpenAI. "
                 "Passing a unique identifier enables OpenAI response caching (improves speed and reduces cost). "
-                "Choose 'id' to use the OpenWebUI user ID (privacy-friendly), or 'email' to use the user's email address."
+                "Choose 'id' to use the OpenWebUI user ID (default; privacy-friendly), or 'email' to use the user's email address."
             ),
         )
+
+        # 10) Logging
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
-    
+
+
     class UserValves(BaseModel):
         """Per-user valve overrides."""
         LOG_LEVEL: Literal[
@@ -585,7 +627,7 @@ class Pipe:
         """
         valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
         openwebui_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
-        user_identifier = __user__[valves.USER_ID_FIELD]  # Use 'id' or 'email' as configured
+        user_identifier = __user__[valves.PROMPT_CACHE_KEY]  # Use 'id' or 'email' as configured
         features = __metadata__.get("features", {}).get("openai_responses", {}) # Custom location that this manifold uses to store feature flags
 
         # Set up session logger with session_id and log level
@@ -603,7 +645,8 @@ class Pipe:
 
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
-            user=user_identifier,
+            prompt_cache_key=user_identifier,
+            service_tier=valves.SERVICE_TIER,
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
 
@@ -664,19 +707,47 @@ class Pipe:
                 return
             
         # Enable reasoning summary if enabled and supported
-        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.REASONING_SUMMARY != "disabled":
             # Ensure reasoning param is a mutable dict so we can safely assign to it
             reasoning_params = dict(responses_body.reasoning or {})
-            reasoning_params["summary"] = valves.ENABLE_REASONING_SUMMARY
+            reasoning_params["summary"] = valves.REASONING_SUMMARY
             responses_body.reasoning = reasoning_params
 
-        # Enable persistence of encrypted reasoning tokens if enabled and supported
-        if (
-            model_family in FEATURE_SUPPORT["reasoning"]
-            and responses_body.store is False
-        ):
-            responses_body.include = responses_body.include or []
-            responses_body.include.append("reasoning.encrypted_content")
+        # Always request encrypted reasoning for in-turn carry (multi-tool) unless disabled
+        if (model_family in FEATURE_SUPPORT["reasoning"]
+            and valves.PERSIST_REASONING_TOKENS != "disabled"
+            and responses_body.store is False):
+             responses_body.include = responses_body.include or []
+             if "reasoning.encrypted_content" not in responses_body.include:
+                 responses_body.include.append("reasoning.encrypted_content")
+
+        # Map WebUI "Add Details" / "More Concise" → text.verbosity (if supported by model), then strip the stub
+        input_items = responses_body.input if isinstance(responses_body.input, list) else None
+        if input_items:
+            last_item = input_items[-1]
+            content_blocks = last_item.get("content") if last_item.get("role") == "user" else None
+            first_block = content_blocks[0] if isinstance(content_blocks, list) and content_blocks else {}
+            last_user_text = (first_block.get("text") or "").strip().lower()
+
+            directive_to_verbosity = {"add details": "high", "more concise": "low"}
+            verbosity_value = directive_to_verbosity.get(last_user_text)
+
+            if verbosity_value:
+                # Check model support
+                model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
+                if model_family in FEATURE_SUPPORT["verbosity"]:
+                    # Set/overwrite verbosity (do NOT remove the stub message)
+                    current_text_params = dict(getattr(responses_body, "text", {}) or {})
+                    current_text_params["verbosity"] = verbosity_value
+                    responses_body.text = current_text_params
+
+                    # Remove the stub user message so the model doesn't see it
+                    input_items.pop()  # or: del input_items[-1]
+
+                    # Notify the user in the UI
+                    await self._emit_notification(__event_emitter__,f"Regenerating with verbosity set to {verbosity_value}.",level="info")
+
+                    self.logger.debug("Set text.verbosity=%s based on regenerate directive '%s'",verbosity_value, last_user_text)
 
         # Log the transformed request body
         self.logger.debug("Transformed ResponsesBody: %s", json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False))
@@ -721,6 +792,7 @@ class Pipe:
                 status_content="Reading the question and building a plan to answer it. This may take a moment.",
             )
 
+        # Send OpenAI Responses API request, parse and emit response
         try:
             for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
@@ -731,13 +803,14 @@ class Pipe:
                 ):
                     etype = event.get("type")
 
-                    # efficienct check if debug logging is enabled. If so, log the event name
+                    # Efficient check if debug logging is enabled. If so, log the event name
                     if self.logger.isEnabledFor(logging.DEBUG):
                         self.logger.debug("Received event: %s", etype)
                         # if doesn't end in .delta, log the full event
                         if not etype.endswith(".delta"):
                             self.logger.debug("Event data: %s", json.dumps(event, indent=2, ensure_ascii=False))
 
+                    # ─── Emit partial delta assistant message
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
@@ -746,6 +819,25 @@ class Pipe:
                                                  "data": {"content": assistant_message}})
                         continue
 
+                    # ─── Reasoning summary -> status indicator (done only) ───────────────────────
+                    if etype == "response.reasoning_summary_text.done":
+                        text = (event.get("text") or "").strip()
+                        if text:
+                            # Use last bolded header as the title, else fallback
+                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
+                            title = title_match[-1].strip() if title_match else "Thinking…"
+
+                            # Remove bold markers from body
+                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
+
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title=f"🧠 {title}",
+                                status_content=content,
+                            )
+                        continue
+
+                    # ─── Emit annotation
                     if etype == "response.output_text.annotation.added":
                         ann = event["annotation"]
                         url = ann.get("url", "").removesuffix("?utm_source=openai")
@@ -809,7 +901,6 @@ class Pipe:
                             )
                             continue
 
-
                     # ─── Emit detailed tool status upon completion ────────────────────────
                     if etype == "response.output_item.done":
                         item = event.get("item", {})
@@ -820,9 +911,15 @@ class Pipe:
                         if item_type in ("message"):
                             continue
 
-                        # Persist only non-message, non-reasoning items.
-                        # Reasoning is ephemeral (in-turn only).
-                        if valves.PERSIST_TOOL_RESULTS and item_type not in ("message", "reasoning"):
+                        # Persist all non-message items.
+                        # If it's a reasoning item, only persist when PERSIST_REASONING_TOKENS is chat
+                        should_persist = False
+                        if item_type == "reasoning":
+                            should_persist = (valves.PERSIST_REASONING_TOKENS == "conversation") # Only persist reasoning when explicitly allowed for this turn
+                        elif item_type != "message":
+                            should_persist = valves.PERSIST_TOOL_RESULTS # Persist all other non-message items (tool calls, web_search_call, etc.)
+
+                        if should_persist:
                             hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
@@ -833,6 +930,7 @@ class Pipe:
                                 self.logger.debug("Persisted item: %s", hidden_uid_marker)
                                 assistant_message += hidden_uid_marker
                                 await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+
 
                         # Default empty content
                         title = f"Running `{item_name}`"
@@ -885,14 +983,16 @@ class Pipe:
 
                         continue
 
+                    # ─── Capture final response (incl. all non-visible items like reasoning tokens for future turns)
                     if etype == "response.completed":
                         final_response = event.get("response", {})
-                        body.input.extend(final_response.get("output", []))
+                        body.input.extend(final_response.get("output", [])) # This includes all non-visible items (e.g. reasoning, web_search_call, tool calls, etc..) and appends to body.input so they are included in future turns (if any)
                         break
 
                 if final_response is None:
                     raise ValueError("No final response received from OpenAI Responses API.")
 
+                # Extract usage information from OpenAI response and pass-through to Open WebUI
                 usage = final_response.get("usage", {})
                 if usage:
                     usage["turn_count"] = 1
@@ -902,6 +1002,7 @@ class Pipe:
                     total_usage = merge_usage_stats(total_usage, usage)
                     await self._emit_completion(event_emitter, content="", usage=total_usage, done=False)
 
+                # Execute tool calls (if any), persist results (if valve enabled), and append to body.input.
                 calls = [i for i in final_response["output"] if i["type"] == "function_call"]
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)

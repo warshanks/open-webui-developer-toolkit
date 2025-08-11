@@ -1,5 +1,5 @@
 """
-title: Reason
+title: Think harder
 id: reason_filter
 description: Think before responding.
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
@@ -14,8 +14,8 @@ from open_webui.models.models import Models
 
 class Filter:
     class Valves(BaseModel):
-        MODEL: str = "o4-mini"
-        REASONING_EFFORT: Literal["minimal", "low", "medium", "high", "not set"] = "not set"
+        MODEL: str = "openai_responses.gpt-5"
+        REASONING_EFFORT: Literal["minimal", "low", "medium", "high", "not set"] = "medium"
         priority: int = Field(
             default=0, description="Priority level for the filter operations."
         )
