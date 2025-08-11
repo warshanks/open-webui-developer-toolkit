@@ -483,7 +483,7 @@ class Pipe:
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
         MODEL_ID: str = Field(
-            default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
         )
         ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
@@ -549,7 +549,7 @@ class Pipe:
             description=(
                 "Controls which user identifier is sent in the 'user' parameter to OpenAI. "
                 "Passing a unique identifier enables OpenAI response caching (improves speed and reduces cost). "
-                "Choose 'id' to use the OpenWebUI user ID (privacy-friendly), or 'email' to use the user's email address."
+                "Choose 'id' to use the OpenWebUI user ID (default; privacy-friendly), or 'email' to use the user's email address."
             ),
         )
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
