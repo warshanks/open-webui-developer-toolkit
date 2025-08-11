@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-Supports OpenAI's GPT‑5 model family in the API—`gpt-5`, `gpt-5-mini`, and `gpt-5-nano`. These are reasoning models tuned for developers. The non‑reasoning ChatGPT variant is exposed as `gpt-5-chat-latest`. Pseudo‑model aliases like `gpt-5-high`, `gpt-5-thinking`, `gpt-5-minimal`, `gpt-5-mini-minimal`, and `gpt-5-nano-minimal` automatically toggle the `reasoning_effort` level. `gpt-5-mini-minimal` is ideal as a hidden task model in Open WebUI.
+Supports OpenAI's GPT-5 model family in the API — [`Learn more about GPT-5 support`](#gpt-5-model-support-api--manifold).
 
 ⚠️ **Version 0.8.21 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
 
@@ -102,33 +102,63 @@ The manifold should work with any model that supports the responses API. Confirm
 
 ---
 
-## 🧠 GPT‑5 Model Support — What You Need to Know
+# 🧠 GPT-5 Model Support (API + Manifold)
 
-The OpenAI Responses Manifold supports the **full GPT‑5 family** in the API:
+The Responses Manifold supports the current **GPT-5 family** exposed in the API:
 
-- `gpt-5`
-- `gpt-5-mini`
-- `gpt-5-nano`
-- `gpt-5-chat-latest` (non‑reasoning ChatGPT variant)
+- `gpt-5` *(reasoning model)*
+- `gpt-5-mini` *(reasoning model)*
+- `gpt-5-nano` *(reasoning model)*
+- `gpt-5-chat-latest` *(non-reasoning ChatGPT variant)*
 
-Pseudo‑model IDs are also available to adjust reasoning effort:
+### Key behavior (practical notes)
 
-- `gpt-5-high` / `gpt-5-thinking` → `gpt-5` with `reasoning_effort="high"`
-- `gpt-5-minimal` → `gpt-5` with `reasoning_effort="minimal"`
-- `gpt-5-mini-minimal` → `gpt-5-mini` with `reasoning_effort="minimal"`
-- `gpt-5-nano-minimal` → `gpt-5-nano` with `reasoning_effort="minimal"`
+- **All `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are reasoning models.** Setting `reasoning_effort="minimal"` reduces thinking but does **not** make them non-reasoning. For a non-reasoning chat model, use **`gpt-5-chat-latest`**. ([OpenAI][1])
+- **Latency:** Even with `minimal`, GPT-5 models may still "think." For ultra-low latency tasks (e.g., Open WebUI Task Models), consider `gpt-4.1-nano` until OpenAI ships a lower-latency v5 task model.  
+- **Output style:** `gpt-5-chat-latest` is tuned for polished, end-user-friendly chat and usually needs little to no system prompt. The reasoning models (`gpt-5*`) benefit from a brief style system prompt (e.g., "respond in concise Markdown with headings and lists").
 
-The `*-minimal` variants are handy for background tasks; `gpt-5-mini-minimal` is typically added as a hidden task model in Open WebUI.
+---
 
-For more details, see [Introducing GPT‑5 for Developers →](https://openai.com/index/introducing-gpt-5-for-developers/)
+## GPT-5 in ChatGPT vs the API (and our future router)
 
-### 🚧 Important Differences Between ChatGPT and API Versions
+**In ChatGPT,** "GPT-5" isn’t a single model — it’s a **mix** of reasoning, minimal-reasoning, and non-reasoning variants chosen automatically by a **model router** that balances speed, difficulty, tools, and intent. [More →][1]
 
-One common point of confusion:  
-- **In ChatGPT**, “GPT‑5” isn’t a single model — it’s a **mix** of reasoning, minimal‑reasoning, and non‑reasoning models, chosen automatically by a **model router** ([learn more](https://openai.com/index/introducing-gpt-5-for-developers/)).  
-- **In the API**, `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are **reasoning models** tuned for developers — reasoning is enabled by default.  
-- **`gpt-5` with reasoning set to `minimal`** is *not* the same as ChatGPT’s non‑reasoning GPT‑5.  
-- To use **the exact non‑reasoning GPT‑5 from ChatGPT**, use `gpt-5-chat-latest`.  This model will typically be the best chat experience for quick well written answers (although unfortunately doesn't support function calling or web search 🙁)
+**In the API,** you pick specific models directly:
+- `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — reasoning enabled by default.  
+- `reasoning_effort="minimal"` reduces thinking but is **not** the same as the non-reasoning ChatGPT model.  
+- The **non-reasoning** ChatGPT variant is exposed separately as **`gpt-5-chat-latest`**.
+
+> **Planned:** We may add a built-in **`gpt-5-router`** pseudo model ID to mimic ChatGPT’s behavior: it would inspect users request (latency tolerance, tool usage, length/complexity, "think hard" cues, etc...) and route to an ideal target (e.g., `gpt-5-chat-latest` for quick tasks, `gpt-5` for reasoning, etc...).
+
+---
+
+This manifold also exposes pseudo **aliases** that map to real API models with preset `reasoning_effort`. If an effort suffix is omitted, the API default (medium) applies.
+
+## Pseudo IDs → API Mappings *(subject to change)*
+
+| Pseudo ID                           | Maps to                                     | Notes                                                                  |
+| ----------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| `gpt-5-thinking`                    | `gpt-5`                                     | Default (medium) reasoning; mirrors "thinking".                        |
+| `gpt-5-thinking-minimal`            | `gpt-5` + `reasoning_effort="minimal"`      | Fastest `gpt-5` while still a reasoning model. ([OpenAI][1])           |
+| `gpt-5-thinking-high`               | `gpt-5` + `reasoning_effort="high"`         | Maximum test-time reasoning. ([OpenAI][1])                              |
+| `gpt-5-thinking-mini`               | `gpt-5-mini`                                | Default (medium) reasoning.                                            |
+| `gpt-5-thinking-mini-minimal`       | `gpt-5-mini` + `reasoning_effort="minimal"` | Budget/latency-tilted background tasks. ([OpenAI][1])                  |
+| `gpt-5-thinking-nano`               | `gpt-5-nano`                                | Default (medium) reasoning.                                            |
+| `gpt-5-thinking-nano-minimal`       | `gpt-5-nano` + `reasoning_effort="minimal"` | Cheapest option with minimal reasoning. ([OpenAI][1])                  |
+| `gpt-5-main` *(not available)*      | *not exposed via API yet*                   | Reserved for high-throughput "main". Disabled until an API model exists. |
+| `gpt-5-main-mini` *(not available)* | *not exposed via API yet*                   | Appears in the system card for ChatGPT routing; we don’t alias this.   |
+| `gpt-5-thinking-pro` *(not available)* | *not exposed via API yet*                | ChatGPT-only "parallel test-time compute" setting. ([System card][2])  |
+
+> **What is `gpt-5-main`?**  
+> In OpenAI’s system card, gpt-5-main refers to a high-throughput, non-reasoning path—different from the gpt-5-thinking reasoning family.
+> At present, the API only exposes the thinking models (gpt-5, gpt-5-mini, gpt-5-nano) plus the non-reasoning ChatGPT variant gpt-5-chat-latest. There is no API equivalent of the high-throughput "main" model.
+> Until OpenAI ships a true API main model (or adds a parameter to switch between reasoning and high-throughput modes), gpt-5-main remains reserved to avoid confusion.
+> See [OpenAI][1] and the [system card][2].
+
+> **Disclaimer:** This reflects what we’ve verified from OpenAI’s launch materials and the GPT-5 system card as of **Aug 11, 2025** and may change without notice. We’ll update this section as OpenAI updates docs or behavior.
+
+[1]: https://openai.com/index/introducing-gpt-5-for-developers/ "Introducing GPT-5 for developers | OpenAI"  
+[2]: https://cdn.openai.com/pdf/8124a3ce-ab78-4f06-96eb-49ea29ffb52f/gpt5-system-card-aug7.pdf "GPT-5 System Card (Aug 7, 2025)"
 
 ---
 
