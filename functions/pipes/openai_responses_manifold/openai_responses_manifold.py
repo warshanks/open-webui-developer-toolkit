@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.21
+version: 0.8.22
 license: MIT
 """
 
@@ -488,7 +488,7 @@ class Pipe:
         )
         ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
             default=None,
-            description="Reasoning summary style for o-series models (supported by: o3, o4-mini). Ignored for unsupported models. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+            description="Reasoning summary style for supported models (supported by: gpt-5, o3, o4-mini). Ignored for unsupported models. Requires OpenAI organization to be `verified`. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
@@ -734,6 +734,7 @@ class Pipe:
                 status_content="Reading the question and building a plan to answer it. This may take a moment.",
             )
 
+        # Send OpenAI Responses API request, parse and emit response
         try:
             for loop_idx in range(valves.MAX_FUNCTION_CALL_LOOPS):
                 final_response: dict[str, Any] | None = None
@@ -744,13 +745,14 @@ class Pipe:
                 ):
                     etype = event.get("type")
 
-                    # efficienct check if debug logging is enabled. If so, log the event name
+                    # Efficient check if debug logging is enabled. If so, log the event name
                     if self.logger.isEnabledFor(logging.DEBUG):
                         self.logger.debug("Received event: %s", etype)
                         # if doesn't end in .delta, log the full event
                         if not etype.endswith(".delta"):
                             self.logger.debug("Event data: %s", json.dumps(event, indent=2, ensure_ascii=False))
 
+                    # ─── Emit partial delta assistant message
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
@@ -759,6 +761,25 @@ class Pipe:
                                                  "data": {"content": assistant_message}})
                         continue
 
+                    # ─── Reasoning summary -> status indicator (done only) ───────────────────────
+                    if etype == "response.reasoning_summary_text.done":
+                        text = (event.get("text") or "").strip()
+                        if text:
+                            # Use last bolded header as the title, else fallback
+                            title_match = re.findall(r"\*\*(.+?)\*\*", text)
+                            title = title_match[-1].strip() if title_match else "Thinking…"
+
+                            # Remove bold markers from body
+                            content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
+
+                            assistant_message = await status_indicator.add(
+                                assistant_message,
+                                status_title=f"🧠 {title}",
+                                status_content=content,
+                            )
+                        continue
+
+                    # ─── Emit annotation
                     if etype == "response.output_text.annotation.added":
                         ann = event["annotation"]
                         url = ann.get("url", "").removesuffix("?utm_source=openai")
@@ -821,7 +842,6 @@ class Pipe:
                                 status_content="",
                             )
                             continue
-
 
                     # ─── Emit detailed tool status upon completion ────────────────────────
                     if etype == "response.output_item.done":
@@ -898,14 +918,16 @@ class Pipe:
 
                         continue
 
+                    # ─── Capture final response (incl. all non-visible items like reasoning tokens for future turns)
                     if etype == "response.completed":
                         final_response = event.get("response", {})
-                        body.input.extend(final_response.get("output", []))
+                        body.input.extend(final_response.get("output", [])) # This includes all non-visible items (e.g. reasoning, web_search_call, tool calls, etc..) and appends to body.input so they are included in future turns (if any)
                         break
 
                 if final_response is None:
                     raise ValueError("No final response received from OpenAI Responses API.")
 
+                # Extract usage information from OpenAI response and pass-through to Open WebUI
                 usage = final_response.get("usage", {})
                 if usage:
                     usage["turn_count"] = 1
@@ -915,6 +937,7 @@ class Pipe:
                     total_usage = merge_usage_stats(total_usage, usage)
                     await self._emit_completion(event_emitter, content="", usage=total_usage, done=False)
 
+                # Execute tool calls (if any), persist results (if valve enabled), and append to body.input.
                 calls = [i for i in final_response["output"] if i["type"] == "function_call"]
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)

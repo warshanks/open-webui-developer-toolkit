@@ -1,7 +1,7 @@
 # OpenAI Responses Manifold
 **Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-Supports OpenAI's GPT-5 model family in the API — [`Learn more about GPT-5 support`](#gpt-5-model-support-api--manifold).
+🆕 Now supports OpenAI's GPT-5 model family in the API — [`Learn more about GPT-5 support`](#-gpt-5-model-support-api--manifold).
 
 ## Setup Instructions
 1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
