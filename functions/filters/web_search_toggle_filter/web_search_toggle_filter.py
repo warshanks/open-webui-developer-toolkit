@@ -23,6 +23,10 @@ WEB_SEARCH_MODELS = {
     "openai_responses.o4-mini",
     "openai_responses.o4-mini-high",
     "openai_responses.o3-pro",
+    "openai_responses.gpt-5",
+    "openai_responses.gpt-5-mini",
+    "openai_responses.gpt-5-thinking",
+    "openai_responses.gpt-5-thinking-high",
 }
 
 SUPPORT_TOOL_CHOICE_PARAMETER = {
@@ -30,6 +34,10 @@ SUPPORT_TOOL_CHOICE_PARAMETER = {
     "openai_responses.gpt-4.1-mini",
     "openai_responses.gpt-4o",
     "openai_responses.gpt-4o-mini",
+    "openai_responses.gpt-5",
+    "openai_responses.gpt-5-mini",
+    "openai_responses.gpt-5-thinking",
+    "openai_responses.gpt-5-thinking-high",
 }
 
 class Filter:
