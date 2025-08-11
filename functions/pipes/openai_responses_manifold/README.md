@@ -112,6 +112,7 @@ The Responses Manifold supports the current **GPT-5 family** exposed in the API:
 ### Key behavior (practical notes)
 
 - **All `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are reasoning models.** Setting `reasoning_effort="minimal"` reduces thinking but does **not** make them non-reasoning. For a non-reasoning chat model, use **`gpt-5-chat-latest`**. ([OpenAI][1])
+- **Tool calling limitation:** `gpt-5-chat-latest` does not currently support native tool calling (e.g., function calls or web search). This is the primary limitation compared to reasoning models. We expect that a future gpt-5-main high-throughput API model may support tools while keeping the non-reasoning behavior.
 - **Latency:** Even with `minimal`, GPT-5 models may still "think." For ultra-low latency tasks (e.g., Open WebUI Task Models), consider `gpt-4.1-nano` until OpenAI ships a lower-latency v5 task model.  
 - **Output style:** `gpt-5-chat-latest` is tuned for polished, end-user-friendly chat and usually needs little to no system prompt. The reasoning models (`gpt-5*`) benefit from a brief style system prompt (e.g., "respond in concise Markdown with headings and lists").
 
