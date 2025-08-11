@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.22
+version: 0.8.23
 license: MIT
 """
 
@@ -53,6 +53,7 @@ FEATURE_SUPPORT = {
     "function_calling": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
     "reasoning": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
     "reasoning_summary": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "verbosity": {"gpt-5", "gpt-5-mini", "gpt-5-nano"}, # Supports OpenAI's verbosity parameter.
 
     # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
@@ -690,6 +691,31 @@ class Pipe:
         ):
             responses_body.include = responses_body.include or []
             responses_body.include.append("reasoning.encrypted_content")
+
+        # Map WebUI "Add Details" / "More Concise" → text.verbosity (if supported by model), then strip the stub
+        input_items = responses_body.input if isinstance(responses_body.input, list) else None
+        if input_items:
+            last_item = input_items[-1]
+            content_blocks = last_item.get("content") if last_item.get("role") == "user" else None
+            first_block = content_blocks[0] if isinstance(content_blocks, list) and content_blocks else {}
+            last_user_text = (first_block.get("text") or "").strip().lower()
+
+            directive_to_verbosity = {"add details": "high", "more concise": "low"}
+            verbosity_value = directive_to_verbosity.get(last_user_text)
+
+            if verbosity_value:
+                # Check model support
+                family_for_verbosity = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
+                if family_for_verbosity in FEATURE_SUPPORT["verbosity"]:
+                    # Set/overwrite verbosity (do NOT remove the stub message)
+                    current_text_params = dict(getattr(responses_body, "text", {}) or {})
+                    current_text_params["verbosity"] = verbosity_value
+                    responses_body.text = current_text_params
+
+                    # Notify the user in the UI
+                    await self._emit_notification(__event_emitter__,f"Regenerating with verbosity set to {verbosity_value}.",level="info")
+
+                    self.logger.debug("Set text.verbosity=%s based on regenerate directive '%s'",verbosity_value, last_user_text)
 
         # Log the transformed request body
         self.logger.debug("Transformed ResponsesBody: %s", json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False))
