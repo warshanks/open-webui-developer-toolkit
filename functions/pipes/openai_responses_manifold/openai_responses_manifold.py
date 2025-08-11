@@ -109,7 +109,7 @@ class CompletionsBody(BaseModel):
         if key in aliases:
             real, effort = aliases[key]
             self.model = real
-            if effort and not self.reasoning_effort:
+            if effort:
                 self.reasoning_effort = effort  # type: ignore[assignment]
         else:
             self.model = key  # pass through official IDs as lowercase
