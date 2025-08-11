@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.23
+version: 0.8.24
 license: MIT
 """
 
@@ -375,13 +375,7 @@ class ResponsesBody(BaseModel):
                     if segment["type"] == "marker":
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
-                        # Skip persisted reasoning; it is no longer carried across messages.
-                        if isinstance(item, dict) and item.get("type") != "reasoning":
-                            openai_input.append(item)
-                        else:
-                            logging.getLogger(__name__).debug(
-                                "Skipping persisted reasoning item %s", mk.get("ulid")
-                            )
+                        openai_input.append(item)
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "role": "assistant",
@@ -475,6 +469,7 @@ class ResponsesBody(BaseModel):
 class Pipe:
     # 4.1 Configuration Schemas
     class Valves(BaseModel):
+        # 1) Connection & Auth
         BASE_URL: str = Field(
             default=((os.getenv("OPENAI_API_BASE_URL") or "").strip() or "https://api.openai.com/v1"),
             description="The base URL to use with the OpenAI SDK. Defaults to the official OpenAI API endpoint. Supports LiteLLM and other custom endpoints.",
@@ -483,33 +478,27 @@ class Pipe:
             default=(os.getenv("OPENAI_API_KEY") or "").strip() or "sk-xxxxx",
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
+
+        # 2) Models
         MODEL_ID: str = Field(
             default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
         )
-        ENABLE_REASONING_SUMMARY: Literal["auto", "concise", "detailed", None] = Field(
-            default=None,
-            description="Reasoning summary style for supported models (supported by: gpt-5, o3, o4-mini). Ignored for unsupported models. Requires OpenAI organization to be `verified`. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+
+        # 3) Reasoning & summaries
+        REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
+            default="disabled",
+            description="Requires a verified OpenAI org.  Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
-        ENABLE_WEB_SEARCH_TOOL: bool = Field(
-            default=False,
-            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+        PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = Field(
+            default="disabled",
+            description="Requires a verified OpenAI org. If verified, highly recommend using 'response' or 'conversation' for best results. If `disabled` (default) = never request encrypted reasoning tokens; if `response` = request tokens so the model can carry reasoning across tool calls for the current response; if `conversation` = also persist tokens for future messages in this chat (higher token usage; quality may vary).",
         )
-        WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
-            default="medium",
-            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH_TOOL=True.",
-        )
-        WEB_SEARCH_USER_LOCATION: Optional[str] = Field(
-            default=None,
-            description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
-        )
+        
+        # 4) Tool execution behavior
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
-        )
-        TRUNCATION: Literal["auto", "disabled"] = Field(
-            default="auto",
-            description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
         MAX_TOOL_CALLS: Optional[int] = Field(
             default=None,
@@ -529,10 +518,28 @@ class Pipe:
                 "additional tool or function calls."
             )
         )
+
+        # 6) Web search
+        ENABLE_WEB_SEARCH_TOOL: bool = Field(
+            default=False,
+            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+        )
+        WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
+            default="medium",
+            description="Specifies the OpenAI web search context size: low | medium | high. Default is 'medium'. Affects cost, quality, and latency. Only used if ENABLE_WEB_SEARCH_TOOL=True.",
+        )
+        WEB_SEARCH_USER_LOCATION: Optional[str] = Field(
+            default=None,
+            description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
+        )
+
+        # 7) Persistence
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
             description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
         )
+
+        # 8) Integrations
         REMOTE_MCP_SERVERS_JSON: Optional[str] = Field(
             default=None,
             description=(
@@ -545,6 +552,13 @@ class Pipe:
                 '[{"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/mcp","require_approval":"never","allowed_tools": ["ask_question"]}]'
             ),
         )
+
+        TRUNCATION: Literal["auto", "disabled"] = Field(
+            default="auto",
+            description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
+        )
+
+        # 9) Privacy & caching
         USER_ID_FIELD: Literal["id", "email"] = Field(
             default="id",
             description=(
@@ -553,11 +567,14 @@ class Pipe:
                 "Choose 'id' to use the OpenWebUI user ID (default; privacy-friendly), or 'email' to use the user's email address."
             ),
         )
+
+        # 10) Logging
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
-    
+
+
     class UserValves(BaseModel):
         """Per-user valve overrides."""
         LOG_LEVEL: Literal[
@@ -678,19 +695,19 @@ class Pipe:
                 return
             
         # Enable reasoning summary if enabled and supported
-        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.ENABLE_REASONING_SUMMARY:
+        if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.REASONING_SUMMARY != "disabled":
             # Ensure reasoning param is a mutable dict so we can safely assign to it
             reasoning_params = dict(responses_body.reasoning or {})
-            reasoning_params["summary"] = valves.ENABLE_REASONING_SUMMARY
+            reasoning_params["summary"] = valves.REASONING_SUMMARY
             responses_body.reasoning = reasoning_params
 
-        # Enable persistence of encrypted reasoning tokens if enabled and supported
-        if (
-            model_family in FEATURE_SUPPORT["reasoning"]
-            and responses_body.store is False
-        ):
-            responses_body.include = responses_body.include or []
-            responses_body.include.append("reasoning.encrypted_content")
+        # Always request encrypted reasoning for in-turn carry (multi-tool) unless disabled
+        if (model_family in FEATURE_SUPPORT["reasoning"]
+            and valves.PERSIST_REASONING_TOKENS != "disabled"
+            and responses_body.store is False):
+             responses_body.include = responses_body.include or []
+             if "reasoning.encrypted_content" not in responses_body.include:
+                 responses_body.include.append("reasoning.encrypted_content")
 
         # Map WebUI "Add Details" / "More Concise" → text.verbosity (if supported by model), then strip the stub
         input_items = responses_body.input if isinstance(responses_body.input, list) else None
@@ -705,8 +722,8 @@ class Pipe:
 
             if verbosity_value:
                 # Check model support
-                family_for_verbosity = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
-                if family_for_verbosity in FEATURE_SUPPORT["verbosity"]:
+                model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
+                if model_family in FEATURE_SUPPORT["verbosity"]:
                     # Set/overwrite verbosity (do NOT remove the stub message)
                     current_text_params = dict(getattr(responses_body, "text", {}) or {})
                     current_text_params["verbosity"] = verbosity_value
@@ -882,9 +899,15 @@ class Pipe:
                         if item_type in ("message"):
                             continue
 
-                        # Persist only non-message, non-reasoning items.
-                        # Reasoning is ephemeral (in-turn only).
-                        if valves.PERSIST_TOOL_RESULTS and item_type not in ("message", "reasoning"):
+                        # Persist all non-message items.
+                        # If it's a reasoning item, only persist when PERSIST_REASONING_TOKENS is chat
+                        should_persist = False
+                        if item_type == "reasoning":
+                            should_persist = (valves.PERSIST_REASONING_TOKENS == "conversation") # Only persist reasoning when explicitly allowed for this turn
+                        elif item_type != "message":
+                            should_persist = valves.PERSIST_TOOL_RESULTS # Persist all other non-message items (tool calls, web_search_call, etc.)
+
+                        if should_persist:
                             hidden_uid_marker = persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
@@ -895,6 +918,7 @@ class Pipe:
                                 self.logger.debug("Persisted item: %s", hidden_uid_marker)
                                 assistant_message += hidden_uid_marker
                                 await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+
 
                         # Default empty content
                         title = f"Running `{item_name}`"
