@@ -83,23 +83,36 @@ class CompletionsBody(BaseModel):
     def normalize_model(self) -> "CompletionsBody":
         """Normalize model: strip 'openai_responses.' prefix and map '-high' pseudo-models."""
         
-        # Strip prefix if present
-        self.model = self.model.removeprefix("openai_responses.")
+        # Remove prefix if present
+        m = (self.model or "").strip()
+        if m.startswith("openai_responses."):
+            m = m[len("openai_responses."):]
 
-        # Normalize pseudo-model IDs
-        if self.model in {"o3-mini-high", "o4-mini-high", "gpt-5-high"}:
-            self.model = self.model.removesuffix("-high")
-            self.reasoning_effort = "high"
+        key = m.lower()
 
-        # Normalize pseudo-model IDs
-        if self.model in {"gpt-5-thinking"}:
-            self.model = self.model.removesuffix("-thinking")
-            self.reasoning_effort = "high"
+        # Alias mapping: pseudo ID -> (real model, reasoning effort)
+        aliases = {
+            # GPT-5 Thinking family
+            "gpt-5-thinking": ("gpt-5", None),
+            "gpt-5-thinking-minimal": ("gpt-5", "minimal"),
+            "gpt-5-thinking-high": ("gpt-5", "high"),
+            "gpt-5-thinking-mini": ("gpt-5-mini", None),
+            "gpt-5-thinking-mini-minimal": ("gpt-5-mini", "minimal"),
+            "gpt-5-thinking-nano": ("gpt-5-nano", None),
+            "gpt-5-thinking-nano-minimal": ("gpt-5-nano", "minimal"),
 
-        # Normalize pseudo-model IDs
-        if self.model in {"gpt-5-minimal", "gpt-5-mini-minimal", "gpt-5-nano-minimal"}:
-            self.model = self.model.removesuffix("-minimal")
-            self.reasoning_effort = "minimal"
+            # Backwards compatibility
+            "o3-mini-high": ("o3-mini", "high"),
+            "o4-mini-high": ("o4-mini", "high"),
+        }
+
+        if key in aliases:
+            real, effort = aliases[key]
+            self.model = real
+            if effort and not self.reasoning_effort:
+                self.reasoning_effort = effort  # type: ignore[assignment]
+        else:
+            self.model = key  # pass through official IDs as lowercase
 
         return self
 

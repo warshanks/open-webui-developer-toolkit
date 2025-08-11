@@ -117,9 +117,8 @@ The Responses Manifold supports the current **GPT-5 family** exposed in the API:
 - **Latency:** Even with `minimal`, GPT-5 models may still "think." For ultra-low latency tasks (e.g., Open WebUI Task Models), consider `gpt-4.1-nano` until OpenAI ships a lower-latency v5 task model.  
 - **Output style:** `gpt-5-chat-latest` is tuned for polished, end-user-friendly chat and usually needs little to no system prompt. The reasoning models (`gpt-5*`) benefit from a brief style system prompt (e.g., "respond in concise Markdown with headings and lists").
 
----
 
-## GPT-5 in ChatGPT vs the API (and our future router)
+### GPT-5 in ChatGPT vs the API (and our future router)
 
 **In ChatGPT,** "GPT-5" isn’t a single model — it’s a **mix** of reasoning, minimal-reasoning, and non-reasoning variants chosen automatically by a **model router** that balances speed, difficulty, tools, and intent. [More →][1]
 
@@ -130,11 +129,9 @@ The Responses Manifold supports the current **GPT-5 family** exposed in the API:
 
 > **Planned:** We may add a built-in **`gpt-5-router`** pseudo model ID to mimic ChatGPT’s behavior: it would inspect users request (latency tolerance, tool usage, length/complexity, "think hard" cues, etc...) and route to an ideal target (e.g., `gpt-5-chat-latest` for quick tasks, `gpt-5` for reasoning, etc...).
 
----
+### Pseudo IDs → API Mappings *(subject to change)*
 
 This manifold also exposes pseudo **aliases** that map to real API models with preset `reasoning_effort`. If an effort suffix is omitted, the API default (medium) applies.
-
-## Pseudo IDs → API Mappings *(subject to change)*
 
 | Pseudo ID                           | Maps to                                     | Notes                                                                  |
 | ----------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
@@ -150,10 +147,7 @@ This manifold also exposes pseudo **aliases** that map to real API models with p
 | `gpt-5-thinking-pro` *(not available)* | *not exposed via API yet*                | ChatGPT-only "parallel test-time compute" setting. ([System card][2])  |
 
 > **What is `gpt-5-main`?**  
-> In OpenAI’s system card, gpt-5-main refers to a high-throughput, non-reasoning path—different from the gpt-5-thinking reasoning family.
-> At present, the API only exposes the thinking models (gpt-5, gpt-5-mini, gpt-5-nano) plus the non-reasoning ChatGPT variant gpt-5-chat-latest. There is no API equivalent of the high-throughput "main" model.
-> Until OpenAI ships a true API main model (or adds a parameter to switch between reasoning and high-throughput modes), gpt-5-main remains reserved to avoid confusion.
-> See [OpenAI][1] and the [system card][2].
+> In OpenAI’s system card, gpt-5-main refers to a high-throughput, non-reasoning model family. At present, the API only exposes the thinking models (gpt-5, gpt-5-mini, gpt-5-nano) plus the non-reasoning ChatGPT variant gpt-5-chat-latest. There is no API equivalent of the high-throughput "main" model. Until OpenAI ships a true API main model (or adds a parameter to switch between reasoning and high-throughput modes), gpt-5-main remains reserved to avoid confusion. See [OpenAI][1] and the [system card][2].
 
 > **Disclaimer:** This reflects what we’ve verified from OpenAI’s launch materials and the GPT-5 system card as of **Aug 11, 2025** and may change without notice. We’ll update this section as OpenAI updates docs or behavior.
 
