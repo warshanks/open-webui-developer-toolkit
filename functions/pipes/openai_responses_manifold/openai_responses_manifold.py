@@ -712,6 +712,9 @@ class Pipe:
                     current_text_params["verbosity"] = verbosity_value
                     responses_body.text = current_text_params
 
+                    # Remove the stub user message so the model doesn't see it
+                    input_items.pop()  # or: del input_items[-1]
+
                     # Notify the user in the UI
                     await self._emit_notification(__event_emitter__,f"Regenerating with verbosity set to {verbosity_value}.",level="info")
 
