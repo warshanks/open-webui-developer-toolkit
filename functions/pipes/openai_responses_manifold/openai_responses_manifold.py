@@ -519,7 +519,7 @@ class Pipe:
             )
         )
         MAX_FUNCTION_CALL_LOOPS: int = Field(
-            default=5,
+            default=10,
             description=(
                 "Maximum number of full execution cycles (loops) allowed per request. "
                 "Each loop involves the model generating one or more function/tool calls, "
