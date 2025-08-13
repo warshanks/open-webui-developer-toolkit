@@ -717,7 +717,10 @@ class Pipe:
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
-        if __tools__ and __metadata__.get("function_calling") != "native":
+        if __tools__ and (
+            (__metadata__.get("params", {}) or {}).get("function_calling") # New location as of v0.6.20
+            or __metadata__.get("function_calling") # Old location pre v0.6.20
+        ) != "native":
             supports_function_calling = model_family in FEATURE_SUPPORT["function_calling"]
 
             if supports_function_calling:
@@ -734,6 +737,7 @@ class Pipe:
                     f"Disable tools or choose a supported model (e.g., {', '.join(FEATURE_SUPPORT['function_calling'])})."
                 )
                 return
+
             
         # Enable reasoning summary if enabled and supported
         if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.REASONING_SUMMARY != "disabled":
