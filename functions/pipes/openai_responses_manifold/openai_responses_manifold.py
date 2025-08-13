@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.24
+version: 0.8.26
 license: MIT
 """
 
@@ -101,6 +101,9 @@ class CompletionsBody(BaseModel):
             "gpt-5-thinking-mini-minimal": ("gpt-5-mini", "minimal"),
             "gpt-5-thinking-nano": ("gpt-5-nano", None),
             "gpt-5-thinking-nano-minimal": ("gpt-5-nano", "minimal"),
+
+            # Placeholder router
+            "gpt-5-auto": ("gpt-5-chat-latest", None),
 
             # Backwards compatibility
             "o3-mini-high": ("o3-mini", "high"),
@@ -375,7 +378,8 @@ class ResponsesBody(BaseModel):
                     if segment["type"] == "marker":
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
-                        openai_input.append(item)
+                        if item is not None:
+                            openai_input.append(item)
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "role": "assistant",
@@ -481,8 +485,20 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
-            description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
+            default="gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            description=(
+            "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
+            "Supports all official OpenAI model IDs and pseudo IDs: "
+            "gpt-5-auto, "
+            "gpt-5-thinking, "
+            "gpt-5-thinking-minimal, "
+            "gpt-5-thinking-high, "
+            "gpt-5-thinking-mini, "
+            "gpt-5-thinking-mini-minimal, "
+            "gpt-5-thinking-nano, "
+            "gpt-5-thinking-nano-minimal, "
+            "o3-mini-high, o4-mini-high."
+            ),
         )
 
         # 3) Reasoning & summaries
@@ -650,17 +666,30 @@ class Pipe:
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
 
-        # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
-        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
-
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
+
+        # If GPT-5-Auto, run through model router and update model.
+        if openwebui_model_id.endswith(".gpt-5-auto"):
+            await self._emit_notification(
+                __event_emitter__,
+                content="Model router coming soon — using gpt-5-chat-latest (GPT-5 Fast).",
+                level="info",
+            )
+
+            responses_body.model = await self._route_gpt5_auto(
+                responses_body.input[-1].get("content", "") if responses_body.input else "",
+                valves,
+            )
+
+        # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
+        model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
         
         # Add Open WebUI Tools (if any) to the ResponsesBody.
         # TODO: Also detect body['tools'] and merge them with __tools__.  This would allow users to pass tools in the request body from filters, etc.
-        if __tools__:
+        if __tools__ and model_family in FEATURE_SUPPORT["function_calling"]:
             responses_body.tools = ResponsesBody.transform_tools(
                 tools = __tools__,
                 strict = True
@@ -688,7 +717,10 @@ class Pipe:
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
-        if __tools__ and __metadata__.get("function_calling") != "native":
+        if __tools__ and (
+            (__metadata__.get("params", {}) or {}).get("function_calling") # New location as of v0.6.20
+            or __metadata__.get("function_calling") # Old location pre v0.6.20
+        ) != "native":
             supports_function_calling = model_family in FEATURE_SUPPORT["function_calling"]
 
             if supports_function_calling:
@@ -698,13 +730,7 @@ class Pipe:
                     level="info"
                 )
                 update_openwebui_model_param(openwebui_model_id, "function_calling", "native")
-            else:
-                await self._emit_error(
-                    __event_emitter__,
-                    f"The selected model '{responses_body.model}' does not support tools. "
-                    f"Disable tools or choose a supported model (e.g., {', '.join(FEATURE_SUPPORT['function_calling'])})."
-                )
-                return
+
             
         # Enable reasoning summary if enabled and supported
         if model_family in FEATURE_SUPPORT["reasoning_summary"] and valves.REASONING_SUMMARY != "disabled":
@@ -941,7 +967,7 @@ class Pipe:
                             title = f"🛠️ Running the {item_name} tool…"
                             arguments = json.loads(item.get("arguments") or "{}")
                             args_formatted = ", ".join(f"{k}={json.dumps(v)}" for k, v in arguments.items())
-                            content = f"```python\n{item_name}({args_formatted})\n```"
+                            content = wrap_code_block(f"{item_name}({args_formatted})", "python")
 
                         elif item_type == "web_search_call":
                             title = "🔍 Hmm, let me quickly check online…"
@@ -1019,12 +1045,13 @@ class Pipe:
                             await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
 
 
-                    # Add status indicator with result
+                    # Add status indicator with sanitized result
                     for output in function_outputs:
+                        result_text = wrap_code_block(output.get("output", ""))
                         assistant_message = await status_indicator.add(
                             assistant_message,
                             status_title="🛠️ Received tool result",
-                            status_content=f"```python\n{output.get('output', '')}\n```",
+                            status_content=result_text,
                         )
                     body.input.extend(function_outputs)
                 else:
@@ -1162,7 +1189,7 @@ class Pipe:
                             args_formatted = ", ".join(
                                 f"{k}={json.dumps(v)}" for k, v in arguments.items()
                             )
-                            content = f"```python\n{item.get('name', 'unnamed_tool')}({args_formatted})\n```"
+                            content = wrap_code_block(f"{item.get('name', 'unnamed_tool')}({args_formatted})", "python")
                         elif item_type == "web_search_call":
                             title = "🔍 Hmm, let me quickly check online…"
                             action = item.get("action", {})
@@ -1220,12 +1247,13 @@ class Pipe:
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         assistant_message += hidden_uid_marker
 
-                    # Add status indicator with result
+                    # Add status indicator with sanitized result
                     for output in function_outputs:
+                        result_text = wrap_code_block(output.get("output", ""))
                         assistant_message = await status_indicator.add(
                             assistant_message,
                             status_title="🛠️ Received tool result",
-                            status_content=f"```python\n{output.get('output', '')}\n```",
+                            status_content=result_text,
                         )
                     body.input.extend(function_outputs)
                 else:
@@ -1590,6 +1618,24 @@ class Pipe:
             {"type": "notification", "data": {"type": level, "content": content}}
         )
 
+    async def _route_gpt5_auto(
+        self,
+        last_user_message: str,
+        valves: "Pipe.Valves",
+    ) -> str:
+        """Placeholder GPT-5 router.
+
+        Eventually this helper will make a non-streaming call to a low-latency
+        model (e.g., ``gpt-4.1-nano``) that inspects the last user message and
+        returns structured JSON indicating which GPT-5 variant to use.  The
+        selected model will then handle the user's request.
+
+        Currently, it simply returns ``"gpt-5-chat-latest"`` so ``gpt-5-auto``
+        behaves as a direct alias and the router design can be iterated on
+        separately.
+        """
+        return "gpt-5-chat-latest"
+
     # 4.8 Internal Static Helpers
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """Merge user-level valves into the global defaults.
@@ -1804,7 +1850,7 @@ class ExpandableStatusIndicator:
     async def _render(self, assistant_message: str, emit: bool) -> str:
         block = self._render_status_block()
         full_msg = (
-            self._BLOCK_RE.sub(block, assistant_message, 1)
+            self._BLOCK_RE.sub(lambda _: block, assistant_message, 1)
             if self._BLOCK_RE.search(assistant_message)
             else f"{block}{assistant_message}"
         )
@@ -1933,6 +1979,18 @@ def update_openwebui_model_param(openwebui_model_id: str, field: str, value: Any
 
     form = ModelForm(**form_data)
     Models.update_model_by_id(openwebui_model_id, form)
+
+
+def wrap_code_block(text: str, language: str = "python") -> str:
+    """Wrap ``text`` in a fenced Markdown code block.
+
+    The fence length adapts to the longest backtick run within ``text``
+    to avoid prematurely closing the block.
+    """
+    longest = max((len(m.group(0)) for m in re.finditer(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{language}\n{text}\n{fence}"
+
 
 def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     """Strip ``<details>`` blocks matching the specified ``type`` values.
