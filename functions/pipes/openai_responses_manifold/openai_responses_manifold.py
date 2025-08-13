@@ -487,8 +487,17 @@ class Pipe:
         MODEL_ID: str = Field(
             default="gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
-                "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
-                "Supports all official OpenAI model IDs along with pseudo models 'gpt-5-auto', 'o3-mini-high', and 'o4-mini-high'."
+            "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
+            "Supports all official OpenAI model IDs and pseudo IDs: "
+            "gpt-5-auto, "
+            "gpt-5-thinking, "
+            "gpt-5-thinking-minimal, "
+            "gpt-5-thinking-high, "
+            "gpt-5-thinking-mini, "
+            "gpt-5-thinking-mini-minimal, "
+            "gpt-5-thinking-nano, "
+            "gpt-5-thinking-nano-minimal, "
+            "o3-mini-high, o4-mini-high."
             ),
         )
 
@@ -657,12 +666,19 @@ class Pipe:
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
 
+        # Detect if task model (generate title, generate tags, etc.), handle it separately
+        if __task__:
+            self.logger.info("Detected task model: %s", __task__)
+            return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
+
+        # If GPT-5-Auto, run through model router and update model.
         if openwebui_model_id.endswith(".gpt-5-auto"):
             await self._emit_notification(
                 __event_emitter__,
-                content="Model router coming soon — using gpt-5-chat-latest.",
+                content="Model router coming soon — using gpt-5-chat-latest (GPT-5 Fast).",
                 level="info",
             )
+
             responses_body.model = await self._route_gpt5_auto(
                 responses_body.input[-1].get("content", "") if responses_body.input else "",
                 valves,
@@ -670,11 +686,6 @@ class Pipe:
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
-
-        # Detect if task model (generate title, generate tags, etc.), handle it separately
-        if __task__:
-            self.logger.info("Detected task model: %s", __task__)
-            return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
         
         # Add Open WebUI Tools (if any) to the ResponsesBody.
         # TODO: Also detect body['tools'] and merge them with __tools__.  This would allow users to pass tools in the request body from filters, etc.
