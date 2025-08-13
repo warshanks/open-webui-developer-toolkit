@@ -2,7 +2,7 @@
 
 Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).
 
-Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt-5-model-support).
+Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt5-model-support).
 
 ## Contents
 
@@ -10,7 +10,7 @@ Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt-5-model-
 * [Features](#features)
 * [Advanced Features](#advanced-features)
 * [Tested Models](#tested-models)
-* [GPT‑5 Model Support](#gpt-5-model-support)
+* [GPT‑5 Model Support](#gpt5-model-support)
 * [How It Works (Design Notes)](#how-it-works-design-notes)
 * [Troubleshooting / FAQ](#troubleshooting--faq)
 
