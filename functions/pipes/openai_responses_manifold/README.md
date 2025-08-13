@@ -110,7 +110,7 @@ Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt5-model-s
 
 The manifold targets any model that supports the Responses API. Confirmed with the official IDs below.
 
-| Family               | **Official model ID**   | Type / modality                                               | Status | **Your notes**                                                           |
+| Family               | **Official model ID**   | Type / modality                                               | Status | **Notes**                                                           |
 | -------------------- | ----------------------- | ------------------------------------------------------------- | :----: | ------------------------------------------------------------------------ |
 | **GPT‑5**            | `gpt-5`                 | Reasoning                                                     |    ✅   |                                                                          |
 |                      | `gpt-5-mini`            | Reasoning                                                     |    ✅   |                                                                          |
@@ -133,14 +133,14 @@ These **aliases** are supported by the pipe (via the `MODELS` valve). They resol
 
 | **Alias (you can use these in OpenAI Responses Manifold)**                        | **Resolves to (official ID)** | **Preset(s)**                | Suggested use                                                         |
 | ------------------------------------------------------------------ | ----------------------------- | ---------------------------- | --------------------------------------------------------------------- |
-| `gpt-5-auto`                                                       | `gpt-5-chat-latest`           | Router placeholder           | ChatGPT parity / quick smoke tests.                                   |
+| `gpt-5-auto`                                                       | `gpt-5-chat-latest`           | Router placeholder           | Router placeholder.  Automatic selection planned.                     |
 | `gpt-5-thinking`                                                   | `gpt-5`                       | Default (medium) reasoning   | General high‑quality prompts. ([OpenAI][8])                           |
-| `gpt-5-minimal`, `gpt-5-thinking-minimal`                          | `gpt-5`                       | `reasoning_effort="minimal"` | Faster/cheaper while still reasoning. ([OpenAI][8])                   |
-| `gpt-5-high`, `gpt-5-thinking-high`                                | `gpt-5`                       | `reasoning_effort="high"`    | Hard problems; max quality. ([OpenAI][8])                             |
+| `gpt-5-thinking-minimal`                                           | `gpt-5`                       | `reasoning_effort="minimal"` | Faster/cheaper while still reasoning. ([OpenAI][8])                   |
+| `gpt-5-thinking-high`                                              | `gpt-5`                       | `reasoning_effort="high"`    | Hard problems; max quality. ([OpenAI][8])                             |
 | `gpt-5-thinking-mini`                                              | `gpt-5-mini`                  | Default (medium) reasoning   | Budget‑tilted tasks. ([OpenAI Platform][9])                           |
-| `gpt-5-mini-minimal`, `gpt-5-thinking-mini-minimal`                | `gpt-5-mini`                  | `reasoning_effort="minimal"` | Hidden task model / latency‑sensitive. ([OpenAI Platform][9])         |
+| `gpt-5-thinking-mini-minimal`                                      | `gpt-5-mini`                  | `reasoning_effort="minimal"` | Hidden task model / latency‑sensitive. ([OpenAI Platform][9])         |
 | `gpt-5-thinking-nano`                                              | `gpt-5-nano`                  | Default (medium) reasoning   | Very low cost; routing / triage. ([OpenAI Platform][10])              |
-| `gpt-5-nano-minimal`, `gpt-5-thinking-nano-minimal`                | `gpt-5-nano`                  | `reasoning_effort="minimal"` | Cheapest minimal reasoning. ([OpenAI Platform][10])                   |
+| `gpt-5-thinking-nano-minimal`                                      | `gpt-5-nano`                  | `reasoning_effort="minimal"` | Cheapest minimal reasoning. ([OpenAI Platform][10])                   |
 | `o3-mini-high`                                                     | `o3-mini`                     | `reasoning_effort="high"`    | Small, fast, but think harder. ([OpenAI Platform][11])                |
 | `o4-mini-high`                                                     | `o4-mini`                     | `reasoning_effort="high"`    | Cost‑efficient reasoning; push quality. ([OpenAI][12])                |
 | *(reserved)* `gpt-5-main`, `gpt-5-main-mini`, `gpt-5-thinking-pro` | —                             | —                            | Placeholders; no direct API model today. Keep reserved. ([OpenAI][8]) |
