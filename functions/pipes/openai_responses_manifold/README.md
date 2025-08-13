@@ -52,7 +52,7 @@
 ### Other Features
 
 * **Pseudo-model aliases**
-  You can list `o3-mini-high`, `o4-mini-high`, `gpt-5-high`, `gpt-5-thinking`, `gpt-5-minimal`, `gpt-5-mini-minimal`, and `gpt-5-nano-minimal` in the `MODELS` valve just like regular models.
+  You can list `gpt-5-auto`, `o3-mini-high`, `o4-mini-high`, `gpt-5-high`, `gpt-5-thinking`, `gpt-5-minimal`, `gpt-5-mini-minimal`, and `gpt-5-nano-minimal` in the `MODELS` valve just like regular models.
   These are **virtual aliases** (not real OpenAI models) that automatically map to the underlying model and set `reasoning_effort` to `"high"` or `"minimal"` as indicated.
   For example, `gpt-5-thinking` uses `gpt-5` with `reasoning_effort="high"`, while the `*-minimal` variants run with minimal reasoning and are handy for task models like a hidden `gpt-5-mini-minimal`.
 
@@ -126,11 +126,11 @@ The Responses Manifold supports the current **GPT-5 family** exposed in the API:
 **In ChatGPT,** "GPT-5" isn’t a single model — it’s a **mix** of reasoning, minimal-reasoning, and non-reasoning variants chosen automatically by a **model router** that balances speed, difficulty, tools, and intent. [More →][1]
 
 **In the API,** you pick specific models directly:
-- `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — reasoning enabled by default.  
-- `reasoning_effort="minimal"` reduces thinking but is **not** the same as the non-reasoning ChatGPT model.  
+- `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — reasoning enabled by default.
+- `reasoning_effort="minimal"` reduces thinking but is **not** the same as the non-reasoning ChatGPT model.
 - The **non-reasoning** ChatGPT variant is exposed separately as **`gpt-5-chat-latest`**.
 
-> **Planned:** We may add a built-in **`gpt-5-router`** pseudo model ID to mimic ChatGPT’s behavior: it would inspect users request (latency tolerance, tool usage, length/complexity, "think hard" cues, etc...) and route to an ideal target (e.g., `gpt-5-chat-latest` for quick tasks, `gpt-5` for reasoning, etc...).
+> **Placeholder:** The **`gpt-5-auto`** pseudo model currently routes to `gpt-5-chat-latest` and shows a "model router coming soon" notification. A smarter router that selects between GPT‑5 variants is planned for a future release.
 
 ### Pseudo IDs → API Mappings *(subject to change)*
 
@@ -138,6 +138,7 @@ This manifold also exposes pseudo **aliases** that map to real API models with p
 
 | Pseudo ID                           | Maps to                                     | Notes                                                                  |
 | ----------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| `gpt-5-auto`                        | `gpt-5-chat-latest`                         | Placeholder router; displays notification and routes to chat model.     |
 | `gpt-5-thinking`                    | `gpt-5`                                     | Default (medium) reasoning; mirrors "thinking".                        |
 | `gpt-5-thinking-minimal`            | `gpt-5` + `reasoning_effort="minimal"`      | Fastest `gpt-5` while still a reasoning model. ([OpenAI][1])           |
 | `gpt-5-thinking-high`               | `gpt-5` + `reasoning_effort="high"`         | Maximum test-time reasoning. ([OpenAI][1])                              |

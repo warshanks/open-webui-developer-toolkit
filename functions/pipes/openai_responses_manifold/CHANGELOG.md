@@ -5,6 +5,14 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.25] - 2025-08-13
+- Added placeholder `gpt-5-auto` model that currently routes to `gpt-5-chat-latest`
+  and emits a "model router coming soon" notification.
+- Fixed `transform_messages_to_input` to skip missing persisted items.
+- Used `openwebui_model_id` to detect `gpt-5-auto` and added a stub router helper
+  for future model selection.
+- Clarified `MODEL_ID` description to mention supported pseudo models.
+
 ## [0.8.17] - 2025-07-01
 - Added `ExpandableStatusIndicator` updates in the non-streaming loop.
 

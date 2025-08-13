@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.24
+version: 0.8.25
 license: MIT
 """
 
@@ -101,6 +101,9 @@ class CompletionsBody(BaseModel):
             "gpt-5-thinking-mini-minimal": ("gpt-5-mini", "minimal"),
             "gpt-5-thinking-nano": ("gpt-5-nano", None),
             "gpt-5-thinking-nano-minimal": ("gpt-5-nano", "minimal"),
+
+            # Placeholder router
+            "gpt-5-auto": ("gpt-5-chat-latest", None),
 
             # Backwards compatibility
             "o3-mini-high": ("o3-mini", "high"),
@@ -375,7 +378,8 @@ class ResponsesBody(BaseModel):
                     if segment["type"] == "marker":
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
-                        openai_input.append(item)
+                        if item is not None:
+                            openai_input.append(item)
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
                             "role": "assistant",
@@ -481,8 +485,11 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
-            description="Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. Supports the pseudo models 'o3-mini-high' and 'o4-mini-high', which map to 'o3-mini' and 'o4-mini' with reasoning effort forced to high.",
+            default="gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            description=(
+                "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
+                "Supports all official OpenAI model IDs along with pseudo models 'gpt-5-auto', 'o3-mini-high', and 'o4-mini-high'."
+            ),
         )
 
         # 3) Reasoning & summaries
@@ -649,6 +656,17 @@ class Pipe:
             service_tier=valves.SERVICE_TIER,
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
+
+        if openwebui_model_id.endswith(".gpt-5-auto"):
+            await self._emit_notification(
+                __event_emitter__,
+                content="Model router coming soon — using gpt-5-chat-latest.",
+                level="info",
+            )
+            responses_body.model = await self._route_gpt5_auto(
+                responses_body.input[-1].get("content", "") if responses_body.input else "",
+                valves,
+            )
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
@@ -1589,6 +1607,24 @@ class Pipe:
         await event_emitter(
             {"type": "notification", "data": {"type": level, "content": content}}
         )
+
+    async def _route_gpt5_auto(
+        self,
+        last_user_message: str,
+        valves: "Pipe.Valves",
+    ) -> str:
+        """Placeholder GPT-5 router.
+
+        Eventually this helper will make a non-streaming call to a low-latency
+        model (e.g., ``gpt-4.1-nano``) that inspects the last user message and
+        returns structured JSON indicating which GPT-5 variant to use.  The
+        selected model will then handle the user's request.
+
+        Currently, it simply returns ``"gpt-5-chat-latest"`` so ``gpt-5-auto``
+        behaves as a direct alias and the router design can be iterated on
+        separately.
+        """
+        return "gpt-5-chat-latest"
 
     # 4.8 Internal Static Helpers
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
