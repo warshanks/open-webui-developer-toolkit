@@ -967,7 +967,7 @@ class Pipe:
                             title = f"🛠️ Running the {item_name} tool…"
                             arguments = json.loads(item.get("arguments") or "{}")
                             args_formatted = ", ".join(f"{k}={json.dumps(v)}" for k, v in arguments.items())
-                            content = f"```python\n{item_name}({args_formatted})\n```"
+                            content = wrap_code_block(f"{item_name}({args_formatted})", "python")
 
                         elif item_type == "web_search_call":
                             title = "🔍 Hmm, let me quickly check online…"
@@ -1189,7 +1189,7 @@ class Pipe:
                             args_formatted = ", ".join(
                                 f"{k}={json.dumps(v)}" for k, v in arguments.items()
                             )
-                            content = f"```python\n{item.get('name', 'unnamed_tool')}({args_formatted})\n```"
+                            content = wrap_code_block(f"{item.get('name', 'unnamed_tool')}({args_formatted})", "python")
                         elif item_type == "web_search_call":
                             title = "🔍 Hmm, let me quickly check online…"
                             action = item.get("action", {})
