@@ -1045,12 +1045,13 @@ class Pipe:
                             await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
 
 
-                    # Add status indicator with result
+                    # Add status indicator with sanitized result
                     for output in function_outputs:
+                        result_text = wrap_code_block(output.get("output", ""))
                         assistant_message = await status_indicator.add(
                             assistant_message,
                             status_title="🛠️ Received tool result",
-                            status_content=f"```python\n{output.get('output', '')}\n```",
+                            status_content=result_text,
                         )
                     body.input.extend(function_outputs)
                 else:
@@ -1246,12 +1247,13 @@ class Pipe:
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         assistant_message += hidden_uid_marker
 
-                    # Add status indicator with result
+                    # Add status indicator with sanitized result
                     for output in function_outputs:
+                        result_text = wrap_code_block(output.get("output", ""))
                         assistant_message = await status_indicator.add(
                             assistant_message,
                             status_title="🛠️ Received tool result",
-                            status_content=f"```python\n{output.get('output', '')}\n```",
+                            status_content=result_text,
                         )
                     body.input.extend(function_outputs)
                 else:
@@ -1848,7 +1850,7 @@ class ExpandableStatusIndicator:
     async def _render(self, assistant_message: str, emit: bool) -> str:
         block = self._render_status_block()
         full_msg = (
-            self._BLOCK_RE.sub(block, assistant_message, 1)
+            self._BLOCK_RE.sub(lambda _: block, assistant_message, 1)
             if self._BLOCK_RE.search(assistant_message)
             else f"{block}{assistant_message}"
         )
@@ -1977,6 +1979,18 @@ def update_openwebui_model_param(openwebui_model_id: str, field: str, value: Any
 
     form = ModelForm(**form_data)
     Models.update_model_by_id(openwebui_model_id, form)
+
+
+def wrap_code_block(text: str, language: str = "python") -> str:
+    """Wrap ``text`` in a fenced Markdown code block.
+
+    The fence length adapts to the longest backtick run within ``text``
+    to avoid prematurely closing the block.
+    """
+    longest = max((len(m.group(0)) for m in re.finditer(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{language}\n{text}\n{fence}"
+
 
 def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     """Strip ``<details>`` blocks matching the specified ``type`` values.
