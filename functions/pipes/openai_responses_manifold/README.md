@@ -1,235 +1,243 @@
 # OpenAI Responses Manifold
-**Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).**
 
-⚠️ **Version 0.8.20 – Pre‑production preview.** The pipe (manifold) is still under early testing and will be fully released as `1.0.0`.
+Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).
 
-## Setup Instructions
-1. Navigate to **Open WebUI ▸ Admin Panel ▸ Functions** and press **Import from Link**
-   <img width="894" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
-2. Paste one of the following links:
+Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt5-model-support).
 
-| Branch                 | Description                                                              | Link                                                                                                                                       |
-|------------------------|---------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| **Main** (recommended) | Stable production version. Receives regular, tested updates.              | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
-| **Alpha Preview**      | Pre-release version with early features (2–4 weeks ahead of main).        | `https://github.com/jrkropp/open-webui-developer-toolkit/blob/alpha-preview/functions/pipes/openai_responses_manifold/openai_responses_manifold.py` |
+## Contents
 
-3. **⚠️ The Function ID MUST be set to `openai_responses`**, as it is currently hardcoded throughout the pipe.  This requirement will be removed in a future release.
-<img width="1252" alt="image" src="https://github.com/user-attachments/assets/ffd3dd72-cf39-43fa-be36-56c6ac41477d" />
-4. You are done!
+* [Setup](#setup)
+* [Features](#features)
+* [Advanced Features](#advanced-features)
+* [Tested Models](#tested-models)
+* [GPT‑5 Model Support](#gpt5-model-support)
+* [How It Works (Design Notes)](#how-it-works-design-notes)
+* [Troubleshooting / FAQ](#troubleshooting--faq)
 
----
+## Setup
+
+1. In **Open WebUI ▸ Admin Panel ▸ Functions**, click **Import from Link**.
+   
+   <img width="450" alt="image" src="https://github.com/user-attachments/assets/4a5a0355-e0af-4fb8-833e-7d3dfb7f10e3" />
+
+2. Paste one of the following links, depending on which version you want:
+
+   * **Main** (recommended) – Stable production build with regular, tested updates:
+
+     ```
+     https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
+     ```
+
+   * **Alpha Preview** – Pre-release build with early features, typically 2–4 weeks ahead of main:
+
+     ```
+     https://github.com/jrkropp/open-webui-developer-toolkit/blob/alpha-preview/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
+     ```
+
+3. **⚠️ Important: Set the Function ID to `openai_responses`.**
+   
+   This value is currently hardcoded in the pipe and must match exactly. It will become configurable in a future release.
+   
+   <img width="800" alt="image" src="https://github.com/user-attachments/assets/ffd3dd72-cf39-43fa-be36-56c6ac41477d" />
+
+4. Done! 🎉
 
 ## Features
 
-| Feature | Status | Last updated | Notes |
-| --- | --- | --- | --- |
-| Native function calling | ✅ GA | 2025-06-04 | Automatically enabled for supported models. |
-| Visible reasoning summaries | ✅ GA | 2025-06-03 | Available for o‑series models only. |
-| Encrypted reasoning tokens | ✅ GA | 2025-06-03 | Persists reasoning context across turns. |
-| Optimized token caching | ✅ GA | 2025-06-03 | Save up to ~50–75 % on supported models. |
-| Web search tool | ✅ GA | 2025-06-03 | Automatically invoked or toggled manually. |
-| Task model support | ✅ GA | 2025-06-06 | Use model as [Open WebUI External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/) (title generation, tag generation, etc.). |
-| Streaming responses (SSE) | ✅ GA | 2025-06-04 | Real-time, partial output streaming for text and tool events. |
-| Usage Pass-through | ✅ GA | 2025-06-04 | Tokens and usage aggregated and passed through to Open WebUI GUI. |
-| Response item persistence | ✅ GA | 2025-06-27 | Persists items via newline-wrapped comment markers (v2) that embed type, 16-character ULIDs and metadata. |
-| Open WebUI Notes compatibility | ✅ GA | 2025-07-14 | Works with ephemeral Notes that omit `chat_id`. |
-| Expandable status output | ✅ GA | 2025-07-01 | Progress steps rendered via `<details>` tags. Use `ExpandableStatusEmitter` to add entries. |
-| Inline citation events | ✅ GA | 2025-07-28 | Valve `CITATION_STYLE` controls `[n]` vs source name. |
-| Truncation control | ✅ GA | 2025-06-10 | Valve `TRUNCATION` sets the responses `truncation` parameter (auto or disabled). Works with per-model `max_completion_tokens`. |
-| Custom parameter pass-through | ✅ GA | 2025-06-14 | Use Open WebUI's custom parameters to set additional OpenAI fields. `max_tokens` is automatically mapped to `max_output_tokens`. |
-| Deep Search Support | 🔄 In-progress | 2025-06-29 | Add support for o3-deep-research, o4-mini-deep-research. |
-| Image input (vision) | 🔄 In-progress | 2025-06-03 | Pending future release. |
-| Image generation tool | 🕒 Backlog | 2025-06-03 | Incl. multi-turn image editing (e.g., upload and modify). |
-| File upload / file search tool | 🕒 Backlog | 2025-06-03 | Roadmap item. |
-| Code interpreter tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-code-interpreter) |
-| Computer use tool | 🕒 Backlog | 2025-06-03 | [OpenAI docs](https://platform.openai.com/docs/guides/tools-computer-use) |
-| Live conversational voice (Talk) | 🕒 Backlog | 2025-06-03 | Requires backend patching; design under consideration. |
-| Dynamic chat titles | 🕒 Backlog | 2025-06-03 | For progress/status indication during long tasks. |
-| MCP tool support | 🔄 In-progress | 2025-06-23 | Attach remote MCP servers via the `REMOTE_MCP_SERVERS_JSON` valve. |
+| Feature                        | Status         | Last updated | Notes                                                                                                                                              |
+| ------------------------------ | -------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native function calling        | ✅ GA           | 2025‑06‑04   | Auto‑enabled on supported models.                                                                                                                  |
+| Visible reasoning summaries    | ✅ GA           | 2025‑08‑07   | o‑series only; requires `reasoning`.                                                                                                               |
+| Encrypted reasoning tokens     | ✅ GA           | 2025‑08‑07   | Persists reasoning context across turns; requires `reasoning`.                                                                                     |
+| Optimized token caching        | ✅ GA           | 2025‑06‑03   | Save \~50–75% on supported models.                                                                                                                 |
+| Web search tool                | ✅ GA           | 2025‑06‑03   | Auto‑invoked or manual toggle.                                                                                                                     |
+| Task model support             | ✅ GA           | 2025‑08‑07   | Use as an [External Task Model](https://docs.openwebui.com/tutorials/tips/improve-performance-local/). `gpt-4.1-nano` is a good hidden task model. |
+| Streaming responses (SSE)      | ✅ GA           | 2025‑06‑04   | Real‑time text and tool events.                                                                                                                    |
+| Usage pass‑through             | ✅ GA           | 2025‑06‑04   | Usage surfaced in Open WebUI.                                                                                                                      |
+| Response item persistence      | ✅ GA           | 2025‑06‑27   | Persists items via v2 newline‑wrapped comment markers with 16‑char IDs.                                                                            |
+| Open WebUI Notes compatibility | ✅ GA           | 2025‑07‑14   | Works with ephemeral Notes (no `chat_id`).                                                                                                         |
+| Expandable status output       | ✅ GA           | 2025‑07‑01   | `<details>` blocks via `ExpandableStatusEmitter`.                                                                                                  |
+| Inline citation events         | ✅ GA           | 2025‑07‑28   | Valve `CITATION_STYLE` controls `[n]` vs source name.                                                                                              |
+| Truncation control             | ✅ GA           | 2025‑06‑10   | Valve `TRUNCATION`: `auto` or `disabled`. Honors per‑model `max_completion_tokens`.                                                                |
+| Custom param pass‑through      | ✅ GA           | 2025‑06‑14   | Open WebUI Custom Parameters → OpenAI fields; `max_tokens` → `max_output_tokens`.                                                                  |
+| Regenerate → `text.verbosity`  | ✅ GA           | 2025‑08‑11   | “Add Details”/“More Concise” map to `high`/`low` on GPT‑5 family.                                                                                  |
+| Deep Search support            | 🔄 In progress | 2025‑06‑29   | o3‑deep‑research / o4‑mini‑deep‑research.                                                                                                          |
+| Image input (vision)           | 🔄 In progress | 2025‑06‑03   | Pending release.                                                                                                                                   |
+| Image generation tool          | 🕒 Backlog     | 2025‑06‑03   | Multi‑turn editing planned.                                                                                                                        |
+| File upload / file search      | 🕒 Backlog     | 2025‑06‑03   | Roadmap item.                                                                                                                                      |
+| Code interpreter               | 🕒 Backlog     | 2025‑06‑03   | See OpenAI docs.                                                                                                                                   |
+| Computer use                   | 🕒 Backlog     | 2025‑06‑03   | See OpenAI docs.                                                                                                                                   |
+| Live voice (Talk)              | 🕒 Backlog     | 2025‑06‑03   | Requires backend patching.                                                                                                                         |
+| Dynamic chat titles            | 🕒 Backlog     | 2025‑06‑03   | Progress titles during long tasks.                                                                                                                 |
+| MCP tool support               | 🔄 In progress | 2025‑06‑23   | Attach remote MCP via `REMOTE_MCP_SERVERS_JSON`.                                                                                                   |
 
-### Other Features
+## Advanced Features
 
 * **Pseudo-model aliases**
-  You can list `o3-mini-high` and `o4-mini-high` in the `MODELS` valve just like regular models.
-  These are **virtual aliases** (not real OpenAI models) that automatically map to `o3-mini` and `o4-mini` with `reasoning_effort` set to `"high"`.
-  This allows you to enable advanced reasoning without needing to set custom parameters manually.
+  In the `MODELS` valve, you can include names like `o3-mini-high`, `o4-mini-high`, `gpt-5-high`, `gpt-5-thinking`, `gpt-5-minimal`, `gpt-5-mini-minimal`, and `gpt-5-nano-minimal`.
+  These aliases map to actual models and set `reasoning_effort` to either `"high"` or `"minimal"`.
+  Example: `gpt-5-thinking` → `gpt-5` with default (medium) reasoning.
+  `*-minimal` variants lower test-time reasoning and are useful for hidden task models.
 
 * **Debug logging**
-  Set `LOG_LEVEL` to `debug` to include inline debug logs inside assistant messages.
-  Can be configured **globally** via the pipe valve OR **per user** via user valve.
+  Set `LOG_LEVEL=debug` to embed inline debug logs in assistant messages. Can be applied globally (pipe valve) or per user (user valve).
 
 * **Expandable status blocks**
-  Tool progress is shown using `<details type="openai_responses.expandable_status">` blocks.
-  The `ExpandableStatusEmitter` helper simplifies adding new steps programmatically.
+  Tool progress can be shown using `<details type="openai_responses.expandable_status">`.
+  Use `ExpandableStatusEmitter` to add steps programmatically.
 
 * **Truncation strategy**
-  Use the `TRUNCATION` valve to control how long prompts are handled:
+  The `TRUNCATION` valve supports:
 
-  * `auto` (default): removes middle context if the request exceeds token limits
-  * `disabled`: returns a 400 error if the context is too long
-    This works alongside per-model `max_completion_tokens` constraints.
+  * `auto` (default): Removes middle context if limits are exceeded.
+  * `disabled`: Returns a 400 error on overflow.
+    Works with per-model `max_completion_tokens`.
 
 * **Custom parameter support**
-  Pass OpenAI-compatible fields via Open WebUI's **Custom Parameters**.
-  For convenience, `max_tokens` is automatically translated to `max_output_tokens`.
+  “Custom Parameters” in Open WebUI map directly to OpenAI fields.
+  For convenience, `max_tokens` is translated to `max_output_tokens`.
 
-* **Remote MCP server integration** (experimental)
-  Set the `REMOTE_MCP_SERVERS_JSON` valve to a JSON object or array describing [Remote MCP](https://platform.openai.com/docs/guides/tools-remote-mcp) servers.
-  These are appended to each request’s `tools` list before being sent to OpenAI.
-  Supports options like `require_approval` and automatic tool caching.
+* **Regenerate → `text.verbosity`**
+  When the last user input is “Add Details” or “More Concise”, sets `text.verbosity` to `high` or `low` (supported GPT-5 models only).
 
-### Tested models
-The manifold should work with any model that supports the responses API. Confirmed with:
-| Model ID | Status |
-| --- | --- |
-| chatgpt-4o-latest | ✅ |
-| codex-mini-latest | ✅ |
-| gpt-4.1 | ✅ |
-| gpt-4o | ✅ |
-| o3 | ✅ |
-| o3-pro | ✅ |
-| o3-deep-research | ❌ |
-| o4-mini-deep-research | ❌ |
+* **Remote MCP servers (experimental)**
+  Set `REMOTE_MCP_SERVERS_JSON` to a JSON object or array describing [Remote MCP](https://platform.openai.com/docs/guides/tools-remote-mcp) servers.
+  Appends these servers to each request’s `tools`. Supports `require_approval` and tool caching.
 
 ---
 
-# The Magic Behind this Pipe
-### Persisting Non-Message Items (function_call, function_call_results, reasoning tokens, etc..)
+## Tested Models
 
-The OpenAI Responses API returns essential non-message components (such as reasoning tokens, function calls, and tool outputs). These response items are produced sequentially, reflecting the model’s internal decision-making process.
+The manifold targets any model that supports the Responses API. Confirmed with the official IDs below.
 
-**For example:**
+| Family               | **Official model ID**   | Type / modality                                               | Status | **Notes**                                                           |
+| -------------------- | ----------------------- | ------------------------------------------------------------- | :----: | ------------------------------------------------------------------------ |
+| **GPT‑5**            | `gpt-5`                 | Reasoning                                                     |    ✅   |                                                                          |
+|                      | `gpt-5-mini`            | Reasoning                                                     |    ✅   |                                                                          |
+|                      | `gpt-5-nano`            | Reasoning                                                     |    ✅   |                                                                          |
+|                      | `gpt-5-chat-latest`     | Chat‑tuned (non‑reasoning)                                    |    ✅   |  ([OpenAI Platform][1]) |
+| **GPT‑4.1**          | `gpt-4.1`               | Non‑reasoning                                                 |    ✅   |                                                                          |
+| **GPT‑4o**           | `gpt-4o`                | Text + image input → text output                              |    ✅   |                                                                          |
+|                      | `chatgpt-4o-latest`     | Dynamic alias pointing to the GPT‑4o snapshot used in ChatGPT |    ✅   | Handy for parity checks; dynamic pointer. ([OpenAI Platform][2])         |
+| **O‑series**         | `o3`                    | Reasoning                                                     |    ✅   |                                                                          |
+|                      | `o3-pro`                | Reasoning (higher compute) — **Responses API only**           |    ✅   | ([OpenAI Platform][3])                                                   |
+|                      | `o3-mini`               | Reasoning                                                     |    ✅   | Supported; lightweight O-series reasoning model. ([OpenAI Platform][11]) |
+|                      | `o4-mini`               | Reasoning                                                     |    ✅   | Supported; cost-efficient O-series reasoning model. ([OpenAI][12])       |
+| **Deep Research**    | `o3-deep-research`      | Agentic deep‑research model                                   |    ❌   | Not yet supported ([OpenAI Platform][4])                                 |
+|                      | `o4-mini-deep-research` | Agentic deep‑research model                                   |    ❌   | Not yet supported ([OpenAI Platform][5])                                 |
+| **Utility / Coding** | `codex-mini-latest`     | Lightweight coding/agent model                                |    ✅   | ([OpenAI Platform][6])                                                   |
 
-```json
-[
-  {
-    "id": "rs_6849f90497fc8192a013fb54f888948c0b902dab32480d90",
-    "type": "reasoning",
-    "encrypted_content": "[ENCRYPTED_TOKENS_HERE]"
-  },
-  {
-    "type": "function_call",
-    "function_call": {
-      "name": "get_weather",
-      "arguments": {
-        "location": "New York"
-      }
-    }
-  },
-  {
-    "type": "function_call_result",
-    "function_result": {
-      "location": "New York",
-      "temperature": "72°F",
-      "condition": "Sunny"
-    }
-  },
-  {
-    "type": "message",
-    "role": "assistant",
-    "content": "It’s currently 72°F and sunny in New York."
-  }
-]
-```
-By default, Open WebUI only stores the assistant’s final response and discards all intermediate response items. Instead, if we persist **all** response items (in their original order) it...
+### Pseudo‑model aliases (convenience IDs)
 
-* Significantly reduces latency by eliminating redundant tool calls and reasoning re-generation (especially noticeable with o-series models).
-* Reduces cost through improved OpenAI cache hits (saving approximately 50–75% on input tokens).
+These **aliases** are supported by the pipe (via the `MODELS` valve). They resolve to official models and may set presets like `reasoning_effort` for you. *(Subject to change as OpenAI updates their platform.)* For GPT‑5 reasoning levels (minimal/low/medium/high), see OpenAI’s developer post. ([OpenAI][8])
 
-**And thus, the core challenge...**
+| **Alias (you can use these in OpenAI Responses Manifold)**                        | **Resolves to (official ID)** | **Preset(s)**                | Suggested use                                                         |
+| ------------------------------------------------------------------ | ----------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| `gpt-5-auto`                                                       | `gpt-5-chat-latest`           | Router placeholder           | Router placeholder.  Automatic selection planned.                     |
+| `gpt-5-thinking`                                                   | `gpt-5`                       | Default (medium) reasoning   | General high‑quality prompts. ([OpenAI][8])                           |
+| `gpt-5-thinking-minimal`                                           | `gpt-5`                       | `reasoning_effort="minimal"` | Faster/cheaper while still reasoning. ([OpenAI][8])                   |
+| `gpt-5-thinking-high`                                              | `gpt-5`                       | `reasoning_effort="high"`    | Hard problems; max quality. ([OpenAI][8])                             |
+| `gpt-5-thinking-mini`                                              | `gpt-5-mini`                  | Default (medium) reasoning   | Budget‑tilted tasks. ([OpenAI Platform][9])                           |
+| `gpt-5-thinking-mini-minimal`                                      | `gpt-5-mini`                  | `reasoning_effort="minimal"` | Hidden task model / latency‑sensitive. ([OpenAI Platform][9])         |
+| `gpt-5-thinking-nano`                                              | `gpt-5-nano`                  | Default (medium) reasoning   | Very low cost; routing / triage. ([OpenAI Platform][10])              |
+| `gpt-5-thinking-nano-minimal`                                      | `gpt-5-nano`                  | `reasoning_effort="minimal"` | Cheapest minimal reasoning. ([OpenAI Platform][10])                   |
+| `o3-mini-high`                                                     | `o3-mini`                     | `reasoning_effort="high"`    | Small, fast, but think harder. ([OpenAI Platform][11])                |
+| `o4-mini-high`                                                     | `o4-mini`                     | `reasoning_effort="high"`    | Cost‑efficient reasoning; push quality. ([OpenAI][12])                |
+| *(reserved)* `gpt-5-main`, `gpt-5-main-mini`, `gpt-5-thinking-pro` | —                             | —                            | Placeholders; no direct API model today. Keep reserved. ([OpenAI][8]) |
 
-How do we store these response elements without revealing them to the end-user and still ensure compatibility with Open WebUI's extensible filter pipeline?
+[1]: https://platform.openai.com/docs/models/gpt-5-chat-latest?utm_source=chatgpt.com "Model - OpenAI API"
+[2]: https://platform.openai.com/docs/models/chatgpt-4o-latest?utm_source=chatgpt.com "Model - OpenAI API"
+[3]: https://platform.openai.com/docs/models/o3-pro?utm_source=chatgpt.com "Model - OpenAI API"
+[4]: https://platform.openai.com/docs/models/o3-deep-research?utm_source=chatgpt.com "o3-deep-research"
+[5]: https://platform.openai.com/docs/guides/deep-research?utm_source=chatgpt.com "Deep research - OpenAI API"
+[6]: https://platform.openai.com/docs/models/codex-mini-latest?utm_source=chatgpt.com "Codex mini"
+[7]: https://platform.openai.com/docs/models/gpt-5?utm_source=chatgpt.com "Model - OpenAI API"
+[8]: https://openai.com/index/introducing-gpt-5-for-developers/?utm_source=chatgpt.com "Introducing GPT‑5 for developers"
+[9]: https://platform.openai.com/docs/models/gpt-5-mini?utm_source=chatgpt.com "GPT-5 mini"
+[10]: https://platform.openai.com/docs/models/gpt-5-nano?utm_source=chatgpt.com "Model - OpenAI API"
+[11]: https://platform.openai.com/docs/models/o3-mini?utm_source=chatgpt.com "Model - OpenAI API"
+[12]: https://openai.com/index/introducing-o3-and-o4-mini/?utm_source=chatgpt.com "Introducing OpenAI o3 and o4-mini"
 
-### Specific Constraints
-1. **Invisibility:**
-   * All non-message items must remain hidden from the user. Only visible assistant messages should appear in the interface.
-2. **Accurate Ordering:**
-   * Response items must be persisted precisely in the order produced by the model, supporting complex interactions (e.g., assistant messages interleaved with tool calls, reasoning steps, and back to assistant messages within a single response).
-3. **Compatibility with Open WebUI Filter Pipeline:**
-   * Context must be reconstructed exclusively from the `body["messages"]` structure provided by Open WebUI after all pipeline filters have applied their modifications:
 
-Constraint #3 is particularly challenging since `body["messages"]` only includes two fields: `role` and `content` and doesn't support additional metadata / properties.  We must somehow store the non-visible items inside `body["messages"]["contents"]`
+# GPT‑5 Model Support
 
-```python
-body = {
-  "messages": [
-    { "role": "system", "content": "System prompt text..." },
-    { "role": "user", "content": "User question..." }
-  ]
-}
-```
+The Responses Manifold supports the current **GPT‑5 family** exposed in the API:
 
-### Invisible Marker Strategy (v2):
-Open WebUI ignores content enclosed within markdown comments (`[hidden comment]: #`), making them ideal for embedding hidden metadata directly into assistant responses. We can use these hidden markdown comments to store references (unique IDs) to response items we've saved elsewhere. [Learn more about markdown comments →](https://www.markdownguide.org/hacks/#comments)
+* `gpt-5` *(reasoning model)*
+* `gpt-5-mini` *(reasoning model)*
+* `gpt-5-nano` *(reasoning model)*
+* `gpt-5-chat-latest` *(non‑reasoning ChatGPT variant)*
 
-Here's how it works:
+### Key behavior (practical notes)
 
-1. **Persist Response Items:**
-   We store the complete OpenAI response items using Open WebUI’s built-in method, `Chats.update_chat_by_id()`. Each item receives a unique 16-character identifier:
+* **`gpt-5`, `gpt-5-mini`, and `gpt-5-nano` are reasoning models.** Setting `reasoning_effort="minimal"` reduces thinking but does **not** make them non‑reasoning. For a non‑reasoning chat model, use **`gpt-5-chat-latest`**. [OpenAI][1]
+* **Tool calling limitation:** `gpt-5-chat-latest` currently lacks native tool calling (function calls / web search). This is the main gap vs. reasoning models. We expect a future high‑throughput `gpt-5-main`‑style API model may bring tools without reasoning.
+* **Latency:** Even with `"minimal"`, GPT‑5 may still “think.” For ultra‑low latency (e.g., Task Models), consider `gpt-4.1-nano` until OpenAI ships a lower‑latency v5 task model.
+* **Output style:** `gpt-5-chat-latest` is tuned for polished end‑user chat and usually needs little system prompt. Reasoning models benefit from a short style system prompt (e.g., “concise Markdown with headings and lists”). See `system_prompts` folder in repo for examples.
 
-   ```json
-   "01HX4Y2VW5VR2Z2H": {
-     "model": "gpt-4o",
-     "created_at": 1718073601,
-     "payload": {
-       "type": "function_call",
-       "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
-       "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-       "name": "calculator",
-       "arguments": "{\"expression\":\"34234*pi\"}",
-       "status": "completed"
-     },
-     "message_id": "msg_9fz4qx7e"
-   }
-   ```
+### GPT‑5 in ChatGPT vs. the API (and a future router)
 
-2. **Embed Invisible Markers:**
-  We yield these IDs as invisible markdown link, e.g.,
+**In ChatGPT**, “GPT‑5” is a **router** across reasoning, minimal‑reasoning, and non‑reasoning variants based on speed, difficulty, tools, and intent. [More →][1]
 
-  ```text
+**In the API**, you choose explicitly:
+
+* `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — reasoning on by default.
+* `reasoning_effort="minimal"` lowers compute but isn’t the same as non‑reasoning ChatGPT.
+* The **non‑reasoning** variant is **`gpt-5-chat-latest`**.
+
+> **Note:** The **`gpt-5-auto`** pseudo model currently routes to `gpt-5-chat-latest` and shows a “model router coming soon” notification. A smarter router that selects between GPT‑5 variants is planned.
+
+[1]: https://openai.com/index/introducing-gpt-5-for-developers/ "Introducing GPT‑5 for developers | OpenAI"
+[2]: https://cdn.openai.com/pdf/8124a3ce-ab78-4f06-96eb-49ea29ffb52f/gpt5-system-card-aug7.pdf "GPT‑5 System Card (Aug 7, 2025)"
+
+---
+
+## How It Works (Design Notes)
+
+### Persisting non‑message items (function calls, tool outputs, reasoning tokens, …)
+
+The OpenAI Responses API emits **response items** (reasoning, tool calls, tool results, messages) in sequence. Open WebUI normally stores only the final assistant message. Persisting **all** items in order:
+
+* avoids repeated tool calls / re‑reasoning on regeneration,
+* improves cache hits (saving \~50–75% input tokens),
+* preserves exact model intent.
+
+**Challenge:** Open WebUI’s filter pipeline passes only `messages[] = [{role, content}]`. We need to retain non‑visible items **without** breaking the UI.
+
+### Invisible marker strategy (v2)
+
+Open WebUI ignores Markdown **reference‑style link definitions**, so we embed **invisible markers** in assistant content and store full payloads elsewhere.
+
+* **Persist items** (via `Chats.update_chat_by_id()`) keyed by a **16‑char ID**.
+* **Embed markers** into the assistant message content, e.g.:
+
+  ```
   [openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H]: #
   ```
-  so they are permanently embedded in `body["messages"]["content"]`.
+* **Reconstruct history** later by scanning content for markers, loading items by ID, and re‑assembling the sequence.
 
-3. **Reconstruct Message History:**
-   Later, the manifold detects these invisible comment markers, retrieves the associated stored response items, and accurately reconstructs the full message history—including all hidden intermediate responses—in their original order.
-
-#### Marker Specification
-For future extensibility, each invisible comment marker adheres to this structured format:
+**Marker format**
 
 ```
-\n[openai_responses:v2:<item_type>:<id>[?model=<model_id>&key=value...]]: #\n
+\n[openai_responses:v2:<item_type>:<id>[?model=<model_id>&k=v...]]: #\n
 ```
 
-* `<item_type>` – The exact OpenAI event type (`function_call`, `reasoning`, etc.).
-* `<id>` – A unique 16-character ID used as the database key.
-* Optional metadata via query parameters (e.g., the originating model ID under `model`).
+* `<item_type>`: OpenAI event type (`function_call`, `reasoning`, …)
+* `<id>`: 16‑char item ID
+* optional query params (e.g., `model`)
 
-Markers are enclosed within markdown comment syntax (`[comment]: # (comment content)`) and surrounded by line breaks (`\n`) to ensure invisibility without disrupting markdown formatting or content flow.
+> **Why not embed JSON?**
+> Markers keep the clipboard clean and messages lightweight, while the DB holds the full payloads.
 
-_**Why not embed the entire JSON?**_
-Embedding only a marker avoids leaking large payloads into the clipboard while still giving the backend enough information to find the stored data.
+### Example: function call flow
 
-### Practical Example: Embedding OpenAI Function Calls into Assistant Responses
-
-This example demonstrates how the manifold seamlessly embeds hidden metadata IDs directly into assistant responses, preserving **exact OpenAI response items** to ensure accurate context reconstruction.
-
----
-
-#### 1️⃣ User asks a question:
+**1) User**
 
 ```json
-{
-  "role": "user",
-  "content": "Calculate 34234 multiplied by pi."
-}
+{ "role": "user", "content": "Calculate 34234 multiplied by pi." }
 ```
 
----
-
-#### 2️⃣ OpenAI initiates a function call:
-
-OpenAI responds with a `function_call` event to invoke a calculator tool:
+**2) OpenAI emits a function call**
 
 ```json
 {
@@ -242,62 +250,42 @@ OpenAI responds with a `function_call` event to invoke a calculator tool:
 }
 ```
 
-* We persist the payload in the chat db using a unquie identifier.
+* Persist with a unique 16‑char ID:
 
 ```json
 "01HX4Y2VW5VR2Z2H": {
   "model": "gpt-4o",
   "created_at": 1718073601,
-  "payload": {
-    "type": "function_call",
-    "id": "fc_684a191491048192a17c7b648432dbf30c824fb282e7959d",
-    "call_id": "call_040gVKjMoMqU34KOKPZZPwql",
-    "name": "calculator",
-    "arguments": "{\"expression\":\"34234*pi\"}",
-    "status": "completed"
-  },
+  "payload": { "type": "function_call", "...": "..." },
   "message_id": "msg_9fz4qx7e"
 }
 ```
 
-* We immediately yield `[openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H] #` so the marker is permanently embedded into `body["messages"]["content"]`.
-
----
-
-#### 3️⃣ Tool returns the function call output:
-
-Gather tool result, persist to DB and yield another invisible marker (similar to previous step)
-
----
-
-#### 4️⃣ Assistant provides the visible response:
-
-Finally, the assistant sends the human-readable message:
+* Emit an invisible marker:
 
 ```
-"34234 multiplied by π equals approximately 107549.28."
+[openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H]: #
 ```
 
-* We stream (yield) it.
+**3) Tool result**
 
----
+* Persist output, emit a second marker (same pattern).
 
-#### 📌 **Final Stream (Invisible markers + Response)**:
+**4) Assistant (visible)**
 
 ```
+"34234 multiplied by π ≈ 107,549.28."
+```
 
+**Final stream (markers + visible text)**
+
+```
 [openai_responses:v2:function_call:01HX4Y2VW5VR2Z2H?model=openai_responses.gpt-4o]: #
-
 [openai_responses:v2:function_call_output:01HX4Y2VW6B091XE?model=openai_responses.gpt-4o]: #
-
 The result of \(34234 \times \pi\) is approximately 107,549.28.
 ```
 
-*(Invisible markers precede the visible text in this example however OpenAI can have additional tool calls or reasoning at any point.)*
-
----
-
-#### 📦 **Final Chat DB Record**:
+**Example Chat DB**
 
 ```json
 {
@@ -402,5 +390,10 @@ The result of \(34234 \times \pi\) is approximately 107,549.28.
 }
 ```
 
-**Pro Tip**
-You can inspect the DB chat item directly in your browser by opening **Developer Tools** and examining the POST request for a chat in the **Network** tab.
+> **Tip:** Open browser **DevTools ▸ Network**, open the chat POST, and inspect the stored chat object.
+
+---
+
+## Troubleshooting / FAQ
+
+**Coming soon**
