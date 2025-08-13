@@ -689,7 +689,7 @@ class Pipe:
         
         # Add Open WebUI Tools (if any) to the ResponsesBody.
         # TODO: Also detect body['tools'] and merge them with __tools__.  This would allow users to pass tools in the request body from filters, etc.
-        if __tools__:
+        if __tools__ and model_family in FEATURE_SUPPORT["function_calling"]:
             responses_body.tools = ResponsesBody.transform_tools(
                 tools = __tools__,
                 strict = True
@@ -730,13 +730,6 @@ class Pipe:
                     level="info"
                 )
                 update_openwebui_model_param(openwebui_model_id, "function_calling", "native")
-            else:
-                await self._emit_error(
-                    __event_emitter__,
-                    f"The selected model '{responses_body.model}' does not support tools. "
-                    f"Disable tools or choose a supported model (e.g., {', '.join(FEATURE_SUPPORT['function_calling'])})."
-                )
-                return
 
             
         # Enable reasoning summary if enabled and supported
