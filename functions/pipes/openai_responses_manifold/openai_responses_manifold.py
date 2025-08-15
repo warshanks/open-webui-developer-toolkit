@@ -661,7 +661,7 @@ class Pipe:
 
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
-            prompt_cache_key=user_identifier,
+            user=user_identifier,
             service_tier=valves.SERVICE_TIER,
             **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
         )
