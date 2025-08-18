@@ -717,19 +717,25 @@ class Pipe:
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
-        if __tools__ and (
-            (__metadata__.get("params", {}) or {}).get("function_calling") # New location as of v0.6.20
-            or __metadata__.get("function_calling") # Old location pre v0.6.20
-        ) != "native":
-            supports_function_calling = model_family in FEATURE_SUPPORT["function_calling"]
+        if __tools__:
+            model = Models.get_model_by_id(openwebui_model_id)
+            if model:
+                params = dict(model.params or {})
+                if params.get("function_calling") != "native":
+                    supports_function_calling = model_family in FEATURE_SUPPORT["function_calling"]
 
-            if supports_function_calling:
-                await self._emit_notification(
-                    __event_emitter__,
-                    content=f"Enabling native function calling for model: {responses_body.model}. Please re-run your query.",
-                    level="info"
-                )
-                update_openwebui_model_param(openwebui_model_id, "function_calling", "native")
+                    if supports_function_calling:
+                        await self._emit_notification(
+                            __event_emitter__,
+                            content=f"Enabling native function calling for model: {openwebui_model_id}. Please re-run your query.",
+                            level="info"
+                        )
+
+                        form_data = model.model_dump()
+                        form_data["params"] = params
+                        form_data["params"]["function_calling"] = "native"
+                        form = ModelForm(**form_data)
+                        Models.update_model_by_id(openwebui_model_id, form)
 
             
         # Enable reasoning summary if enabled and supported
@@ -1957,28 +1963,6 @@ def merge_usage_stats(total, new):
             # Skip or explicitly set non-numeric values
             total[k] = v if v is not None else total.get(k, 0)
     return total
-
-def update_openwebui_model_param(openwebui_model_id: str, field: str, value: Any):
-    """Update a model's parameter when the stored value differs.
-
-    :param openwebui_model_id: Identifier of the model to update.
-    :param field: Parameter field name to modify.
-    :param value: New value to store in ``field``.
-    :return: ``None``
-    """
-    model = Models.get_model_by_id(openwebui_model_id)
-    if not model:
-        return
-
-    form_data = model.model_dump()
-    form_data["params"] = dict(model.params or {})
-    if form_data["params"].get(field) == value:
-        return
-
-    form_data["params"][field] = value
-
-    form = ModelForm(**form_data)
-    Models.update_model_by_id(openwebui_model_id, form)
 
 
 def wrap_code_block(text: str, language: str = "python") -> str:
