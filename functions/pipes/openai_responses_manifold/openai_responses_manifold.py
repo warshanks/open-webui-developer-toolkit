@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.28
+version: 0.8.29
 license: MIT
 """
 
@@ -153,76 +153,185 @@ class ResponsesBody(BaseModel):
         strict: bool = False,
     ) -> list[dict]:
         """
-        Canonicalise any mixture of tool specs to the OpenAI Responses-API list.
+        Normalize a set of tool definitions into the format the OpenAI Responses API expects.
 
-        • Accepts a WebUI __tools__ *dict* or a plain *list*.
-        • Flattens only:
-            - __tools__ entries  {"spec": {...}}
-            - Chat-Completions wrappers {"type":"function","function": {...}}
-        • Leaves every other tool (e.g. {"type":"web_search", …}) untouched.
-        • Duplicate keys:
-            - functions   → by *name*
-            - non-functions→ by *type*
-        later items win.
+        Why this exists
+        ---------------
+        OpenAI's API accepts a list of “tools” (functions it can call). Depending on where
+        they come from in Open WebUI, they can have different shapes:
+
+        • __tools__ looks like:                                          {"spec": {...}}
+        • body["tools"] looks like:                                      {"type":"function","function": {...}}
+        • Other tool types (e.g. web_search) may be injected by filters  {"type":"web_search",...}
+
+        This helper standardizes function tools into the common OpenAI shape and leaves
+        non-function tools untouched so filters can pass through additional capabilities.
+
+        Strict mode (strict=True)
+        -------------------------
+        OpenAI “strict” function-calling uses Structured Outputs under the hood. To make a tool
+        schema “strict”, three minimal edits are required:
+
+        1) All properties must appear in "required".
+        2) Optional params must be encoded as nullable:
+            "type": "string"  →  "type": ["string","null"]
+            (We determine optionality from the ORIGINAL 'required' set on each object.)
+        3) Every object in the parameters must forbid extra keys:
+            "additionalProperties": false
+            (This applies to the root AND all nested objects, including array item objects.)
+
+        Notes:
+        • Some generators encode Optional[T] as:
+                "anyOf": [ { "type": "T" }, { "type": "null" } ]
+            We collapse only that simple pattern into: "type": ["T","null"].
+
+        Related Links:
+        https://platform.openai.com/docs/guides/function-calling#function-calling-with-structured-outputs
+        https://platform.openai.com/docs/guides/structured-outputs
         """
         if not tools:
             return []
 
-        # 1. normalise input to an iterable of dicts -----------------------
+        # 1) Normalise input to an iterable of dicts ---------------------------
         iterable = tools.values() if isinstance(tools, dict) else tools
-
         native, converted = [], []
 
         for item in iterable:
             if not isinstance(item, dict):
                 continue
 
-            # a) __tools__ entry
-            if "spec" in item:
+            # a) __tools__ entry → flatten to function spec
+            if "spec" in item and isinstance(item["spec"], dict):
                 spec = item["spec"]
-                if isinstance(spec, dict):
-                    converted.append({
-                        "type":        "function",
-                        "name":        spec.get("name", ""),
-                        "description": spec.get("description", ""),
-                        "parameters":  spec.get("parameters", {}),
-                    })
+                converted.append({
+                    "type":        "function",
+                    "name":        spec.get("name", ""),
+                    "description": spec.get("description", "") or spec.get("name", ""),
+                    "parameters":  spec.get("parameters", {}) or {},
+                })
                 continue
 
-            # b) Chat-Completions wrapper
-            if item.get("type") == "function" and "function" in item:
+            # b) Chat-Completions wrapper → flatten to function spec
+            if item.get("type") == "function" and isinstance(item.get("function"), dict):
                 fn = item["function"]
-                if isinstance(fn, dict):
-                    converted.append({
-                        "type":        "function",
-                        "name":        fn.get("name", ""),
-                        "description": fn.get("description", ""),
-                        "parameters":  fn.get("parameters", {}),
-                    })
+                converted.append({
+                    "type":        "function",
+                    "name":        fn.get("name", ""),
+                    "description": fn.get("description", "") or fn.get("name", ""),
+                    "parameters":  fn.get("parameters", {}) or {},
+                })
                 continue
 
             # c) Anything else (including web_search) → keep verbatim
             native.append(dict(item))
 
-        # 2. strict-mode hardening for the bits we just converted ----------
+        # 2) Strict-mode hardening (minimal, handles nested objects) -----------
         if strict:
             for tool in converted:
                 params = tool.setdefault("parameters", {})
-                props  = params.setdefault("properties", {})
-                # every key must be present
-                params["required"] = list(props)
-                # forbid extra keys
-                params["additionalProperties"] = False
-                # mark the tool schema as strict
+                if not isinstance(params, dict):
+                    continue
+
+                # Ensure properties is a dict; capture for iteration
+                props = params.get("properties") or {}
+                if not isinstance(props, dict):
+                    props = {}
+                params["properties"] = props
+
+                # Walk all objects under parameters (root and nested). For each object:
+                #  - compute its ORIGINAL required set (before edits),
+                #  - collapse simple Optional anyOf -> ["T","null"],
+                #  - add "null" to types for props not originally required,
+                #  - set required = all property keys,
+                #  - set additionalProperties = false,
+                #  - push nested schemas (properties, items, anyOf branches) onto the stack.
+                stack = [params]
+                while stack:
+                    node = stack.pop()
+                    if not isinstance(node, dict):
+                        continue
+
+                    # Treat as an object if it has a properties map (with or without type="object")
+                    node_props = node.get("properties")
+                    if isinstance(node_props, dict):
+                        original_required_local = set(node.get("required") or [])
+
+                        for pname, pschema in list(node_props.items()):
+                            if not isinstance(pschema, dict):
+                                continue
+
+                            # Collapse simple Optional[T] when represented as anyOf([{type:T},{type:"null"}])
+                            if "anyOf" in pschema and isinstance(pschema["anyOf"], list):
+                                non_null_types = []
+                                base_branch = None
+                                saw_null = False
+                                for branch in pschema["anyOf"]:
+                                    if not isinstance(branch, dict):
+                                        continue
+                                    t = branch.get("type")
+                                    if t == "null":
+                                        saw_null = True
+                                    elif t is not None:
+                                        non_null_types.append(t)
+                                        if base_branch is None:
+                                            base_branch = branch
+                                # Only collapse the simple case: exactly one non-null + null present
+                                if saw_null and base_branch is not None and len(non_null_types) == 1:
+                                    # Preserve extra keywords from the non-null branch if missing
+                                    for k, v in base_branch.items():
+                                        if k == "type":
+                                            continue
+                                        if k not in pschema:
+                                            pschema[k] = v
+                                    pschema.pop("anyOf", None)
+                                    base_t = base_branch.get("type")
+                                    if isinstance(base_t, str):
+                                        pschema["type"] = [base_t, "null"]
+                                    elif isinstance(base_t, list):
+                                        pschema["type"] = base_t if "null" in base_t else base_t + ["null"]
+
+                            # If this property was optional originally, ensure its type allows null
+                            if pname not in original_required_local:
+                                t = pschema.get("type")
+                                if isinstance(t, str):
+                                    pschema["type"] = ["null"] if t == "null" else [t, "null"]
+                                elif isinstance(t, list):
+                                    if "null" not in t:
+                                        pschema["type"] = t + ["null"]
+                                # If there's no 'type' (e.g. rare $ref case), we leave as-is.
+
+                            # Push nested schemas for further processing
+                            stack.append(pschema)
+
+                        # For this object node: enforce strict expectations
+                        node["required"] = list(node_props.keys())   # all props required at this level
+                        node["additionalProperties"] = False         # forbid extra keys here
+
+                    # If this is an array, descend into items
+                    items = node.get("items")
+                    if isinstance(items, dict):
+                        stack.append(items)
+
+                    # If this node has anyOf branches (e.g., nested unions), descend into each branch
+                    anyof = node.get("anyOf")
+                    if isinstance(anyof, list):
+                        for branch in anyof:
+                            if isinstance(branch, dict):
+                                stack.append(branch)
+
+                # Mark the top-level tool as strict
                 tool["strict"] = True
 
-        # 3. deduplicate ---------------------------------------------------
+        # 3) Deduplicate by name/type (later wins) -----------------------------
         canonical: dict[str, dict] = {}
-        for t in native + converted:                     # later wins
-            key = t["name"] if t.get("type") == "function" else t["type"]
-            canonical[key] = t
+        for t in native + converted:
+            key = t["name"] if t.get("type") == "function" else t.get("type")
+            if key:
+                canonical[key] = t
 
         return list(canonical.values())
+
+
 
     # -----------------------------------------------------------------------
     # Helper: turn the JSON string into valid MCP tool dicts
