@@ -1,9 +1,14 @@
-# ------------------------------------------------------------
-# MicrosoftAuth — lean Graph helper (v3)
-# - Reuses Open WebUI's Azure SSO, captures refresh_token, stores as encrypted __Host- cookie.
-# - No DB/Redis. No UA binding. Simple, readable, secure.
-# - Optionally rotates refresh_token cookie when the token endpoint returns a new one.
-# ------------------------------------------------------------
+"""
+title: Microsoft 365
+id: microsoft_365
+author: Justin Kropp
+author_url: https://github.com/jrkropp
+git_url: https://github.com/jrkropp/open-webui-developer-toolkit/tree/development/tools/microsoft_365_tool
+description: Access your Microsoft 365 files, emails, calendar, and Teams directly from Open WebUI.
+version: 0.1.0
+license: MIT
+"""
+
 import os
 import json
 import base64
@@ -17,7 +22,6 @@ class Tools:
     def __init__(self):
         MicrosoftAuth.install()  # idempotent
 
-    # If your tool entrypoint can access a response object, pass it so the refresh cookie can rotate.
     async def list_recent_documents(self, __request__, __response__=None, limit: int = 20, only_files: bool = True) -> str:
         try:
             data = await MicrosoftAuth.graph_get(__request__, "/me/drive/recent", params={"$top": max(1, min(int(limit), 200))}, response=__response__)
