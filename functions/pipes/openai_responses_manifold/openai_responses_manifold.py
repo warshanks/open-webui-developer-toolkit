@@ -209,13 +209,11 @@ class ResponsesBody(BaseModel):
             for tool in converted:
                 params = tool.setdefault("parameters", {})
                 props  = params.setdefault("properties", {})
+                # every key must be present
                 params["required"] = list(props)
+                # forbid extra keys
                 params["additionalProperties"] = False
-                for schema in props.values():
-                    t = schema.get("type")
-                    schema["type"] = [t, "null"] if isinstance(t, str) else (
-                        t + ["null"] if isinstance(t, list) and "null" not in t else t
-                    )
+                # mark the tool schema as strict
                 tool["strict"] = True
 
         # 3. deduplicate ---------------------------------------------------
