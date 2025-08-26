@@ -74,7 +74,7 @@ class Filter:
 
         # --- Tell the model to search (forced vs. gentle nudge)
         if body.get("model") in SUPPORT_TOOL_CHOICE_PARAMETER:
-            body["tool_choice"] = {"type": "web_search_preview"}
+            body["tool_choice"] = {"type": "web_search"}
         else:
             body.setdefault("messages", []).append(
                 {
