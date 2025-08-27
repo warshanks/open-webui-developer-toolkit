@@ -162,7 +162,7 @@ class ResponsesBody(BaseModel):
 
         • __tools__ looks like:                                          {"spec": {...}}
         • body["tools"] looks like:                                      {"type":"function","function": {...}}
-        • Other tool types (e.g. web_search) may be injected by filters  {"type":"web_search",...}
+        • Other tool types (e.g. web_search_preview) may be injected by filters  {"type":"web_search_preview",...}
 
         This helper standardizes function tools into the common OpenAI shape and leaves
         non-function tools untouched so filters can pass through additional capabilities.
@@ -222,7 +222,7 @@ class ResponsesBody(BaseModel):
                 })
                 continue
 
-            # c) Anything else (including web_search) → keep verbatim
+            # c) Anything else (including web_search_preview) → keep verbatim
             native.append(dict(item))
 
         # 2) Strict-mode hardening (minimal, handles nested objects) -----------
@@ -645,7 +645,7 @@ class Pipe:
         # 6) Web search
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -794,16 +794,16 @@ class Pipe:
                 strict=True,
             )
 
-        # Add web_search tool only if supported, enabled, and effort != minimal
+        # Add web_search_preview tool only if supported, enabled, and effort != minimal
         # Noted that web search doesn't seem to work when effort = minimal.
         if (
             model_family in FEATURE_SUPPORT["web_search_tool"]
-            and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False))
+            and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search_preview", False))
             and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
         ):
             responses_body.tools = responses_body.tools or []
             responses_body.tools.append({
-                "type": "web_search",
+                "type": "web_search_preview",
                 "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
                 **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}),
             })
