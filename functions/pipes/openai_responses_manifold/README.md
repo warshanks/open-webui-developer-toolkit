@@ -61,6 +61,7 @@ Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt5-model-s
 | Truncation control             | ✅ GA           | 2025‑06‑10   | Valve `TRUNCATION`: `auto` or `disabled`. Honors per‑model `max_completion_tokens`.                                                                |
 | Custom param pass‑through      | ✅ GA           | 2025‑06‑14   | Open WebUI Custom Parameters → OpenAI fields; `max_tokens` → `max_output_tokens`.                                                                  |
 | Regenerate → `text.verbosity`  | ✅ GA           | 2025‑08‑11   | “Add Details”/“More Concise” map to `high`/`low` on GPT‑5 family.                                                                                  |
+| Filter-injected tools          | ✅ GA           | 2025‑08‑28   | Filters append OpenAI tool specs via `extra_tools`; manifold merges and dedupes.                                                                   |
 | Deep Search support            | 🔄 In progress | 2025‑06‑29   | o3‑deep‑research / o4‑mini‑deep‑research.                                                                                                          |
 | Image input (vision)           | 🔄 In progress | 2025‑06‑03   | Pending release.                                                                                                                                   |
 | Image generation tool          | 🕒 Backlog     | 2025‑06‑03   | Multi‑turn editing planned.                                                                                                                        |
@@ -103,6 +104,23 @@ Now supports OpenAI’s GPT‑5 family in the API — [Learn more](#gpt5-model-s
 * **Remote MCP servers (experimental)**
   Set `REMOTE_MCP_SERVERS_JSON` to a JSON object or array describing [Remote MCP](https://platform.openai.com/docs/guides/tools-remote-mcp) servers.
   Appends these servers to each request’s `tools`. Supports `require_approval` and tool caching.
+
+### Filter-injected tools (`extra_tools`)
+
+Filters can inject OpenAI-compatible tools by writing to `body["extra_tools"]`. The manifold merges registry tools, valve-generated tools, and `extra_tools` once, deduplicating by type/name. `body["tools"]` is ignored.
+
+```python
+body.setdefault("extra_tools", []).append({
+    "type": "function",
+    "name": "weather_lookup",
+    "description": "Get current weather by city.",
+    "parameters": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
+})
+```
 
 ---
 

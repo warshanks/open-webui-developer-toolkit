@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.31
+version: 0.9.1
 license: MIT
 """
 
@@ -147,191 +147,36 @@ class ResponsesBody(BaseModel):
         extra = "allow" # Allow additional OpenAI parameters automatically (future-proofing)
 
     @staticmethod
-    def transform_tools(
-        tools: dict | list | None = None,
-        *,
-        strict: bool = False,
-    ) -> list[dict]:
+    def transform_owui_tools(owui_tools: Dict[str, dict] | None, *, strict: bool = False) -> List[dict]:
         """
-        Normalize a set of tool definitions into the format the OpenAI Responses API expects.
+        Convert Open WebUI __tools__ registry (dict of entries with {"spec": {...}}) into
+        OpenAI Responses-API tool specs: {"type": "function", "name", ...}.
 
-        Why this exists
-        ---------------
-        OpenAI's API accepts a list of “tools” (functions it can call). Depending on where
-        they come from in Open WebUI, they can have different shapes:
-
-        • __tools__ looks like:                                          {"spec": {...}}
-        • body["tools"] looks like:                                      {"type":"function","function": {...}}
-        • Other tool types (e.g. web_search_preview) may be injected by filters  {"type":"web_search_preview",...}
-
-        This helper standardizes function tools into the common OpenAI shape and leaves
-        non-function tools untouched so filters can pass through additional capabilities.
-
-        Strict mode (strict=True)
-        -------------------------
-        OpenAI “strict” function-calling uses Structured Outputs under the hood. To make a tool
-        schema “strict”, three minimal edits are required:
-
-        1) All properties must appear in "required".
-        2) Optional params must be encoded as nullable:
-            "type": "string"  →  "type": ["string","null"]
-            (We determine optionality from the ORIGINAL 'required' set on each object.)
-        3) Every object in the parameters must forbid extra keys:
-            "additionalProperties": false
-            (This applies to the root AND all nested objects, including array item objects.)
-
-        Notes:
-        • Some generators encode Optional[T] as:
-                "anyOf": [ { "type": "T" }, { "type": "null" } ]
-            We collapse only that simple pattern into: "type": ["T","null"].
-
-        Related Links:
-        https://platform.openai.com/docs/guides/function-calling#function-calling-with-structured-outputs
-        https://platform.openai.com/docs/guides/structured-outputs
         """
-        if not tools:
+        if not owui_tools:
             return []
 
-        # 1) Normalise input to an iterable of dicts ---------------------------
-        iterable = tools.values() if isinstance(tools, dict) else tools
-        native, converted = [], []
+        tools: List[dict] = []
+        for item in owui_tools.values():
+            spec = item.get("spec") or {}
+            name = spec.get("name")
+            if not name:
+                continue  # skip malformed entries
 
-        for item in iterable:
-            if not isinstance(item, dict):
-                continue
+            params = spec.get("parameters") or {"type": "object", "properties": {}}
 
-            # a) __tools__ entry → flatten to function spec
-            if "spec" in item and isinstance(item["spec"], dict):
-                spec = item["spec"]
-                converted.append({
-                    "type":        "function",
-                    "name":        spec.get("name", ""),
-                    "description": spec.get("description", "") or spec.get("name", ""),
-                    "parameters":  spec.get("parameters", {}) or {},
-                })
-                continue
-
-            # b) Chat-Completions wrapper → flatten to function spec
-            if item.get("type") == "function" and isinstance(item.get("function"), dict):
-                fn = item["function"]
-                converted.append({
-                    "type":        "function",
-                    "name":        fn.get("name", ""),
-                    "description": fn.get("description", "") or fn.get("name", ""),
-                    "parameters":  fn.get("parameters", {}) or {},
-                })
-                continue
-
-            # c) Anything else (including web_search_preview) → keep verbatim
-            native.append(dict(item))
-
-        # 2) Strict-mode hardening (minimal, handles nested objects) -----------
-        if strict:
-            for tool in converted:
-                params = tool.setdefault("parameters", {})
-                if not isinstance(params, dict):
-                    continue
-
-                # Ensure properties is a dict; capture for iteration
-                props = params.get("properties") or {}
-                if not isinstance(props, dict):
-                    props = {}
-                params["properties"] = props
-
-                # Walk all objects under parameters (root and nested). For each object:
-                #  - compute its ORIGINAL required set (before edits),
-                #  - collapse simple Optional anyOf -> ["T","null"],
-                #  - add "null" to types for props not originally required,
-                #  - set required = all property keys,
-                #  - set additionalProperties = false,
-                #  - push nested schemas (properties, items, anyOf branches) onto the stack.
-                stack = [params]
-                while stack:
-                    node = stack.pop()
-                    if not isinstance(node, dict):
-                        continue
-
-                    # Treat as an object if it has a properties map (with or without type="object")
-                    node_props = node.get("properties")
-                    if isinstance(node_props, dict):
-                        original_required_local = set(node.get("required") or [])
-
-                        for pname, pschema in list(node_props.items()):
-                            if not isinstance(pschema, dict):
-                                continue
-
-                            # Collapse simple Optional[T] when represented as anyOf([{type:T},{type:"null"}])
-                            if "anyOf" in pschema and isinstance(pschema["anyOf"], list):
-                                non_null_types = []
-                                base_branch = None
-                                saw_null = False
-                                for branch in pschema["anyOf"]:
-                                    if not isinstance(branch, dict):
-                                        continue
-                                    t = branch.get("type")
-                                    if t == "null":
-                                        saw_null = True
-                                    elif t is not None:
-                                        non_null_types.append(t)
-                                        if base_branch is None:
-                                            base_branch = branch
-                                # Only collapse the simple case: exactly one non-null + null present
-                                if saw_null and base_branch is not None and len(non_null_types) == 1:
-                                    # Preserve extra keywords from the non-null branch if missing
-                                    for k, v in base_branch.items():
-                                        if k == "type":
-                                            continue
-                                        if k not in pschema:
-                                            pschema[k] = v
-                                    pschema.pop("anyOf", None)
-                                    base_t = base_branch.get("type")
-                                    if isinstance(base_t, str):
-                                        pschema["type"] = [base_t, "null"]
-                                    elif isinstance(base_t, list):
-                                        pschema["type"] = base_t if "null" in base_t else base_t + ["null"]
-
-                            # If this property was optional originally, ensure its type allows null
-                            if pname not in original_required_local:
-                                t = pschema.get("type")
-                                if isinstance(t, str):
-                                    pschema["type"] = ["null"] if t == "null" else [t, "null"]
-                                elif isinstance(t, list):
-                                    if "null" not in t:
-                                        pschema["type"] = t + ["null"]
-                                # If there's no 'type' (e.g. rare $ref case), we leave as-is.
-
-                            # Push nested schemas for further processing
-                            stack.append(pschema)
-
-                        # For this object node: enforce strict expectations
-                        node["required"] = list(node_props.keys())   # all props required at this level
-                        node["additionalProperties"] = False         # forbid extra keys here
-
-                    # If this is an array, descend into items
-                    items = node.get("items")
-                    if isinstance(items, dict):
-                        stack.append(items)
-
-                    # If this node has anyOf branches (e.g., nested unions), descend into each branch
-                    anyof = node.get("anyOf")
-                    if isinstance(anyof, list):
-                        for branch in anyof:
-                            if isinstance(branch, dict):
-                                stack.append(branch)
-
-                # Mark the top-level tool as strict
+            tool = {
+                "type": "function",
+                "name": name,
+                "description": spec.get("description") or name,
+                "parameters": _strictify_schema(params) if strict else params,
+            }
+            if strict:
                 tool["strict"] = True
 
-        # 3) Deduplicate by name/type (later wins) -----------------------------
-        canonical: dict[str, dict] = {}
-        for t in native + converted:
-            key = t["name"] if t.get("type") == "function" else t.get("type")
-            if key:
-                canonical[key] = t
+            tools.append(tool)
 
-        return list(canonical.values())
-
-
+        return tools
 
     # -----------------------------------------------------------------------
     # Helper: turn the JSON string into valid MCP tool dicts
@@ -532,7 +377,11 @@ class ResponsesBody(BaseModel):
             "functions", # Deprecated in favor of 'tools'.
 
             # Fields that are dropped and manually handled in step 2.
-            "reasoning_effort", "max_tokens"
+            "reasoning_effort", "max_tokens",
+
+            # Fields that are dropped and manually handled later in the pipe()
+            "tools",
+            "extra_tools" # Not a real OpenAI parm,. Upstream filters may use it to add tools. The are appended to body["tools"] later in the pipe()
         }
         sanitized_params = {}
         for key, value in completions_dict.items():
@@ -622,6 +471,13 @@ class Pipe:
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
+        )
+        ENABLE_STRICT_TOOL_CALLING: bool = Field(
+            default=True,
+            description=(
+                "When True, converts Open WebUI registry tools to strict JSON Schema for OpenAI tools, "
+                "enforcing explicit types, required fields, and disallowing additionalProperties."
+            ),
         )
         MAX_TOOL_CALLS: Optional[int] = Field(
             default=None,
@@ -786,37 +642,50 @@ class Pipe:
         if inspect.isawaitable(__tools__):
             __tools__ = await __tools__
 
-        # Add Open WebUI Tools (if any) to the ResponsesBody.
-        # TODO: Also detect body['tools'] and merge them with __tools__.  This would allow users to pass tools in the request body from filters, etc.
-        if __tools__ and model_family in FEATURE_SUPPORT["function_calling"]:
-            responses_body.tools = ResponsesBody.transform_tools(
-                tools=__tools__,
-                strict=True,
-            )
+        # ---------- TOOL ASSEMBLY (single merge point) ----------
+        if model_family in FEATURE_SUPPORT["function_calling"]:
+            tools: List[Dict[str, Any]] = []
 
-        # Add web_search_preview tool only if supported, enabled, and effort != minimal
-        # Noted that web search doesn't seem to work when effort = minimal.
-        if (
-            model_family in FEATURE_SUPPORT["web_search_tool"]
-            and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search_preview", False))
-            and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
-        ):
-            responses_body.tools = responses_body.tools or []
-            responses_body.tools.append({
-                "type": "web_search_preview",
-                "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
-                **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}),
-            })
+            # 1) Baseline: normalize Open WebUI registry tools (__tools__)
+            if __tools__:
+                tools.extend(
+                    ResponsesBody.transform_owui_tools(
+                        __tools__, strict=valves.ENABLE_STRICT_TOOL_CALLING
+                    )
+                )
 
-        # Append remote MCP servers (experimental)
-        if valves.REMOTE_MCP_SERVERS_JSON:
-            mcp_tools = ResponsesBody._build_mcp_tools(valves.REMOTE_MCP_SERVERS_JSON)
-            if mcp_tools:
-                responses_body.tools = (responses_body.tools or []) + mcp_tools
+            # 2) Valves: built-in auto tools (web_search_preview, MCP)
+            if (
+                model_family in FEATURE_SUPPORT["web_search_tool"]
+                and (
+                    valves.ENABLE_WEB_SEARCH_TOOL
+                    or features.get("web_search_preview", False) # For backwards compatibility with old web_search_toggle_filter.py which enabled web search via __metadata__
+                )
+                and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
+            ):
+                web_search_tool = {
+                    "type": "web_search_preview",
+                    "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
+                }
+                if valves.WEB_SEARCH_USER_LOCATION:
+                    web_search_tool["user_location"] = json.loads(valves.WEB_SEARCH_USER_LOCATION)
+                tools.append(web_search_tool)
+
+            if valves.REMOTE_MCP_SERVERS_JSON:
+                tools.extend(ResponsesBody._build_mcp_tools(valves.REMOTE_MCP_SERVERS_JSON))
+
+            # 3) Filters: extra_tools (already OpenAI schema) – append as-is if present
+            extra_tools = getattr(completions_body, "extra_tools", None)
+            if isinstance(extra_tools, list) and extra_tools:
+                tools.extend(extra_tools)
+
+            # 4) Deduplicate (later wins) and assign
+            responses_body.tools = _dedupe_tools(tools) or None
+        # --------------------------------------------------------
 
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
-        if __tools__:
+        if responses_body.tools:
             model = Models.get_model_by_id(openwebui_model_id)
             if model:
                 params = dict(model.params or {})
@@ -880,8 +749,14 @@ class Pipe:
 
                     self.logger.debug("Set text.verbosity=%s based on regenerate directive '%s'",verbosity_value, last_user_text)
 
+        # Log final tool set
+        self.logger.debug("Final tools: %s", json.dumps(responses_body.tools or [], ensure_ascii=False))
+
         # Log the transformed request body
-        self.logger.debug("Transformed ResponsesBody: %s", json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False))
+        self.logger.debug(
+            "Transformed ResponsesBody: %s",
+            json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False),
+        )
             
         # Send to OpenAI Responses API
         if responses_body.stream:
@@ -1760,28 +1635,54 @@ class Pipe:
         return global_valves.model_copy(update=update)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Utility Classes (Shared utilities)
+# 5. Utility & Helper Layer (organized, consistent docstrings)
+#    NOTE: Logic is unchanged. Only docstrings/comments/sectioning were improved.
 # ─────────────────────────────────────────────────────────────────────────────
-# Support classes used across the pipe implementation
+
+# 5.1 Logging & Diagnostics
+# -------------------------
+
 # In-memory store for debug logs keyed by message ID
 logs_by_msg_id: dict[str, list[str]] = defaultdict(list)
+
 # Context variable tracking the current message being processed
 current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
+
 class SessionLogger:
+    """Per-request logger that captures console output and an in-memory log buffer.
+
+    The logger is bound to a logical *session* via contextvars so that log lines
+    can be collected and emitted (e.g., as citations) for the current request.
+
+    Attributes:
+        session_id: ContextVar storing the current logical session ID.
+        log_level:  ContextVar storing the minimum level to emit for this session.
+        logs:       Map of session_id -> fixed-size deque of formatted log strings.
+    """
+
     session_id = ContextVar("session_id", default=None)
     log_level = ContextVar("log_level", default=logging.INFO)
     logs = defaultdict(lambda: deque(maxlen=2000))
 
     @classmethod
     def get_logger(cls, name=__name__):
-        """Return a logger wired to the current ``SessionLogger`` context."""
+        """Create a logger wired to the current SessionLogger context.
+
+        Args:
+            name: Logger name; defaults to the current module name.
+
+        Returns:
+            logging.Logger: A configured logger that writes both to stdout and
+            the in-memory `SessionLogger.logs` buffer. The buffer is keyed by
+            the current `SessionLogger.session_id`.
+        """
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.filters.clear()
         logger.setLevel(logging.DEBUG)
         logger.propagate = False
 
-        # Single combined filter
+        # Single combined filter: attach session_id and respect per-session level.
         def filter(record):
             record.session_id = cls.session_id.get()
             return record.levelno >= cls.log_level.get()
@@ -1793,7 +1694,7 @@ class SessionLogger:
         console.setFormatter(logging.Formatter("[%(levelname)s] [%(session_id)s] %(message)s"))
         logger.addHandler(console)
 
-        # Memory handler
+        # Memory handler (appends formatted lines into logs[session_id])
         mem = logging.Handler()
         mem.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         mem.emit = lambda r: cls.logs[r.session_id].append(mem.format(r)) if r.session_id else None
@@ -1801,91 +1702,51 @@ class SessionLogger:
 
         return logger
 
+
+# 5.2 UI Status - Expandable progress block helper
+# ------------------------------------------------
+
 class ExpandableStatusIndicator:
-    """
-    Real‑time, **expandable progress log** for chat assistants
-    ========================================================
+    """Maintain a single expandable `<details type="status">` progress block.
 
-    This helper maintains **one** collapsible `<details type="status">` block at
-    the *top* of the assistant’s message.  It lets you incrementally append or
-    edit bullet‑style status lines while automatically re‑emitting the full
-    message to the UI.
+    This helper keeps **one** collapsible status block at the top of the assistant
+    message. You can append top-level bullets and optional sub-bullets, and it
+    will re-render the full assistant message via the provided event emitter.
 
-    ───────────────────────────────
-    Basic example
-    ───────────────────────────────
-    ```python
-    assistant_message = "Let's work step‑by‑step.\n"
+    Thread-safety: **Not** thread-safe; one instance should service one coroutine.
 
-    status = ExpandableStatusIndicator(event_emitter=__event_emitter__)
-
-    assistant_message = await status.add(
-        assistant_message, "Analyzing input"
-    )
-    assistant_message = await status.add(
-        assistant_message, "Retrieving context", "Querying sources…"
-    )
-    assistant_message = await status.update_last_status(
-        assistant_message, new_content="Retrieved 3 documents"
-    )
-    assistant_message = await status.finish(assistant_message)
-    ```
-    Each call *returns* the updated `assistant_message`; always keep the latest
-    string for further processing or output.
-
-    ───────────────────────────────
-    Public API
-    ───────────────────────────────
-    ▸ `add(assistant_message, title, content=None, *, emit=True) -> str`
-        Add a new top‑level bullet; if *title* matches the last bullet,
-        *content* becomes a sub‑bullet instead.
-
-    ▸ `update_last_status(assistant_message, *, new_title=None,
-                          new_content=None, emit=True) -> str`
-        Replace the last bullet’s title and/or its sub‑bullets.
-
-    ▸ `finish(assistant_message, *, emit=True) -> str`
-        Append “Finished in X s”, set `done="true"` and freeze the instance.
-        Subsequent `add`/`update_last_status` calls raise `RuntimeError`.
-
-    ▸ `reset()`
-        Clear bullets and restart the internal timer.
-
-    Constructor
-    ───────────
-    `ExpandableStatusIndicator(event_emitter=None, *, expanded=False)`
-
-    * `event_emitter` must be an **async** callable accepting
-      `{"type": "chat:message", "data": {"content": <str>}}`.
-      When supplied (and `emit=True`), every status change is pushed to the UI.
-    * `expanded` (default **False**) starts the details block open when true.
-
-    Design guarantees
-    ─────────────────
-    • The status block is always the **first** element in the message.  
-    • Only **one** status block is ever inserted/updated (identified by the
-      `type="status"` attribute).  
-    • Thread‑unsafe on purpose – one instance should service one coroutine.
-
+    Example:
+        ```python
+        status = ExpandableStatusIndicator(event_emitter=__event_emitter__)
+        msg = await status.add("", "Analyzing input")
+        msg = await status.add(msg, "Retrieving context", "Querying sources…")
+        msg = await status.update_last_status(msg, new_content="Retrieved 3 documents")
+        msg = await status.finish(msg)
+        ```
     """
 
     # Regex reused for fast replacement of the existing block.
-    _BLOCK_RE = re.compile(
-        r"<details\s+type=\"status\".*?</details>", re.DOTALL | re.IGNORECASE
-    )
+    _BLOCK_RE = re.compile(r"<details\s+type=\"status\".*?</details>", re.DOTALL | re.IGNORECASE)
 
     def __init__(
         self,
         event_emitter: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     ) -> None:
+        """Initialize a status indicator.
+
+        Args:
+            event_emitter: Async callable to push updated assistant text:
+                `{"type": "chat:message", "data": {"content": <str>}}`.
+        """
         self._event_emitter = event_emitter
         self._items: List[Tuple[str, List[str]]] = []
         self._started = time.perf_counter()
         self._done: bool = False
 
-    # --------------------------------------------------------------------- #
-    # Public async API                                                      #
-    # --------------------------------------------------------------------- #
+    # ------------------------------------------------------------------ #
+    # Public async API                                                   #
+    # ------------------------------------------------------------------ #
+
     async def add(
         self,
         assistant_message: str,
@@ -1894,7 +1755,23 @@ class ExpandableStatusIndicator:
         *,
         emit: bool = True,
     ) -> str:
-        """Append a new status bullet (or extend the last one if title repeats)."""
+        """Append a bullet (and optional sub-bullet) to the status block.
+
+        If the last bullet has the same title, `status_content` is appended as
+        a sub-bullet under that title.
+
+        Args:
+            assistant_message: Current assistant message string to update.
+            status_title:      Top-level bullet title.
+            status_content:    Optional sub-bullet text.
+            emit:              If True, immediately emit the updated message.
+
+        Returns:
+            str: Updated assistant message including the status block.
+
+        Raises:
+            RuntimeError: If the indicator has already been finished.
+        """
         self._assert_not_finished("add")
 
         if not self._items or self._items[-1][0] != status_title:
@@ -1913,13 +1790,24 @@ class ExpandableStatusIndicator:
         new_content: Optional[str] = None,
         emit: bool = True,
     ) -> str:
-        """Replace the most recent status bullet’s title and/or its content."""
+        """Replace the most recent bullet's title and/or its sub-bullets.
+
+        Args:
+            assistant_message: Current assistant message string to update.
+            new_title:         Replacement title for the last bullet.
+            new_content:       Replacement content (single sub-bullet).
+            emit:              If True, immediately emit the updated message.
+
+        Returns:
+            str: Updated assistant message including the status block.
+
+        Raises:
+            RuntimeError: If the indicator has already been finished.
+        """
         self._assert_not_finished("update_last_status")
 
         if not self._items:
-            return await self.add(
-                assistant_message, new_title or "Status", new_content, emit=emit
-            )
+            return await self.add(assistant_message, new_title or "Status", new_content, emit=emit)
 
         title, subs = self._items[-1]
         if new_title:
@@ -1936,6 +1824,15 @@ class ExpandableStatusIndicator:
         *,
         emit: bool = True,
     ) -> str:
+        """Mark the indicator as finished and append a timing footer.
+
+        Args:
+            assistant_message: Current assistant message string to update.
+            emit:              If True, immediately emit the updated message.
+
+        Returns:
+            str: Updated assistant message including the final status block.
+        """
         if self._done:
             return assistant_message
         elapsed = time.perf_counter() - self._started
@@ -1946,13 +1843,29 @@ class ExpandableStatusIndicator:
     # ------------------------------------------------------------------ #
     # Rendering helpers                                                  #
     # ------------------------------------------------------------------ #
+
     def _assert_not_finished(self, method: str) -> None:
+        """Raise if a mutating call is made after `finish()`.
+
+        Args:
+            method: Name of the method being invoked (for error clarity).
+
+        Raises:
+            RuntimeError: If `finish()` has already been called.
+        """
         if self._done:
-            raise RuntimeError(
-                f"Cannot call {method}(): status indicator is already finished."
-            )
+            raise RuntimeError(f"Cannot call {method}(): status indicator is already finished.")
 
     async def _render(self, assistant_message: str, emit: bool) -> str:
+        """Render (or replace) the status block at the top of the message.
+
+        Args:
+            assistant_message: Current assistant message string to update.
+            emit:              If True, immediately emit the updated message.
+
+        Returns:
+            str: Updated assistant message including the status block.
+        """
         block = self._render_status_block()
         full_msg = (
             self._BLOCK_RE.sub(lambda _: block, assistant_message, 1)
@@ -1964,17 +1877,19 @@ class ExpandableStatusIndicator:
         return full_msg
 
     def _render_status_block(self) -> str:
+        """Construct the markdown for the status `<details>` block.
+
+        Returns:
+            str: A `<details type="status">` block with bullets and sub-bullets.
+        """
         lines: List[str] = []
 
         for title, subs in self._items:
-            lines.append(f"- **{title}**")  # top-level bullet
-
+            lines.append(f"- **{title}**")
             for sub in subs:
-                # Indent entire sub-item by 2 spaces; prepend "- " exactly once.
                 sub_lines = sub.splitlines()
                 if sub_lines:
-                    lines.append(f"  - {sub_lines[0]}")  # first line with dash
-                    # All subsequent lines indented 4 spaces to align with markdown
+                    lines.append(f"  - {sub_lines[0]}")
                     if len(sub_lines) > 1:
                         lines.extend(textwrap.indent("\n".join(sub_lines[1:]), "    ").splitlines())
 
@@ -1986,26 +1901,42 @@ class ExpandableStatusIndicator:
             f"<summary>{summary}</summary>\n\n{body_md}\n\n---</details>"
         )
 
-    
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Framework Integration Helpers (Open WebUI DB operations)
 # ─────────────────────────────────────────────────────────────────────────────
-# Utility functions that interface with Open WebUI's data models
+
 def persist_openai_response_items(
     chat_id: str,
     message_id: str,
     items: List[Dict[str, Any]],
     openwebui_model_id: str,
 ) -> str:
-    """Persist items and return their wrapped marker string.
+    """Persist response items to the chat record and return marker strings.
 
-    :param chat_id: Chat identifier used to locate the conversation.
-    :param message_id: Message ID the items belong to.
-    :param items: Sequence of payloads to store.
-    :param openwebui_model_id: Fully qualified model ID the items originate from.
-    :return: Concatenated empty-link encoded item IDs for later retrieval.
+    Each item is stored under the chat's `openai_responses_pipe.items` map and
+    indexed by `messages_index[message_id].item_ids`. For each stored item, a
+    hidden, empty-link marker is returned so it can be embedded into assistant
+    text and later resolved by ID.
+
+    Args:
+        chat_id:            Chat identifier used to locate the conversation.
+        message_id:         The assistant message ID the items belong to.
+        items:              Sequence of payloads to store (tool calls, reasoning, etc.).
+        openwebui_model_id: Fully qualified model ID the items originate from.
+
+    Returns:
+        str: Concatenated hidden markers (empty-link encoded ULIDs). Returns an
+        empty string if nothing was persisted or the chat is missing.
+
+    Notes:
+        The storage layout is:
+            chat.chat["openai_responses_pipe"] = {
+                "__v": 3,
+                "items":         {<ulid>: {"model":..., "created_at":..., "payload":..., "message_id":...}},
+                "messages_index":{<message_id>: {"role":"assistant","done":True,"item_ids":[<ulid>, ...]}}
+            }
     """
-
     if not items:
         return ""
 
@@ -2042,16 +1973,23 @@ def persist_openai_response_items(
     Chats.update_chat_by_id(chat_id, chat_model.chat)
     return "".join(hidden_uid_markers)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. General-Purpose Utility Functions (Data transforms & patches)
+# 7. General-Purpose Utilities (data transforms & patches)
 # ─────────────────────────────────────────────────────────────────────────────
-# Helper functions shared by multiple parts of the pipe
+
 def merge_usage_stats(total, new):
     """Recursively merge nested usage statistics.
 
-    :param total: Accumulator dictionary to update.
-    :param new: Newly reported usage block to merge in.
-    :return: The updated ``total`` dictionary.
+    For numeric values, sums are accumulated; for dicts, the function recurses;
+    other values overwrite the prior value when non-None.
+
+    Args:
+        total: Accumulator dictionary to update.
+        new:   Newly reported usage block to merge into `total`.
+
+    Returns:
+        dict: The updated accumulator dictionary (`total`).
     """
     for k, v in new.items():
         if isinstance(v, dict):
@@ -2059,16 +1997,22 @@ def merge_usage_stats(total, new):
         elif isinstance(v, (int, float)):
             total[k] = total.get(k, 0) + v
         else:
-            # Skip or explicitly set non-numeric values
             total[k] = v if v is not None else total.get(k, 0)
     return total
 
 
 def wrap_code_block(text: str, language: str = "python") -> str:
-    """Wrap ``text`` in a fenced Markdown code block.
+    """Wrap text in a fenced Markdown code block.
 
-    The fence length adapts to the longest backtick run within ``text``
-    to avoid prematurely closing the block.
+    The fence length adapts to the longest backtick run within the text to avoid
+    prematurely closing the block.
+
+    Args:
+        text:     The code or content to wrap.
+        language: Markdown fence language tag.
+
+    Returns:
+        str: Markdown code block.
     """
     longest = max((len(m.group(0)) for m in re.finditer(r"`+", text)), default=0)
     fence = "`" * max(3, longest + 1)
@@ -2076,16 +2020,14 @@ def wrap_code_block(text: str, language: str = "python") -> str:
 
 
 def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
-    """Strip ``<details>`` blocks matching the specified ``type`` values.
+    """Remove `<details>` blocks by `type` attribute from a string.
 
-    Example::
+    Args:
+        text:           Source text that may include `<details>` blocks.
+        removal_types:  A list of `type` attribute values to strip.
 
-        remove_details_tags_by_type("Hello <details type='reasoning'>stuff</details>", ["reasoning"])
-        # -> "Hello "
-
-    :param text: Source text containing optional ``<details>`` tags.
-    :param removal_types: ``type`` attribute values to remove.
-    :return: ``text`` with matching blocks removed.
+    Returns:
+        str: Text with matching `<details type="...">...</details>` blocks removed.
     """
     # Safely escape the types in case they have special regex chars
     pattern_types = "|".join(map(re.escape, removal_types))
@@ -2093,12 +2035,16 @@ def remove_details_tags_by_type(text: str, removal_types: list[str]) -> str:
     pattern = rf'<details\b[^>]*\btype=["\'](?:{pattern_types})["\'][^>]*>.*?</details>'
     return re.sub(pattern, "", text, flags=re.IGNORECASE | re.DOTALL)
 
-#####################
 
-# Helper utilities for persistent item markers
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. Persistent Item Markers (ULIDs & encoding helpers)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Constants for ULID-like IDs used in hidden markers.
 ULID_LENGTH = 16
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
+# Sentinel and compiled regex for detecting embedded markers in assistant text.
 _SENTINEL = "[openai_responses:v2:"
 _RE = re.compile(
     rf"\[openai_responses:v2:(?P<kind>[a-z0-9_]{{2,30}}):"
@@ -2106,15 +2052,25 @@ _RE = re.compile(
     re.I,
 )
 
+
 def _qs(d: dict[str, str]) -> str:
+    """Encode a dict as a simple query-string (no URL-encoding)."""
     return "&".join(f"{k}={v}" for k, v in d.items()) if d else ""
 
+
 def _parse_qs(q: str) -> dict[str, str]:
+    """Parse a simple `a=b&c=d` string into a dict (no URL-decoding)."""
     return dict(p.split("=", 1) for p in q.split("&")) if q else {}
 
 
 def generate_item_id() -> str:
+    """Generate a short ULID-like ID using the Crockford alphabet.
+
+    Returns:
+        str: A random uppercase identifier of length `ULID_LENGTH`.
+    """
     return ''.join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))
+
 
 def create_marker(
     item_type: str,
@@ -2123,6 +2079,22 @@ def create_marker(
     model_id: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> str:
+    """Construct a bare marker payload (no square-bracket wrapping).
+
+    The format is: `openai_responses:v2:<item_type>:<ULID>[?<k=v&...>]`.
+
+    Args:
+        item_type:  2–30 chars of `[a-z0-9_]` that describes the item kind.
+        ulid:       Optional pre-generated ULID; a new one is created if omitted.
+        model_id:   Optional model ID; when provided, recorded in query metadata.
+        metadata:   Optional additional metadata appended as `k=v` pairs.
+
+    Returns:
+        str: The marker string (without the `[ ... ]: #` wrapper).
+
+    Raises:
+        ValueError: If `item_type` does not match `[a-z0-9_]{2,30}`.
+    """
     if not re.fullmatch(r"[a-z0-9_]{2,30}", item_type):
         raise ValueError("item_type must be 2-30 chars of [a-z0-9_]")
     meta = {**(metadata or {})}
@@ -2131,20 +2103,60 @@ def create_marker(
     base = f"openai_responses:v2:{item_type}:{ulid or generate_item_id()}"
     return f"{base}?{_qs(meta)}" if meta else base
 
+
 def wrap_marker(marker: str) -> str:
+    """Wrap a marker in an empty link so it is invisible in rendered markdown.
+
+    Args:
+        marker: Raw marker string returned by `create_marker()`.
+
+    Returns:
+        str: `\n[<marker>]: #\n` so it can be injected into assistant text.
+    """
     return f"\n[{marker}]: #\n"
 
+
 def contains_marker(text: str) -> bool:
+    """Fast check: does the text contain any v2 marker sentinel?
+
+    Args:
+        text: Text to scan.
+
+    Returns:
+        bool: True if the sentinel substring is present; otherwise False.
+    """
     return _SENTINEL in text
 
+
 def parse_marker(marker: str) -> dict:
+    """Parse a raw marker string into its components.
+
+    Args:
+        marker: Marker string produced by `create_marker()` (no brackets).
+
+    Returns:
+        dict: { "version": "v2", "item_type": ..., "ulid": ..., "metadata": {...} }
+
+    Raises:
+        ValueError: If the string does not start with `openai_responses:v2:`.
+    """
     if not marker.startswith("openai_responses:v2:"):
         raise ValueError("not a v2 marker")
     _, _, kind, rest = marker.split(":", 3)
     uid, _, q = rest.partition("?")
     return {"version": "v2", "item_type": kind, "ulid": uid, "metadata": _parse_qs(q)}
 
+
 def extract_markers(text: str, *, parsed: bool = False) -> list:
+    """Extract all embedded markers from text.
+
+    Args:
+        text:   Source text to scan.
+        parsed: If True, return parsed dicts; otherwise raw marker strings.
+
+    Returns:
+        list: List of markers (raw strings or parsed dicts).
+    """
     found = []
     for m in _RE.finditer(text):
         raw = f"openai_responses:v2:{m.group('kind')}:{m.group('ulid')}"
@@ -2153,7 +2165,21 @@ def extract_markers(text: str, *, parsed: bool = False) -> list:
         found.append(parse_marker(raw) if parsed else raw)
     return found
 
+
 def split_text_by_markers(text: str) -> list[dict]:
+    """Split text into a sequence of literal segments and marker segments.
+
+    Args:
+        text: Source text possibly containing embedded markers.
+
+    Returns:
+        list[dict]: A list like:
+            [
+              {"type": "text",   "text": "..."},
+              {"type": "marker", "marker": "openai_responses:v2:..."},
+              ...
+            ]
+    """
     segments = []
     last = 0
     for m in _RE.finditer(text):
@@ -2168,20 +2194,27 @@ def split_text_by_markers(text: str) -> list[dict]:
         segments.append({"type": "text", "text": text[last:]})
     return segments
 
+
 def fetch_openai_response_items(
     chat_id: str,
     item_ids: List[str],
     *,
     openwebui_model_id: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Return a mapping of ``item_id`` to its persisted payload.
+    """Load persisted items by ULID for a given chat, with optional model filter.
 
-    :param chat_id: Chat identifier used to look up stored items.
-    :param item_ids: ULIDs previously embedded in the message text.
-    :param openwebui_model_id: Only include items originating from this model.
-    :return: Mapping of ULID to the stored item payload.
+    Only items originating from the current model are returned when
+    `openwebui_model_id` is provided. This avoids leaking incompatible artifacts
+    (e.g., encrypted reasoning tokens) across models.
+
+    Args:
+        chat_id:             Chat identifier used to look up stored items.
+        item_ids:            ULIDs previously embedded in the message text.
+        openwebui_model_id:  If provided, only return items for this model ID.
+
+    Returns:
+        dict: Mapping of `item_id` -> persisted payload dict.
     """
-
     chat_model = Chats.get_chat_by_id(chat_id)
     if not chat_model:
         return {}
@@ -2192,12 +2225,128 @@ def fetch_openai_response_items(
         item = items_store.get(item_id)
         if not item:
             continue
-        # Only include previously persisted items that match the current model ID.
-        # OpenAI requires this to avoid items produced by one model leaking into subsequent requests for a different model.
-        # e.g., Encrypted reasoning tokens from o4-mini are not compatible with gpt-4o.
-        # TODO: Do some more sophisticated filtering here, e.g. check model features and allow items that are compatible with the current model.
+        # Only include items that match the current model ID (if specified).
         if openwebui_model_id:
             if item.get("model", "") != openwebui_model_id:
                 continue
         lookup[item_id] = item.get("payload", {})
     return lookup
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. Tool & Schema Utilities (internal)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _strictify_schema(schema):
+    """
+    Minimal, predictable transformer to make a JSON schema strict-compatible.
+
+    Rules for every object node (root + nested):
+      - additionalProperties := false
+      - required := all property keys
+      - fields that were optional become nullable (add "null" to their type)
+
+    We traverse properties, items (dict or list), and anyOf/oneOf branches.
+    We do NOT rewrite anyOf/oneOf; we only enforce object rules inside them.
+
+    Returns a new dict. Non-dict inputs return {}.
+    """
+    import json
+
+    if not isinstance(schema, dict):
+        return {}
+
+    # Defensive deep copy
+    s = json.loads(json.dumps(schema))
+
+    # Ensure root is an object; if not, wrap under {"value": ...}
+    root_t = s.get("type")
+    if not (root_t == "object" or (isinstance(root_t, list) and "object" in root_t) or "properties" in s):
+        s = {
+            "type": "object",
+            "properties": {"value": s},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
+
+    stack = [s]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+
+        # Treat as object if it declares object type or has properties
+        t = node.get("type")
+        is_object = ("properties" in node) or (t == "object") or (isinstance(t, list) and "object" in t)
+        if is_object:
+            props = node.get("properties")
+            if not isinstance(props, dict):
+                props = {}
+                node["properties"] = props
+
+            original_required = set(node.get("required") or [])
+
+            # Close object and mark all props required
+            node["additionalProperties"] = False
+            node["required"] = list(props.keys())
+
+            # Previously-optional → nullable
+            for name, p in props.items():
+                if not isinstance(p, dict):
+                    continue
+                if name not in original_required:
+                    ptype = p.get("type")
+                    if isinstance(ptype, str) and ptype != "null":
+                        p["type"] = [ptype, "null"]
+                    elif isinstance(ptype, list) and "null" not in ptype:
+                        p["type"] = ptype + ["null"]
+                stack.append(p)
+
+        # Dive into array schemas
+        items = node.get("items")
+        if isinstance(items, dict):
+            stack.append(items)
+        elif isinstance(items, list):  # tuple validation
+            for it in items:
+                if isinstance(it, dict):
+                    stack.append(it)
+
+        # Traverse union branches (no rewrites, just enforce inside)
+        for key in ("anyOf", "oneOf"):
+            branches = node.get(key)
+            if isinstance(branches, list):
+                for br in branches:
+                    if isinstance(br, dict):
+                        stack.append(br)
+
+    return s
+
+
+def _dedupe_tools(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """(Internal) Deduplicate a tool list with simple, stable identity keys.
+
+    Identity:
+      - Function tools → key = ("function", <name>)
+      - Non-function tools → key = (<type>, None)
+
+    Later entries win (last write wins).
+
+    Args:
+        tools: List of tool dicts (OpenAI Responses schema).
+
+    Returns:
+        list: Deduplicated list, preserving only the last occurrence per identity.
+    """
+    if not tools:
+        return []
+    canonical: Dict[tuple, Dict[str, Any]] = {}
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") == "function":
+            key = ("function", t.get("name"))
+        else:
+            key = (t.get("type"), None)
+        if key[0]:
+            canonical[key] = t
+    return list(canonical.values())
