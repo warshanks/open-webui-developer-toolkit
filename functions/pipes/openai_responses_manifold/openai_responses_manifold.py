@@ -429,7 +429,7 @@ class ResponsesBody(BaseModel):
 class Pipe:
     # 4.1 Configuration Schemas
     class Valves(BaseModel):
-        # 1) Connection & Auth
+        # Connection & Auth
         BASE_URL: str = Field(
             default=((os.getenv("OPENAI_API_BASE_URL") or "").strip() or "https://api.openai.com/v1"),
             description="The base URL to use with the OpenAI SDK. Defaults to the official OpenAI API endpoint. Supports LiteLLM and other custom endpoints.",
@@ -439,7 +439,7 @@ class Pipe:
             description="Your OpenAI API key. Defaults to the value of the OPENAI_API_KEY environment variable.",
         )
 
-        # 2) Models
+        # Models
         MODEL_ID: str = Field(
             default="gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
@@ -457,7 +457,7 @@ class Pipe:
             ),
         )
 
-        # 3) Reasoning & summaries
+        # Reasoning & summaries
         REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
             default="disabled",
             description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
@@ -467,7 +467,12 @@ class Pipe:
             description="REQUIRES VERIFIED OPENAI ORG. If verified, highly recommend using 'response' or 'conversation' for best results. If `disabled` (default) = never request encrypted reasoning tokens; if `response` = request tokens so the model can carry reasoning across tool calls for the current response; If `conversation` = also persist tokens for future messages in this chat (higher token usage; quality may vary).",
         )
         
-        # 4) Tool execution behavior
+        # Tool execution behavior
+        PERSIST_TOOL_RESULTS: bool = Field(
+            default=True,
+            description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
+        )
+
         PARALLEL_TOOL_CALLS: bool = Field(
             default=True,
             description="Whether tool calls can be parallelized. Defaults to True if not set. Read more: https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls",
@@ -498,7 +503,7 @@ class Pipe:
             )
         )
 
-        # 6) Web search
+        # Web search
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
             description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
@@ -512,13 +517,7 @@ class Pipe:
             description='User location for web search context. Leave blank to disable. Must be in valid JSON format according to OpenAI spec.  E.g., {"type": "approximate","country": "US","city": "San Francisco","region": "CA"}.',
         )
 
-        # 7) Persistence
-        PERSIST_TOOL_RESULTS: bool = Field(
-            default=True,
-            description="Persist tool call results across conversation turns. When disabled, tool results are not stored in the chat history.",
-        )
-
-        # 8) Integrations
+        # Integrations
         REMOTE_MCP_SERVERS_JSON: Optional[str] = Field(
             default=None,
             description=(
@@ -537,7 +536,7 @@ class Pipe:
             description="Truncation strategy for model responses. 'auto' drops middle context items if the conversation exceeds the context window; 'disabled' returns a 400 error instead.",
         )
 
-        # 9) Privacy & caching
+        # Privacy & caching
         PROMPT_CACHE_KEY: Literal["id", "email"] = Field(
             default="id",
             description=(
@@ -547,7 +546,7 @@ class Pipe:
             ),
         )
 
-        # 10) Logging
+        # Logging
         LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
             default=os.getenv("GLOBAL_LOG_LEVEL", "INFO").upper(),
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
