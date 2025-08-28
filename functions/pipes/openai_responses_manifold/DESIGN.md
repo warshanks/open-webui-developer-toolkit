@@ -29,8 +29,6 @@ The manifold performs a **single merge step** just before sending the request to
 
 Later sources override earlier ones. After merging, `extra_tools` is **stripped** from the outbound body so it never reaches the provider.
 
----
-
 ### How are conflicts resolved?
 
 Tools are deduplicated by identity:
@@ -40,13 +38,9 @@ Tools are deduplicated by identity:
 
 If the same identity appears multiple times, the later source wins. This allows filters to deliberately override registry or valve tools when needed.
 
----
-
 ### What happens if `extra_tools` contains invalid schemas?
 
 The manifold does not perform deep validation. `extra_tools` is passed through as provided. Invalid entries may cause provider errors, but this is considered acceptable because the field is intended for use by trusted filters. Only minimal shape checks are applied.
-
----
 
 ### Example: Using `extra_tools`
 
@@ -98,3 +92,5 @@ The manifold does not perform deep validation. `extra_tools` is passed through a
 ```
 
 > **Idea:** Filters add OpenAI-compatible tools under `extra_tools`. The manifold picks them up and includes them in the final `tools` array, then **strips `extra_tools`** before sending the request to OpenAI.
+
+---
