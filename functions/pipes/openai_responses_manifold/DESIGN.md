@@ -12,7 +12,9 @@ How this document is structured:
 ---
 # Filter-injected tools via `extra_tools`
 ## Why introduce a separate `extra_tools` field?
-`body["tools"]` can be repopulated by Open WebUI before the request leaves the manifold. Filters that attempted to mutate that field would often lose their changes. A dedicated `extra_tools` field gives filters a stable place to add OpenAI-compatible tool specs without racing against internal logic.
+The `body["tools"]` field is managed internally by Open WebUI and is often **rebuilt when native function/tool calling is enabled on a model**. Because of this, any filter that attempted to modify `body["tools"]` directly risked losing its changes. Open WebUI would overwrite the field as part of its final request preparation.
+
+The `extra_tools` field provides a reliable, isolated place for filters to append additional OpenAI-compatible tool specs. These are merged into the final tool set just before the request leaves the manifold, ensuring that injected tools are preserved and do not conflict with Open WebUI’s native tool-calling logic.
 
 ## How are tools merged inside the manifold?
 The manifold performs a single merge just before sending the request. Tools are collected in this priority order:

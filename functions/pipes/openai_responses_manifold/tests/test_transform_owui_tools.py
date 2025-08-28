@@ -3,8 +3,29 @@ import textwrap
 
 from functions.pipes.openai_responses_manifold.openai_responses_manifold import ResponsesBody
 
-def test_transform_owui_tools():
+def test_transform_owui_tools_with_additional_properties_true():
     __tools__ = {
+        "_find_knowledge_base": {
+            "tool_id": "test_4",
+            "callable": "<UNSERIALIZABLE function>",
+            "spec": {
+                "name": "_find_knowledge_base",
+                "description": "\n Get the user name, Email and ID from the user object.\n ",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "identifier": {"type": "string"},
+                        "user": {
+                            "type": "object",
+                            "additionalProperties": True   # <-- input allows extra keys
+                        }
+                    },
+                    "required": ["identifier", "user"],
+                    "additionalProperties": True         # <-- input allows extra keys at root
+                }
+            },
+            "metadata": {"file_handler": False, "citation": False}
+        },
         "tool_custom_parameter": {
             "tool_id": "mega",
             "callable": "<UNSERIALIZABLE>",
@@ -65,11 +86,37 @@ def test_transform_owui_tools():
 
     out = ResponsesBody.transform_owui_tools(__tools__, strict=True)
 
-    # One tool only; deterministic stringify
-    actual = json.dumps(out, indent=2, sort_keys=True, ensure_ascii=False)
+    # Deterministic: sort by tool name, pretty-print with sorted keys
+    out_sorted = sorted(out, key=lambda t: t["name"])
+    actual = json.dumps(out_sorted, indent=2, sort_keys=True, ensure_ascii=False)
 
     expected = textwrap.dedent("""
     [
+      {
+        "description": "\\n Get the user name, Email and ID from the user object.\\n ",
+        "name": "_find_knowledge_base",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "user": {
+              "additionalProperties": false,
+              "properties": {},
+              "required": [],
+              "type": "object"
+            }
+          },
+          "required": [
+            "identifier",
+            "user"
+          ],
+          "type": "object"
+        },
+        "strict": true,
+        "type": "function"
+      },
       {
         "description": "Covers core parameter shapes.",
         "name": "tool_custom_parameter",
