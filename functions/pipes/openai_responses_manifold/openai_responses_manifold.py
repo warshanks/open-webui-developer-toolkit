@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.9.1
+version: 0.9.2
 license: MIT
 """
 
@@ -621,16 +621,16 @@ class Pipe:
             self.logger.info("Detected task model: %s", __task__)
             return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
 
-        # If GPT-5-Auto, run through model router and update model.
+        # If GPT-5-Auto, run through model router and update body.
         if openwebui_model_id.endswith(".gpt-5-auto"):
             await self._emit_notification(
                 __event_emitter__,
-                content="Model router coming soon — using gpt-5-chat-latest (GPT-5 Fast).",
+                content="Routing request to the best GPT-5 model…",
                 level="info",
             )
 
-            responses_body.model = await self._route_gpt5_auto(
-                responses_body.input[-1].get("content", "") if responses_body.input else "",
+            responses_body = await self._route_gpt5_auto(
+                responses_body,
                 valves,
             )
 
@@ -1599,21 +1599,95 @@ class Pipe:
 
     async def _route_gpt5_auto(
         self,
-        last_user_message: str,
+        responses_body: ResponsesBody,
         valves: "Pipe.Valves",
-    ) -> str:
-        """Placeholder GPT-5 router.
+    ) -> ResponsesBody:
+        """Select the best GPT‑5 model using a fast routing model.
 
-        Eventually this helper will make a non-streaming call to a low-latency
-        model (e.g., ``gpt-4.1-nano``) that inspects the last user message and
-        returns structured JSON indicating which GPT-5 variant to use.  The
-        selected model will then handle the user's request.
-
-        Currently, it simply returns ``"gpt-5-chat-latest"`` so ``gpt-5-auto``
-        behaves as a direct alias and the router design can be iterated on
-        separately.
+        A lightweight model (``gpt-4.1-nano``) analyses the most recent user
+        message and returns structured JSON with routing hints.  The router can
+        update the target ``model`` as well as optional fields such as
+        ``reasoning`` or ``tools``.  If the router request fails, the original
+        ``responses_body`` is returned unchanged.
         """
-        return "gpt-5-chat-latest"
+
+        # Extract last user message text for routing context
+        last_message = ""
+        if isinstance(responses_body.input, str):
+            last_message = responses_body.input
+        elif isinstance(responses_body.input, list) and responses_body.input:
+            last_item = responses_body.input[-1]
+            content = last_item.get("content", "")
+            if isinstance(content, list):
+                parts: List[str] = []
+                for block in content:
+                    if isinstance(block, dict):
+                        parts.append(block.get("text", ""))
+                    elif isinstance(block, str):
+                        parts.append(block)
+                last_message = " ".join(parts)
+            else:
+                last_message = str(content)
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string",
+                    "enum": [
+                        "gpt-5-chat-latest",
+                        "gpt-5",
+                        "gpt-5-mini",
+                        "gpt-5-nano",
+                    ],
+                }
+            },
+            "required": ["model"],
+        }
+
+        router_body = {
+            "model": "gpt-4.1-nano",
+            "instructions": (
+                "You are a routing helper. Choose the best GPT-5 model from the list "
+                "based on the user's last message. Respond with JSON containing only "
+                "the 'model' field."
+            ),
+            "input": last_message,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "gpt5_router", "schema": schema},
+            },
+        }
+
+        try:
+            response = await self.send_openai_responses_nonstreaming_request(
+                router_body,
+                api_key=valves.API_KEY,
+                base_url=valves.BASE_URL,
+            )
+
+            router_json: Dict[str, Any] = {}
+            for item in response.get("output", []):
+                if item.get("type") != "message":
+                    continue
+                for content in item.get("content", []):
+                    if content.get("type") == "output_text":
+                        text = content.get("text", "")
+                        try:
+                            router_json = json.loads(text)
+                        except Exception:  # pragma: no cover - defensive
+                            router_json = {}
+                        break
+
+            if router_json:
+                model = router_json.get("model")
+                if model:
+                    responses_body.model = model
+
+        except Exception as exc:  # pragma: no cover - network issues etc.
+            self.logger.warning("GPT‑5 router failed: %s", exc)
+
+        return responses_body
 
     # 4.8 Internal Static Helpers
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
