@@ -1,5 +1,18 @@
 import json
+import sys
 import textwrap
+import types
+
+# Stub minimal open_webui modules required for import
+owui_root = types.ModuleType("open_webui")
+models_pkg = types.ModuleType("open_webui.models")
+sys.modules.setdefault("open_webui", owui_root)
+sys.modules.setdefault("open_webui.models", models_pkg)
+sys.modules.setdefault("open_webui.models.chats", types.SimpleNamespace(Chats=object))
+sys.modules.setdefault(
+    "open_webui.models.models",
+    types.SimpleNamespace(ModelForm=object, Models=object),
+)
 
 from functions.pipes.openai_responses_manifold.openai_responses_manifold import ResponsesBody
 

@@ -151,7 +151,7 @@ These **aliases** are supported by the pipe (via the `MODELS` valve). They resol
 
 | **Alias (you can use these in OpenAI Responses Manifold)**                        | **Resolves to (official ID)** | **Preset(s)**                | Suggested use                                                         |
 | ------------------------------------------------------------------ | ----------------------------- | ---------------------------- | --------------------------------------------------------------------- |
-| `gpt-5-auto`                                                       | `gpt-5-chat-latest`           | Router placeholder           | Router placeholder.  Automatic selection planned.                     |
+| `gpt-5-auto`                                                       | Dynamic GPT-5 variant         | —                            | Automatically routes between GPT-5 models (chat, mini, nano) using a fast classifier.                     |
 | `gpt-5-thinking`                                                   | `gpt-5`                       | Default (medium) reasoning   | General high‑quality prompts. ([OpenAI][8])                           |
 | `gpt-5-thinking-minimal`                                           | `gpt-5`                       | `reasoning_effort="minimal"` | Faster/cheaper while still reasoning. ([OpenAI][8])                   |
 | `gpt-5-thinking-high`                                              | `gpt-5`                       | `reasoning_effort="high"`    | Hard problems; max quality. ([OpenAI][8])                             |
@@ -203,7 +203,7 @@ The Responses Manifold supports the current **GPT‑5 family** exposed in the AP
 * `reasoning_effort="minimal"` lowers compute but isn’t the same as non‑reasoning ChatGPT.
 * The **non‑reasoning** variant is **`gpt-5-chat-latest`**.
 
-> **Note:** The **`gpt-5-auto`** pseudo model currently routes to `gpt-5-chat-latest` and shows a “model router coming soon” notification. A smarter router that selects between GPT‑5 variants is planned.
+> **Note:** The **`gpt-5-auto`** pseudo model uses a lightweight `gpt-4.1-nano` request to classify the prompt and automatically choose the appropriate GPT‑5 variant.
 
 [1]: https://openai.com/index/introducing-gpt-5-for-developers/ "Introducing GPT‑5 for developers | OpenAI"
 [2]: https://cdn.openai.com/pdf/8124a3ce-ab78-4f06-96eb-49ea29ffb52f/gpt5-system-card-aug7.pdf "GPT‑5 System Card (Aug 7, 2025)"

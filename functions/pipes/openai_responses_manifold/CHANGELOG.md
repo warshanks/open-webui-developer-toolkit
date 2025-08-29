@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ## [0.9.1] - 2025-08-28
 - Added `ENABLE_STRICT_TOOL_CALLING` valve (default: `True`). When enabled, the manifold converts Open WebUI registry tools to strict JSON Schemas and sets `strict: true` on function tools when passing to the OpenAI Responses API.
 
+## [0.9.2] - 2025-09-25
+- Introduced GPT-5 auto router: uses `gpt-4.1-nano` to analyze the prompt and update the request with the best GPT-5 variant.
+
 
 ## [0.9.0] - 2025-08-28
 - Added `extra_tools` field for filter-injected tools with a single merge point and deduplication.
