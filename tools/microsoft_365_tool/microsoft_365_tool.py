@@ -21,9 +21,10 @@ import aiohttp
 from cryptography.fernet import Fernet
 from pydantic import Field
 
+
 class Tools:
     def __init__(self):
-        MicrosoftAuth.install()  # idempotent    
+        MicrosoftAuth.install()  # idempotent
 
     async def get_profile(self, __request__) -> str:
         """
@@ -45,195 +46,136 @@ class Tools:
 
     async def search_documents(
         self,
-        query: str,  # REQUIRED (no default)
-        limit: int = Field(20, ge=1, le=50),  # optional -> strict mode should allow null
-        entity: Literal["files", "items", "sites", "all"] = "files",  # enum, optional
-        cursor: Optional[str] = None,         # optional + null allowed
-        __request__ = None,  # injected, hidden from schema
+        query: str,
+        size: int = Field(20, ge=1, le=50, description="Number of results to return (1–50)."),
+        offset: int = Field(0, ge=0, description="Paging offset; corresponds to Microsoft Graph 'from'."),
+        entity: Literal["files", "items", "sites", "all"] = "files",
+        __request__=None,
     ) -> str:
         """
-        Search SharePoint/OneDrive documents by keyword (KQL supported).
-        :param query: Search text, e.g., filetype:pdf isDocument=true
+        Search SharePoint/OneDrive documents by keyword.
+        :param query: Search text
         :param limit: Number of results to return (1-50)
         :param cursor: Paging token from a previous call
         :return: JSON string with results
         """
-        # ---- clamp inputs ----
-        size = max(1, min(int(limit), 50))
-        query = (query).strip()
-        ent = (entity or "files").lower()
-        if ent not in ("files", "items", "sites", "all"):
-            ent = "files"
-
-        # ---- map entity -> entityTypes ----
-        if ent == "files":
-            entity_types = ["driveItem"]
-        elif ent == "items":
-            entity_types = ["listItem"]
-        elif ent == "sites":
-            entity_types = ["site"]
-        else:  # "all"
-            entity_types = ["driveItem", "listItem", "list"]
-
-        # ---- lightweight normalizers (kept local so this tool is self-contained) ----
-        def _norm_drive_item(di: dict, fallback_id: Optional[str] = None) -> dict:
-            fs = di.get("fileSystemInfo") or {}
-            file = di.get("file") or {}
-            folder = di.get("folder") or {}
-            return {
-                "id": di.get("id") or fallback_id,
-                "name": di.get("name") or di.get("displayName"),
-                "webUrl": di.get("webUrl"),
-                "modified": di.get("lastModifiedDateTime") or fs.get("lastModifiedDateTime"),
-                "size": di.get("size"),
-                "mimeType": file.get("mimeType"),
-                "driveId": (di.get("parentReference") or {}).get("driveId"),
-                "kind": "file" if file else ("folder" if folder else "driveItem"),
-                "source": "m365.search",
-            }
-
-        def _norm_list_item(li: dict, fallback_id: Optional[str]) -> dict:
-            return {
-                "id": li.get("id") or fallback_id,
-                "name": li.get("name") or ((li.get("fields") or {}).get("title")) or "List item",
-                "webUrl": li.get("webUrl"),
-                "modified": li.get("lastModifiedDateTime"),
-                "size": None,
-                "mimeType": None,
-                "driveId": None,
-                "kind": "listItem",
-                "source": "m365.search",
-            }
-
-        def _norm_list(lst: dict, fallback_id: Optional[str]) -> dict:
-            return {
-                "id": lst.get("id") or fallback_id,
-                "name": lst.get("name") or lst.get("displayName") or "List",
-                "webUrl": lst.get("webUrl"),
-                "modified": lst.get("lastModifiedDateTime"),
-                "size": None,
-                "mimeType": None,
-                "driveId": (lst.get("parentReference") or {}).get("driveId"),
-                "kind": "list",
-                "source": "m365.search",
-            }
-
-        def _norm_site(st: dict, fallback_id: Optional[str]) -> dict:
-            return {
-                "id": st.get("id") or fallback_id,
-                "name": st.get("name") or st.get("displayName") or "Site",
-                "webUrl": st.get("webUrl"),
-                "modified": st.get("lastModifiedDateTime"),
-                "size": None,
-                "mimeType": None,
-                "driveId": None,
-                "kind": "site",
-                "source": "m365.search",
-            }
-
-        def _norm_from_hit(hit: dict) -> Optional[dict]:
-            res = hit.get("resource") or {}
-            t = (res.get("@odata.type") or "").lower()
-            hid = hit.get("hitId")
-            if t.endswith("driveitem"):
-                # If user chose "files", keep both documents and folders (use KQL isDocument=true in `q` to restrict)
-                item = _norm_drive_item(res, fallback_id=hid)
-                if hit.get("summary"):
-                    item["summary"] = hit.get("summary")
-                return item
-            if t.endswith("listitem") and ent in ("items", "all"):
-                item = _norm_list_item(res, fallback_id=hid)
-                if hit.get("summary"):
-                    item["summary"] = hit.get("summary")
-                return item
-            if t.endswith("list") and ent == "all":
-                item = _norm_list(res, fallback_id=hid)
-                if hit.get("summary"):
-                    item["summary"] = hit.get("summary")
-                return item
-            if t.endswith("site") and ent == "sites":
-                item = _norm_site(res, fallback_id=hid)
-                if hit.get("summary"):
-                    item["summary"] = hit.get("summary")
-                return item
-            return None
-
         try:
-            # ---- paging: decode cursor or start fresh ----
-            if cursor:
-                try:
-                    tok = json.loads(cursor)
-                    if tok.get("t") != "search":
-                        return json.dumps({"ok": False, "error": "Invalid cursor."}, indent=2)
-                except Exception:
-                    return json.dumps({"ok": False, "error": "Invalid cursor."}, indent=2)
-                # restore prior params
-                q_string = tok.get("q") or "*"
-                from_offset = int(tok.get("from") or 0)
-                size_now = int(tok.get("size") or size)
-                ent = tok.get("entity") or ent
-                # re-map entity just in case
-                if ent == "files":
-                    entity_types = ["driveItem"]
-                elif ent == "items":
-                    entity_types = ["listItem"]
-                elif ent == "sites":
-                    entity_types = ["site"]
-                else:
-                    entity_types = ["driveItem", "listItem", "list"]
-            else:
-                q_string = query or "*"
-                from_offset = 0
-                size_now = size
+            # ---- sanitize inputs ----
+            page_size = max(1, min(int(size), 50))
+            start = max(0, int(offset))
+            ent = (entity or "files").lower()
+            if ent not in ("files", "items", "sites", "all"):
+                ent = "files"
+            q_string = (query or "*").strip()
 
-            # ---- build minimal Search API request ----
-            body = {
-                "requests": [{
-                    "entityTypes": entity_types,
-                    "query": {"queryString": q_string},
-                    "from": from_offset,
-                    "size": size_now
-                }]
+            # ---- map tool 'entity' -> Graph Search 'entityTypes' ----
+            entity_types_map = {
+                "files": ["driveItem"],
+                "items": ["listItem"],
+                "sites": ["site"],
+                "all": ["driveItem", "listItem", "list", "site"],
             }
+            entity_types = entity_types_map[ent]
 
+            # ---- call Microsoft Graph Search ----
+            body = {
+                "requests": [
+                    {
+                        "entityTypes": entity_types,
+                        "query": {"queryString": q_string},
+                        "from": start,
+                        "size": page_size,
+                    }
+                ]
+            }
             data = await MicrosoftAuth.graph_post(__request__, "/search/query", json=body)
 
-            # ---- collect hits (flatten all containers just in case) ----
-            values = data.get("value") or []
-            hits_all = []
-            more_any = False
-            for v in values:
-                for c in (v.get("hitsContainers") or []):
-                    hits_all.extend(c.get("hits") or [])
-                    more_any = more_any or bool(c.get("moreResultsAvailable"))
+            # ---- flatten hits ----
+            hits = []
+            for v in data.get("value") or []:
+                for c in v.get("hitsContainers") or []:
+                    hits.extend(c.get("hits") or [])
 
-            # ---- normalize ----
-            results = []
-            for h in hits_all:
-                item = _norm_from_hit(h)
-                if item:
-                    results.append(item)
+            # ---- build friendly markdown block inline ----
+            lines = []
+            label = {"files": "documents", "items": "items", "sites": "sites", "all": "results"}[ent]
+            lines.append(f"**{min(len(hits), page_size)} {label}** for **{q_string}** (from {start})\n")
+            lines.append("The following sites were found:" if ent == "sites" else "The following documents were found:")
 
-            # ---- next cursor ----
-            new_cursor = None
-            if more_any or len(results) == size_now:
-                new_cursor = json.dumps({
-                    "t": "search",
-                    "q": q_string,
-                    "from": from_offset + len(results),
-                    "size": size_now,
-                    "entity": ent,
-                })
+            if not hits:
+                lines.append("* _No results found._")
+            else:
+                for h in hits[:page_size]:
+                    res = h.get("resource") or {}
+                    otype = (res.get("@odata.type") or "").lower()
 
-            return json.dumps({"ok": True, "count": len(results), "results": results, "cursor": new_cursor}, indent=2)
+                    # fields
+                    name = res.get("name") or res.get("displayName") or (res.get("fields") or {}).get("title") or "Untitled"
+                    web = res.get("webUrl") or ""
+                    title = f"[{name}]({web})" if web else name
+
+                    fs = res.get("fileSystemInfo") or {}
+                    modified = res.get("lastModifiedDateTime") or fs.get("lastModifiedDateTime") or ""
+                    date_str = modified[:10] if isinstance(modified, str) and len(modified) >= 10 else "unknown date"
+
+                    size_bytes = res.get("size")
+                    if isinstance(size_bytes, int):
+                        if size_bytes < 1024:
+                            size_str = f"{size_bytes} B"
+                        elif size_bytes < 1048576:
+                            size_str = f"{size_bytes/1024:.0f} KB"
+                        else:
+                            size_str = f"{size_bytes/1048576:.1f} MB"
+                    else:
+                        size_str = "-"
+
+                    is_file = bool(res.get("file"))
+                    is_folder = bool(res.get("folder"))
+                    kind = (
+                        "document" if is_file
+                        else "folder" if is_folder
+                        else "list item" if otype.endswith("listitem")
+                        else "list" if otype.endswith("list")
+                        else "site" if otype.endswith("site")
+                        else "item"
+                    )
+
+                    ext = name.rsplit(".", 1)[-1].lower() if is_file and "." in name else ""
+                    meta_parts = [kind]
+                    if ext:
+                        meta_parts.append(f".{ext}")
+                    if date_str:
+                        meta_parts.append(f"modified {date_str}")
+                    if size_str != "-":
+                        meta_parts.append(size_str)
+                    meta = " · ".join(meta_parts)
+
+                    snippet = h.get("summary") or ""
+                    if snippet:
+                        snippet = snippet.replace("<ddd/>", " … ").replace("<c0>", "").replace("</c0>", "")
+                        snippet = " ".join(snippet.split())
+                        if len(snippet) > 200:
+                            snippet = snippet[:197] + "…"
+
+                    lines.append(f"* {title} — {meta}")
+                    if snippet:
+                        lines.append(f"  - snippet: {snippet}")
+
+            # ---- footer: guidance + paging hint ----
+            lines.append("")
+            lines.append("_Tips:_ Use the links above when citing.")
+            if hits:
+                lines.append(f"_Paging:_ Re-run with `offset={start + min(len(hits), page_size)}` and `size={page_size}` to see more.")
+
+            return "\n".join(lines)
 
         except MicrosoftAuth.Error as e:
-            return json.dumps({"ok": False, "error": str(e)}, indent=2)
-        
+            return f"Search failed: {e}"
 
 
 # ----------------------------------------------------------------
 # Minimal Microsoft Graph client with OAuth patch for Open WebUI
+
 
 class MicrosoftAuth:
     """
@@ -241,29 +183,34 @@ class MicrosoftAuth:
     - Captures refresh_token during OAuth callback, stores encrypted in __Host- cookie.
     - Redeems refresh_token for access_token on demand.
     """
+
     __version__ = "2025.08.25"
 
     # --- Required config from environment ---
-    TENANT        = os.getenv("MICROSOFT_CLIENT_TENANT_ID", "").strip()
-    CLIENT_ID     = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
+    TENANT = os.getenv("MICROSOFT_CLIENT_TENANT_ID", "").strip()
+    CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
     CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
-    SCOPES        = os.getenv("MICROSOFT_OAUTH_SCOPE", "").strip()
-    WEBUI_SECRET  = os.getenv("WEBUI_SECRET_KEY", "").strip()
+    SCOPES = os.getenv("MICROSOFT_OAUTH_SCOPE", "").strip()
+    WEBUI_SECRET = os.getenv("WEBUI_SECRET_KEY", "").strip()
 
     # --- Constants ---
-    PROVIDER    = "microsoft"
+    PROVIDER = "microsoft"
     COOKIE_NAME = "__Host-ms_graph"
-    MAX_AGE     = 90 * 24 * 3600
-    GRAPH_BASE  = "https://graph.microsoft.com/v1.0"
-    TOKEN_URL   = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token"
-    TIMEOUT     = aiohttp.ClientTimeout(total=20)
-    USER_AGENT  = f"OpenWebUI-MicrosoftAuth/{__version__}"
+    MAX_AGE = 90 * 24 * 3600
+    GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+    TOKEN_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token"
+    TIMEOUT = aiohttp.ClientTimeout(total=20)
+    USER_AGENT = f"OpenWebUI-MicrosoftAuth/{__version__}"
 
     # --- Crypto ---
     if not WEBUI_SECRET:
         _FERNET = None
     else:
-        _FERNET = Fernet(base64.urlsafe_b64encode(hashlib.sha256(WEBUI_SECRET.encode("utf-8")).digest()))
+        _FERNET = Fernet(
+            base64.urlsafe_b64encode(
+                hashlib.sha256(WEBUI_SECRET.encode("utf-8")).digest()
+            )
+        )
 
     _PATCHED = False
 
@@ -283,23 +230,30 @@ class MicrosoftAuth:
             return
 
         orig_get_client = OAuthManager.get_client
-        orig_handle_cb  = OAuthManager.handle_callback
+        orig_handle_cb = OAuthManager.handle_callback
 
         def patched_get_client(self_, provider):
             client = orig_get_client(self_, provider)
-            if provider == MicrosoftAuth.PROVIDER and hasattr(client, "authorize_access_token"):
+            if provider == MicrosoftAuth.PROVIDER and hasattr(
+                client, "authorize_access_token"
+            ):
                 orig = client.authorize_access_token
 
                 async def wrapped_authorize_access_token(request, *args, **kwargs):
                     tok = await orig(request, *args, **kwargs)
                     try:
-                        request.state._ms_provider_token = tok  # stash full token result
+                        request.state._ms_provider_token = (
+                            tok  # stash full token result
+                        )
                     except Exception:
                         pass
                     return tok
 
                 # Avoid double-wrapping
-                if getattr(client.authorize_access_token, "__name__", "") != "wrapped_authorize_access_token":
+                if (
+                    getattr(client.authorize_access_token, "__name__", "")
+                    != "wrapped_authorize_access_token"
+                ):
                     client.authorize_access_token = wrapped_authorize_access_token
             return client
 
@@ -307,10 +261,14 @@ class MicrosoftAuth:
             resp = await orig_handle_cb(self_, request, provider, response)
             if provider == MicrosoftAuth.PROVIDER and MicrosoftAuth._FERNET:
                 try:
-                    tok = getattr(getattr(request, "state", object()), "_ms_provider_token", None)
-                    rt  = isinstance(tok, dict) and tok.get("refresh_token")
+                    tok = getattr(
+                        getattr(request, "state", object()), "_ms_provider_token", None
+                    )
+                    rt = isinstance(tok, dict) and tok.get("refresh_token")
                     if rt:
-                        payload = json.dumps({"rt": rt}, separators=(",", ":")).encode("utf-8")
+                        payload = json.dumps({"rt": rt}, separators=(",", ":")).encode(
+                            "utf-8"
+                        )
                         enc = MicrosoftAuth._FERNET.encrypt(payload).decode("utf-8")
                         resp.set_cookie(
                             key=MicrosoftAuth.COOKIE_NAME,
@@ -326,7 +284,7 @@ class MicrosoftAuth:
                     pass
             return resp
 
-        OAuthManager.get_client      = patched_get_client
+        OAuthManager.get_client = patched_get_client
         OAuthManager.handle_callback = patched_handle_callback
         cls._PATCHED = True
 
@@ -340,7 +298,13 @@ class MicrosoftAuth:
         for obj in (request, getattr(request, "state", None)):
             if not obj:
                 continue
-            for name in ("response", "_response", "fastapi_response", "starlette_response", "res"):
+            for name in (
+                "response",
+                "_response",
+                "fastapi_response",
+                "starlette_response",
+                "res",
+            ):
                 try:
                     cand = getattr(obj, name, None)
                     if cand is not None:
@@ -355,11 +319,15 @@ class MicrosoftAuth:
         if not cls._FERNET:
             raise cls.Error("WEBUI_SECRET_KEY missing (encryption unavailable).")
         if not (cls.TENANT and cls.CLIENT_ID and cls.CLIENT_SECRET):
-            raise cls.Error("Set MICROSOFT_CLIENT_TENANT_ID, MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET.")
+            raise cls.Error(
+                "Set MICROSOFT_CLIENT_TENANT_ID, MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET."
+            )
 
         enc = getattr(request, "cookies", {}).get(cls.COOKIE_NAME)
         if not enc:
-            raise cls.Error(f"Missing {cls.COOKIE_NAME} cookie. Sign in with Microsoft.")
+            raise cls.Error(
+                f"Missing {cls.COOKIE_NAME} cookie. Sign in with Microsoft."
+            )
 
         try:
             payload = cls._FERNET.decrypt(enc.encode("utf-8")).decode("utf-8")
@@ -423,7 +391,9 @@ class MicrosoftAuth:
             u = urlparse(path)
             base_host = urlparse(cls.GRAPH_BASE).netloc
             if u.scheme != "https" or u.netloc != base_host:
-                raise cls.Error("Only Microsoft Graph URLs are allowed for absolute paths.")
+                raise cls.Error(
+                    "Only Microsoft Graph URLs are allowed for absolute paths."
+                )
             url = path
             # nextLink already contains its own query; don't double-append params
             use_params = None
@@ -440,7 +410,9 @@ class MicrosoftAuth:
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=use_params, headers=headers, timeout=cls.TIMEOUT) as resp:
+            async with session.get(
+                url, params=use_params, headers=headers, timeout=cls.TIMEOUT
+            ) as resp:
                 if 200 <= resp.status < 300:
                     try:
                         return await resp.json()
@@ -466,7 +438,9 @@ class MicrosoftAuth:
             u = urlparse(path)
             base_host = urlparse(cls.GRAPH_BASE).netloc
             if u.scheme != "https" or u.netloc != base_host:
-                raise cls.Error("Only Microsoft Graph URLs are allowed for absolute paths.")
+                raise cls.Error(
+                    "Only Microsoft Graph URLs are allowed for absolute paths."
+                )
             url = path
             # Absolute nextLink/URLs already include their own querystring
             use_params = None
