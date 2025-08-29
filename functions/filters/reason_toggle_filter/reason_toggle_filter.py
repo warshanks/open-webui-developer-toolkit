@@ -1,7 +1,7 @@
 """
-title: Think harder
+title: Think
 id: reason_filter
-description: Think before responding.
+description: Think before responding
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit.git
 required_open_webui_version: 0.6.10
 version: 0.3.1
@@ -10,12 +10,22 @@ version: 0.3.1
 from __future__ import annotations
 from typing import Any, Awaitable, Callable, Literal
 from pydantic import BaseModel, Field
-from open_webui.models.models import Models
+
+R1_SYSTEM_PROMPT = """
+You are an AI assistant that rigorously follows this response protocol:
+
+1. First, conduct a detailed analysis of the question. Consider different angles, potential solutions, and reason through the problem step-by-step. Enclose this entire thinking process within <think> and </think> tags.
+
+2. After the thinking section, provide a clear, concise, and direct answer to the user's question. Separate the answer from the think section with a newline.
+
+Ensure that the thinking process is thorough but remains focused on the query. The final answer should be standalone and not reference the thinking section.
+""".strip()
 
 class Filter:
     class Valves(BaseModel):
-        MODEL: str = "openai_responses.gpt-5"
-        REASONING_EFFORT: Literal["minimal", "low", "medium", "high", "not set"] = "medium"
+        REASONING_EFFORT: Literal["minimal", "low", "medium", "high", "not set"] = (
+            "high"
+        )
         priority: int = Field(
             default=0, description="Priority level for the filter operations."
         )
@@ -32,45 +42,35 @@ class Filter:
         __metadata__: dict | None = None,
     ) -> dict:
         """
-        Inlet: Modify the incoming request by setting the model, adding metadata, and optional reasoning effort.
+        Inlet: Append R1_SYSTEM_PROMPT to the system prompt of the request.
         """
 
-        # Update model in body so downstream pipe knows which model to use
-        body["model"] = self.valves.MODEL
+        messages = body.get("messages", [])
 
-        # Set __metadata__ for downstream pipes
-        model_info = Models.get_model_by_id(self.valves.MODEL)
-        if __metadata__ and model_info:
-            __metadata__["model"] = model_info.model_dump()
+        if isinstance(messages, list):
+            if messages and isinstance(messages[0], dict) and messages[0].get("role") == "system":
+                existing_content = messages[0].get("content")
 
-        effort = self.valves.REASONING_EFFORT
-        if effort != "not set":
-            body["reasoning_effort"] = effort
+                if isinstance(existing_content, str):
+                    messages[0]["content"] = f"{existing_content}\n{R1_SYSTEM_PROMPT}"
+                elif isinstance(existing_content, list):
+                    appended = False
+                    for item in existing_content:
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == "text"
+                            and isinstance(item.get("text"), str)
+                        ):
+                            item["text"] = f"{item['text']}\n{R1_SYSTEM_PROMPT}"
+                            appended = True
+                            break
+                    if not appended:
+                        existing_content.append({"type": "text", "text": R1_SYSTEM_PROMPT})
+                else:
+                    messages[0]["content"] = R1_SYSTEM_PROMPT
+            else:
+                messages.insert(0, {"role": "system", "content": R1_SYSTEM_PROMPT})
 
-        # Pass the updated request body downstream
-        return body
+            body["messages"] = messages
 
-
-    async def outlet(
-        self,
-        body: dict,
-        __metadata__: dict | None = None,
-    ) -> dict:
-        """
-        Outlet: Finalize the response by setting necessary UI-related fields.
-        Note:
-            1) event emitters are not available here.
-            2) the body in the outlet is DIFFERENT from the inlet body.
-            Read more here: https://github.com/jrkropp/open-webui-developer-toolkit/blob/development/functions/filters/README.md
-        """
-
-        # Ensure the final assistant message has correct model fields for frontend display
-        messages = body.get("messages")
-        if isinstance(messages, list) and messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, dict):
-                last_msg["model"] = self.valves.MODEL
-                last_msg.setdefault("modelName", self.valves.MODEL)
-
-        # Return the finalized response body ready for the UI
         return body
