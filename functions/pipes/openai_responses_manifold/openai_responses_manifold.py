@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.28
-version: 0.9.8
+version: 0.9.9
 license: MIT
 """
 
@@ -31,7 +31,17 @@ from time import perf_counter
 from collections import defaultdict, deque
 from contextvars import ContextVar
 import contextlib
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Union,
+)
 from urllib.parse import urlparse
 
 # Third-party imports
@@ -56,59 +66,186 @@ class ModelFamily:
     """
 
     _DATE_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
-    _PREFIX  = "openai_responses."
+    _PREFIX = "openai_responses."
 
     # Base models → capabilities.
     _SPECS: Dict[str, Dict[str, Any]] = {
-        "gpt-5-auto":           {"features": {"function_calling","reasoning","reasoning_summary","web_search_tool","image_gen_tool","verbosity"}},
-
-        "gpt-5.1":              {"features": {"function_calling","reasoning","reasoning_summary","web_search_tool","image_gen_tool","verbosity"}},
-
-        "gpt-5":                {"features": {"function_calling","reasoning","reasoning_summary","web_search_tool","image_gen_tool","verbosity"}},
-        "gpt-5-mini":           {"features": {"function_calling","reasoning","reasoning_summary","web_search_tool","image_gen_tool","verbosity"}},
-        "gpt-5-nano":           {"features": {"function_calling","reasoning","reasoning_summary","web_search_tool","image_gen_tool","verbosity"}},
-
-        "gpt-4.1":              {"features": {"function_calling","web_search_tool","image_gen_tool"}},
-        "gpt-4.1-mini":         {"features": {"function_calling","web_search_tool","image_gen_tool"}},
-        "gpt-4.1-nano":         {"features": {"function_calling","image_gen_tool"}},
-
-        "gpt-4o":               {"features": {"function_calling","web_search_tool","image_gen_tool"}},
-        "gpt-4o-mini":          {"features": {"function_calling","web_search_tool","image_gen_tool"}},
-
-        "o3":                   {"features": {"function_calling","reasoning","reasoning_summary"}},
-        "o3-mini":              {"features": {"function_calling","reasoning","reasoning_summary"}},
-        "o3-pro":               {"features": {"function_calling","reasoning"}},
-
-        "o4-mini":              {"features": {"function_calling","reasoning","reasoning_summary","web_search_tool"}},
-        "o3-deep-research":     {"features": {"function_calling","reasoning","reasoning_summary","deep_research"}},
-        "o4-mini-deep-research":{"features": {"function_calling","reasoning","reasoning_summary","deep_research"}},
-
-        "gpt-5.1-chat-latest":  {"features": {"function_calling","web_search_tool"}},
-        "gpt-5-chat-latest":    {"features": {"function_calling","web_search_tool"}},
-        "chatgpt-4o-latest":    {"features": {}}, # Chat-optimized non-reasoning model does not support tool calling, or any other advanced features.
+        "gpt-5-auto": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+                "image_gen_tool",
+                "verbosity",
+            }
+        },
+        "gpt-5": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+                "image_gen_tool",
+                "verbosity",
+            }
+        },
+        "gpt-5.1": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+                "verbosity",
+            }
+        },
+        "gpt-5.2": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+                "image_gen_tool",
+                "verbosity",
+            }
+        },
+        "gpt-5-mini": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+                "image_gen_tool",
+                "verbosity",
+            }
+        },
+        "gpt-5-nano": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+                "image_gen_tool",
+                "verbosity",
+            }
+        },
+        "gpt-4.1": {
+            "features": {"function_calling", "web_search_tool", "image_gen_tool"}
+        },
+        "gpt-4.1-mini": {
+            "features": {"function_calling", "web_search_tool", "image_gen_tool"}
+        },
+        "gpt-4.1-nano": {"features": {"function_calling", "image_gen_tool"}},
+        "gpt-4o": {
+            "features": {"function_calling", "web_search_tool", "image_gen_tool"}
+        },
+        "gpt-4o-mini": {
+            "features": {"function_calling", "web_search_tool", "image_gen_tool"}
+        },
+        "o3": {"features": {"function_calling", "reasoning", "reasoning_summary"}},
+        "o3-mini": {"features": {"function_calling", "reasoning", "reasoning_summary"}},
+        "o3-pro": {"features": {"function_calling", "reasoning"}},
+        "o4-mini": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "web_search_tool",
+            }
+        },
+        "o3-deep-research": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "deep_research",
+            }
+        },
+        "o4-mini-deep-research": {
+            "features": {
+                "function_calling",
+                "reasoning",
+                "reasoning_summary",
+                "deep_research",
+            }
+        },
+        "gpt-5-chat-latest": {
+            "features": {}
+        },  # Chat-optimized non-reasoning model does not support tool calling, or any other advanced features.
+        "chatgpt-4o-latest": {
+            "features": {}
+        },  # Chat-optimized non-reasoning model does not support tool calling, or any other advanced features.
     }
 
     # Aliases/pseudos
     _ALIASES: Dict[str, Dict[str, Any]] = {
-        "gpt-5.1-thinking":               {"base_model": "gpt-5"},
-        "gpt-5.1-thinking-minimal":       {"base_model": "gpt-5",       "params": {"reasoning": {"effort": "minimal"}}},
-        "gpt-5.1-thinking-high":          {"base_model": "gpt-5",       "params": {"reasoning": {"effort": "high"}}},
-
-        "gpt-5-thinking":               {"base_model": "gpt-5"},
-        "gpt-5-thinking-minimal":       {"base_model": "gpt-5",       "params": {"reasoning": {"effort": "minimal"}}},
-        "gpt-5-thinking-high":          {"base_model": "gpt-5",       "params": {"reasoning": {"effort": "high"}}},
-
-        "gpt-5-thinking-mini":          {"base_model": "gpt-5-mini"},
-        "gpt-5-thinking-mini-minimal":  {"base_model": "gpt-5-mini",  "params": {"reasoning": {"effort": "minimal"}}},
-        "gpt-5-thinking-mini-high":     {"base_model": "gpt-5-mini",  "params": {"reasoning": {"effort": "high"}}},
-
-        "gpt-5-thinking-nano":          {"base_model": "gpt-5-nano"},
-        "gpt-5-thinking-nano-minimal":  {"base_model": "gpt-5-nano",  "params": {"reasoning": {"effort": "minimal"}}},
-        "gpt-5-thinking-nano-high":     {"base_model": "gpt-5-nano",  "params": {"reasoning": {"effort": "high"}}},
-
+        "gpt-5-thinking": {
+            "base_model": "gpt-5",
+            "params": {"reasoning": {"effort": "medium"}},
+        },
+        "gpt-5-thinking-minimal": {
+            "base_model": "gpt-5",
+            "params": {"reasoning": {"effort": "minimal"}},
+        },
+        "gpt-5-thinking-high": {
+            "base_model": "gpt-5",
+            "params": {"reasoning": {"effort": "high"}},
+        },
+        "gpt-5.1-instant": {
+            "base_model": "gpt-5.1",
+            "params": {"reasoning": {"effort": "none"}},
+        },
+        "gpt-5.1-thinking": {
+            "base_model": "gpt-5.1",
+            "params": {"reasoning": {"effort": "medium"}},
+        },
+        "gpt-5.1-thinking-high": {
+            "base_model": "gpt-5.1",
+            "params": {"reasoning": {"effort": "high"}},
+        },
+        "gpt-5.2-instant": {
+            "base_model": "gpt-5.2",
+            "params": {"reasoning": {"effort": "none"}},
+        },
+        "gpt-5.2-thinking": {
+            "base_model": "gpt-5.2",
+            "params": {"reasoning": {"effort": "medium"}},
+        },
+        "gpt-5.2-thinking-high": {
+            "base_model": "gpt-5.2",
+            "params": {"reasoning": {"effort": "high"}},
+        },
+        "gpt-5.2-thinking-xhigh": {
+            "base_model": "gpt-5.2",
+            "params": {"reasoning": {"effort": "xhigh"}},
+        },
+        "gpt-5-thinking-mini": {"base_model": "gpt-5-mini"},
+        "gpt-5-thinking-mini-minimal": {
+            "base_model": "gpt-5-mini",
+            "params": {"reasoning": {"effort": "minimal"}},
+        },
+        "gpt-5-thinking-mini-high": {
+            "base_model": "gpt-5-mini",
+            "params": {"reasoning": {"effort": "high"}},
+        },
+        "gpt-5-thinking-nano": {"base_model": "gpt-5-nano"},
+        "gpt-5-thinking-nano-minimal": {
+            "base_model": "gpt-5-nano",
+            "params": {"reasoning": {"effort": "minimal"}},
+        },
+        "gpt-5-thinking-nano-high": {
+            "base_model": "gpt-5-nano",
+            "params": {"reasoning": {"effort": "high"}},
+        },
         # Back-compat
-        "o3-mini-high":                 {"base_model": "o3-mini",     "params": {"reasoning": {"effort": "high"}}},
-        "o4-mini-high":                 {"base_model": "o4-mini",     "params": {"reasoning": {"effort": "high"}}},
+        "o3-mini-high": {
+            "base_model": "o3-mini",
+            "params": {"reasoning": {"effort": "high"}},
+        },
+        "o4-mini-high": {
+            "base_model": "o4-mini",
+            "params": {"reasoning": {"effort": "high"}},
+        },
     }
 
     # ── tiny, intuitive helpers ──────────────────────────────────────────────
@@ -116,7 +253,7 @@ class ModelFamily:
     def _norm(cls, model_id: str) -> str:
         m = (model_id or "").strip()
         if m.startswith(cls._PREFIX):
-            m = m[len(cls._PREFIX):]
+            m = m[len(cls._PREFIX) :]
         return cls._DATE_RE.sub("", m.lower())
 
     @classmethod
@@ -135,12 +272,15 @@ class ModelFamily:
     @classmethod
     def features(cls, model_id: str) -> frozenset[str]:
         """Capabilities for the base model behind this id/alias."""
-        return frozenset(cls._SPECS.get(cls.base_model(model_id), {}).get("features", set()))
+        return frozenset(
+            cls._SPECS.get(cls.base_model(model_id), {}).get("features", set())
+        )
 
     @classmethod
     def supports(cls, feature: str, model_id: str) -> bool:
         """Check if a model (alias or base) supports a given feature."""
         return feature in cls.features(model_id)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Data Models
@@ -150,41 +290,45 @@ class CompletionsBody(BaseModel):
     """
     Represents the body of a completions request to OpenAI completions API.
     """
+
     model: str
     messages: List[Dict[str, Any]]
     stream: bool = False
 
     class Config:
-        extra = "allow" # Pass through additional OpenAI parameters automatically
+        extra = "allow"  # Pass through additional OpenAI parameters automatically
+
 
 class ResponsesBody(BaseModel):
     """
     Represents the body of a responses request to OpenAI Responses API.
     """
-    
+
     # Required parameters
     model: str
-    input: Union[str, List[Dict[str, Any]]] # plain text, or rich array
+    input: Union[str, List[Dict[str, Any]]]  # plain text, or rich array
 
     # Optional parameters
-    instructions: Optional[str] = ""              # system prompt
-    stream: bool = False                          # SSE chunking
-    store: Optional[bool] = False                  # persist response on OpenAI side
+    instructions: Optional[str] = ""  # system prompt
+    stream: bool = False  # SSE chunking
+    store: Optional[bool] = False  # persist response on OpenAI side
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_output_tokens: Optional[int] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
-    reasoning: Optional[Dict[str, Any]] = None    # {"effort":"high", ...}
+    reasoning: Optional[Dict[str, Any]] = None  # {"effort":"high", ...}
     parallel_tool_calls: Optional[bool] = True
-    user: Optional[str] = None                # user ID for the request.  Recommended to improve caching hits.
+    user: Optional[str] = (
+        None  # user ID for the request.  Recommended to improve caching hits.
+    )
     tool_choice: Optional[Dict[str, Any]] = None
     tools: Optional[List[Dict[str, Any]]] = None
-    include: Optional[List[str]] = None           # extra output keys
+    include: Optional[List[str]] = None  # extra output keys
 
     class Config:
-        extra = "allow" # Allow additional OpenAI parameters automatically (future-proofing)
+        extra = "allow"  # Allow additional OpenAI parameters automatically (future-proofing)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _apply_alias_defaults(self) -> "ResponsesBody":
         """
         Normalize the model ID to its base and apply alias defaults from ModelFamily.
@@ -215,14 +359,20 @@ class ResponsesBody(BaseModel):
                 elif isinstance(v, list):
                     cur = dst.get(k)
                     if isinstance(cur, list):
-                        seen = set(); out = []
+                        seen = set()
+                        out = []
+
                         def _key(x):
-                            try: return ("json", json.dumps(x, sort_keys=True))
-                            except Exception: return ("id", id(x))
+                            try:
+                                return ("json", json.dumps(x, sort_keys=True))
+                            except Exception:
+                                return ("id", id(x))
+
                         for item in cur + v:
                             kk = _key(item)
                             if kk not in seen:
-                                seen.add(kk); out.append(item)
+                                seen.add(kk)
+                                out.append(item)
                         dst[k] = out
                     else:
                         dst[k] = list(v)
@@ -236,10 +386,12 @@ class ResponsesBody(BaseModel):
         # Write merged data back onto the model
         for k, v in data.items():
             setattr(self, k, v)
-        return self   
+        return self
 
     @staticmethod
-    def transform_owui_tools(__tools__: Dict[str, dict] | None, *, strict: bool = False) -> List[dict]:
+    def transform_owui_tools(
+        __tools__: Dict[str, dict] | None, *, strict: bool = False
+    ) -> List[dict]:
         """
         Convert Open WebUI __tools__ registry (dict of entries with {"spec": {...}}) into
         OpenAI Responses-API tool specs: {"type": "function", "name", ...}.
@@ -284,7 +436,7 @@ class ResponsesBody(BaseModel):
 
         try:
             data = json.loads(mcp_json)
-        except Exception as exc:                             # malformed JSON
+        except Exception as exc:  # malformed JSON
             logging.getLogger(__name__).warning(
                 "REMOTE_MCP_SERVERS_JSON could not be parsed (%s); ignoring.", exc
             )
@@ -303,11 +455,12 @@ class ResponsesBody(BaseModel):
 
             # Minimum viable keys
             label = obj.get("server_label")
-            url   = obj.get("server_url")
+            url = obj.get("server_url")
             if not (label and url):
                 logging.getLogger(__name__).warning(
                     "REMOTE_MCP_SERVERS_JSON item %d ignored: "
-                    "'server_label' and 'server_url' are required.", idx
+                    "'server_label' and 'server_url' are required.",
+                    idx,
                 )
                 continue
 
@@ -325,7 +478,7 @@ class ResponsesBody(BaseModel):
             valid_tools.append(tool)
 
         return valid_tools
-    
+
     @staticmethod
     def transform_messages_to_input(
         messages: List[Dict[str, Any]],
@@ -387,27 +540,38 @@ class ResponsesBody(BaseModel):
 
                 # Only transform known types; leave all others unchanged
                 block_transform = {
-                    "text":       lambda b: {"type": "input_text",  "text": b.get("text", "")},
-                    "image_url":  lambda b: {"type": "input_image", "image_url": b.get("image_url", {}).get("url")},
-                    "input_file": lambda b: {"type": "input_file",  "file_id": b.get("file_id")},
+                    "text": lambda b: {"type": "input_text", "text": b.get("text", "")},
+                    "image_url": lambda b: {
+                        "type": "input_image",
+                        "image_url": b.get("image_url", {}).get("url"),
+                    },
+                    "input_file": lambda b: {
+                        "type": "input_file",
+                        "file_id": b.get("file_id"),
+                    },
                 }
 
-                openai_input.append({
-                    "role": "user",
-                    "content": [
-                        block_transform.get(block.get("type"), lambda b: b)(block)
-                        for block in content_blocks if block
-                    ],
-                })
+                openai_input.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            block_transform.get(block.get("type"), lambda b: b)(block)
+                            for block in content_blocks
+                            if block
+                        ],
+                    }
+                )
                 continue
 
             # -------- developer message --------------------------------- #
             # Developer messages are treated as system messages in Responses API
             if role == "developer":
-                openai_input.append({
-                    "role": "developer",
-                    "content": raw_content,
-                })
+                openai_input.append(
+                    {
+                        "role": "developer",
+                        "content": raw_content,
+                    }
+                )
                 continue
 
             # -------- assistant message ----------------------------------- #
@@ -419,10 +583,17 @@ class ResponsesBody(BaseModel):
                         if item is not None:
                             openai_input.append(item)
                     elif segment["type"] == "text" and segment["text"].strip():
-                        openai_input.append({
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": segment["text"].strip()}]
-                        })
+                        openai_input.append(
+                            {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": segment["text"].strip(),
+                                    }
+                                ],
+                            }
+                        )
             else:
                 # Plain assistant text (no encoded IDs detected)
                 if raw_content:
@@ -437,7 +608,11 @@ class ResponsesBody(BaseModel):
 
     @classmethod
     def from_completions(
-        ResponsesBody, completions_body: "CompletionsBody", chat_id: Optional[str] = None, openwebui_model_id: Optional[str] = None, **extra_params
+        ResponsesBody,
+        completions_body: "CompletionsBody",
+        chat_id: Optional[str] = None,
+        openwebui_model_id: Optional[str] = None,
+        **extra_params,
     ) -> "ResponsesBody":
         """
         Convert CompletionsBody → ResponsesBody.
@@ -453,21 +628,26 @@ class ResponsesBody(BaseModel):
         # Step 1: Remove unsupported fields
         unsupported_fields = {
             # Fields that are not supported by OpenAI Responses API
-            "frequency_penalty", "presence_penalty", "seed", "logit_bias",
-            "logprobs", "top_logprobs", "n", "stop",
-            "response_format", # Replaced with 'text' in Responses API
-            "suffix", # Responses API does not support suffix
-            "stream_options", # Responses API does not support stream options
-            "audio", # Responses API does not support audio input
-            "function_call", # Deprecated in favor of 'tool_choice'.
-            "functions", # Deprecated in favor of 'tools'.
-
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "logit_bias",
+            "logprobs",
+            "top_logprobs",
+            "n",
+            "stop",
+            "response_format",  # Replaced with 'text' in Responses API
+            "suffix",  # Responses API does not support suffix
+            "stream_options",  # Responses API does not support stream options
+            "audio",  # Responses API does not support audio input
+            "function_call",  # Deprecated in favor of 'tool_choice'.
+            "functions",  # Deprecated in favor of 'tools'.
             # Fields that are dropped and manually handled in step 2.
-            "reasoning_effort", "max_tokens",
-
+            "reasoning_effort",
+            "max_tokens",
             # Fields that are dropped and manually handled later in the pipe()
             "tools",
-            "extra_tools" # Not a real OpenAI parm. Upstream filters may use it to add tools. The are appended to body["tools"] later in the pipe()
+            "extra_tools",  # Not a real OpenAI parm. Upstream filters may use it to add tools. The are appended to body["tools"] later in the pipe()
         }
         sanitized_params = {}
         for key, value in completions_dict.items():
@@ -489,7 +669,14 @@ class ResponsesBody(BaseModel):
             sanitized_params["reasoning"] = reasoning
 
         # Extract the last system message (if any)
-        instructions = next((msg["content"] for msg in reversed(completions_dict.get("messages", [])) if msg["role"] == "system"), None)
+        instructions = next(
+            (
+                msg["content"]
+                for msg in reversed(completions_dict.get("messages", []))
+                if msg["role"] == "system"
+            ),
+            None,
+        )
         if instructions:
             sanitized_params["instructions"] = instructions
 
@@ -499,14 +686,15 @@ class ResponsesBody(BaseModel):
             sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
                 completions_dict.get("messages", []),
                 chat_id=chat_id,
-                openwebui_model_id=openwebui_model_id
+                openwebui_model_id=openwebui_model_id,
             )
 
         # Build the final ResponsesBody directly
         return ResponsesBody(
             **sanitized_params,
-            **extra_params  # Extra parameters that are passed to the ResponsesBody (e.g., custom parameters configured in Open WebUI model settings)
+            **extra_params,  # Extra parameters that are passed to the ResponsesBody (e.g., custom parameters configured in Open WebUI model settings)
         )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Main Controller: Pipe
@@ -517,7 +705,10 @@ class Pipe:
     class Valves(BaseModel):
         # Connection & Auth
         BASE_URL: str = Field(
-            default=((os.getenv("OPENAI_API_BASE_URL") or "").strip() or "https://api.openai.com/v1"),
+            default=(
+                (os.getenv("OPENAI_API_BASE_URL") or "").strip()
+                or "https://api.openai.com/v1"
+            ),
             description="The base URL to use with the OpenAI SDK. Defaults to the official OpenAI API endpoint. Supports LiteLLM and other custom endpoints.",
         )
         API_KEY: str = Field(
@@ -527,7 +718,7 @@ class Pipe:
 
         # Models
         MODEL_ID: str = Field(
-            default="gpt-5.1-chat-latest, gpt-5.1-thinking, gpt-5.1-thinking-high, gpt-5.1-thinking-minimal",
+            default="gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs (see README.md for full list)."
@@ -539,11 +730,13 @@ class Pipe:
             default="disabled",
             description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
-        PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = Field(
-            default="disabled",
-            description="REQUIRES VERIFIED OPENAI ORG. If verified, highly recommend using 'response' or 'conversation' for best results. If `disabled` (default) = never request encrypted reasoning tokens; if `response` = request tokens so the model can carry reasoning across tool calls for the current response; If `conversation` = also persist tokens for future messages in this chat (higher token usage; quality may vary).",
+        PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = (
+            Field(
+                default="disabled",
+                description="REQUIRES VERIFIED OPENAI ORG. If verified, highly recommend using 'response' or 'conversation' for best results. If `disabled` (default) = never request encrypted reasoning tokens; if `response` = request tokens so the model can carry reasoning across tool calls for the current response; If `conversation` = also persist tokens for future messages in this chat (higher token usage; quality may vary).",
+            )
         )
-        
+
         # Tool execution behavior
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
@@ -567,7 +760,7 @@ class Pipe:
                 "Maximum number of individual tool or function calls the model can make "
                 "within a single response. Applies to the total number of calls across "
                 "all built-in tools. Further tool-call attempts beyond this limit will be ignored."
-            )
+            ),
         )
         MAX_FUNCTION_CALL_LOOPS: int = Field(
             default=10,
@@ -577,7 +770,7 @@ class Pipe:
                 "executing all requested functions, and feeding the results back into the model. "
                 "Looping stops when this limit is reached or when the model no longer requests "
                 "additional tool or function calls."
-            )
+            ),
         )
 
         # Web search
@@ -629,9 +822,9 @@ class Pipe:
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
 
-
     class UserValves(BaseModel):
         """Per-user valve overrides."""
+
         LOG_LEVEL: Literal[
             "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "INHERIT"
         ] = Field(
@@ -642,14 +835,22 @@ class Pipe:
     # 4.2 Constructor and Entry Points
     def __init__(self):
         self.type = "manifold"
-        self.id = "openai_responses" # Unique ID for this manifold
-        self.valves = self.Valves()  # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
+        self.id = "openai_responses"  # Unique ID for this manifold
+        self.valves = (
+            self.Valves()
+        )  # Note: valve values are not accessible in __init__. Access from pipes() or pipe() methods.
         self.session: aiohttp.ClientSession | None = None
         self.logger = SessionLogger.get_logger(__name__)
 
     async def pipes(self):
-        model_ids = [model_id.strip() for model_id in self.valves.MODEL_ID.split(",") if model_id.strip()]
-        return [{"id": model_id, "name": f"OpenAI: {model_id}"} for model_id in model_ids]
+        model_ids = [
+            model_id.strip()
+            for model_id in self.valves.MODEL_ID.split(",")
+            if model_id.strip()
+        ]
+        return [
+            {"id": model_id, "name": f"OpenAI: {model_id}"} for model_id in model_ids
+        ]
 
     async def pipe(
         self,
@@ -669,14 +870,24 @@ class Pipe:
         ``_run_streaming_loop``.  Otherwise it falls back to
         ``_run_nonstreaming_loop`` and returns the aggregated response.
         """
-        valves = self._merge_valves(self.valves, self.UserValves.model_validate(__user__.get("valves", {})))
-        openwebui_model_id = __metadata__.get("model", {}).get("id", "") # Full model ID, e.g. "openai_responses.gpt-4o"
-        user_identifier = __user__[valves.PROMPT_CACHE_KEY]  # Use 'id' or 'email' as configured
-        features = __metadata__.get("features", {}).get("openai_responses", {}) # Custom location that this manifold uses to store feature flags
+        valves = self._merge_valves(
+            self.valves, self.UserValves.model_validate(__user__.get("valves", {}))
+        )
+        openwebui_model_id = __metadata__.get("model", {}).get(
+            "id", ""
+        )  # Full model ID, e.g. "openai_responses.gpt-4o"
+        user_identifier = __user__[
+            valves.PROMPT_CACHE_KEY
+        ]  # Use 'id' or 'email' as configured
+        features = __metadata__.get("features", {}).get(
+            "openai_responses", {}
+        )  # Custom location that this manifold uses to store feature flags
 
         # STEP 0: Set up session logger with session_id and log level
         SessionLogger.session_id.set(__metadata__.get("session_id", None))
-        SessionLogger.log_level.set(getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO))
+        SessionLogger.log_level.set(
+            getattr(logging, valves.LOG_LEVEL.upper(), logging.INFO)
+        )
 
         # ------------------------------------------------------------------
         # BONUS: Add support for Multi-line Status Descriptions (plus bold first line)
@@ -693,10 +904,11 @@ class Pipe:
         #   • No frontend rebuild; injected at runtime via `execute`
         #   • Runs once per tab (checks for an existing <style> tag)
         # ------------------------------------------------------------------
-        await __event_call__({
-            "type": "execute",
-            "data": {
-                "code": """
+        await __event_call__(
+            {
+                "type": "execute",
+                "data": {
+                    "code": """
                 (() => {
                 // Only inject once per tab
                 if (document.getElementById("owui-status-unclamp")) return "ok";
@@ -728,33 +940,45 @@ class Pipe:
                 return "ok";
                 })();
                 """
+                },
             }
-        })
+        )
         # ------------------------------------------------------------------
-
 
         # STEP 1: Transform request body (Completions API -> Responses API).
         completions_body = CompletionsBody.model_validate(body)
         responses_body = ResponsesBody.from_completions(
             completions_body=completions_body,
-
             # If chat_id and openwebui_model_id are provided, from_completions() uses them to fetch previously persisted items (function_calls, reasoning, etc.) from DB and reconstruct the input array in the correct order.
-            **({"chat_id": __metadata__["chat_id"]} if __metadata__.get("chat_id") else {}),
-            **({"openwebui_model_id": openwebui_model_id} if openwebui_model_id else {}),
-
+            **(
+                {"chat_id": __metadata__["chat_id"]}
+                if __metadata__.get("chat_id")
+                else {}
+            ),
+            **(
+                {"openwebui_model_id": openwebui_model_id} if openwebui_model_id else {}
+            ),
             # Additional optional parameters passed directly to ResponsesBody without validation. Overrides any parameters in the original body with the same name.
             truncation=valves.TRUNCATION,
             user=user_identifier,
-            **({"max_tool_calls": valves.MAX_TOOL_CALLS} if valves.MAX_TOOL_CALLS is not None else {}),
+            **(
+                {"max_tool_calls": valves.MAX_TOOL_CALLS}
+                if valves.MAX_TOOL_CALLS is not None
+                else {}
+            ),
         )
 
         # STEP 2: Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
-            return await self._run_task_model_request(responses_body.model_dump(), valves) # Placeholder for task handling logic
+            return await self._run_task_model_request(
+                responses_body.model_dump(), valves
+            )  # Placeholder for task handling logic
 
         # STEP 3: Build OpenAI Tools JSON (from __tools__, valves, and completions_body.extra_tools)
-        __tools__ = await __tools__ if inspect.isawaitable(__tools__) else __tools__  # Await coroutine if needed (required for newer versions of Open WebUI)
+        __tools__ = (
+            await __tools__ if inspect.isawaitable(__tools__) else __tools__
+        )  # Await coroutine if needed (required for newer versions of Open WebUI)
         tools = build_tools(
             responses_body,
             valves,
@@ -772,12 +996,14 @@ class Pipe:
                     await self._emit_notification(
                         __event_emitter__,
                         content=f"Enabling native function calling for model: {openwebui_model_id}. Please re-run your query.",
-                        level="info"
+                        level="info",
                     )
                     params["function_calling"] = "native"
                     form_data = model.model_dump()
                     form_data["params"] = params
-                    Models.update_model_by_id(openwebui_model_id, ModelForm(**form_data))
+                    Models.update_model_by_id(
+                        openwebui_model_id, ModelForm(**form_data)
+                    )
 
         # STEP 5: Handle GPT-5-Auto routing
         if openwebui_model_id.endswith(".gpt-5-auto-dev"):
@@ -786,7 +1012,7 @@ class Pipe:
                 responses_body=responses_body,
                 tools=tools,
                 valves=valves,
-                event_emitter=__event_emitter__
+                event_emitter=__event_emitter__,
             )
         elif openwebui_model_id.endswith(".gpt-5-auto"):
             responses_body.model = "gpt-5-chat-latest"
@@ -795,7 +1021,7 @@ class Pipe:
                 content=(
                     "Model router coming soon — using gpt-5-chat-latest (GPT-5 Fast)."
                 ),
-                level="warning"
+                level="warning",
             )
 
         # STEP 6: Add tools to responses body, if supported
@@ -803,33 +1029,49 @@ class Pipe:
             responses_body.tools = tools
 
         # STEP 7: Enable reasoning summary if enabled and supported
-        if ModelFamily.supports("reasoning_summary", responses_body.model) and valves.REASONING_SUMMARY != "disabled":
+        if (
+            ModelFamily.supports("reasoning_summary", responses_body.model)
+            and valves.REASONING_SUMMARY != "disabled"
+        ):
             # Ensure reasoning param is a mutable dict so we can safely assign to it
             reasoning_params = dict(responses_body.reasoning or {})
             reasoning_params["summary"] = valves.REASONING_SUMMARY
             responses_body.reasoning = reasoning_params
 
         # STEP 8: Always request encrypted reasoning for in-turn carry (multi-tool) unless disabled
-        if (ModelFamily.supports("reasoning", responses_body.model)
+        if (
+            ModelFamily.supports("reasoning", responses_body.model)
             and valves.PERSIST_REASONING_TOKENS != "disabled"
-            and responses_body.store is False):
-             responses_body.include = responses_body.include or []
-             if "reasoning.encrypted_content" not in responses_body.include:
-                 responses_body.include.append("reasoning.encrypted_content")
+            and responses_body.store is False
+        ):
+            responses_body.include = responses_body.include or []
+            if "reasoning.encrypted_content" not in responses_body.include:
+                responses_body.include.append("reasoning.encrypted_content")
 
         # If a web_search tool is present, always request sources
-        if any(isinstance(t, dict) and t.get("type") == "web_search" for t in (responses_body.tools or [])):
+        if any(
+            isinstance(t, dict) and t.get("type") == "web_search"
+            for t in (responses_body.tools or [])
+        ):
             if ModelFamily.supports("web_search_tool", responses_body.model):
                 responses_body.include = list(responses_body.include or [])
                 if "web_search_call.action.sources" not in responses_body.include:
                     responses_body.include.append("web_search_call.action.sources")
 
         # STEP 9: Map WebUI "Add Details" / "More Concise" → text.verbosity (if supported by model), then strip the stub
-        input_items = responses_body.input if isinstance(responses_body.input, list) else None
+        input_items = (
+            responses_body.input if isinstance(responses_body.input, list) else None
+        )
         if input_items:
             last_item = input_items[-1]
-            content_blocks = last_item.get("content") if last_item.get("role") == "user" else None
-            first_block = content_blocks[0] if isinstance(content_blocks, list) and content_blocks else {}
+            content_blocks = (
+                last_item.get("content") if last_item.get("role") == "user" else None
+            )
+            first_block = (
+                content_blocks[0]
+                if isinstance(content_blocks, list) and content_blocks
+                else {}
+            )
             last_user_text = (first_block.get("text") or "").strip().lower()
 
             directive_to_verbosity = {"add details": "high", "more concise": "low"}
@@ -839,7 +1081,9 @@ class Pipe:
                 # Check model support
                 if ModelFamily.supports("verbosity", responses_body.model):
                     # Set/overwrite verbosity (do NOT remove the stub message)
-                    current_text_params = dict(getattr(responses_body, "text", {}) or {})
+                    current_text_params = dict(
+                        getattr(responses_body, "text", {}) or {}
+                    )
                     current_text_params["verbosity"] = verbosity_value
                     responses_body.text = current_text_params
 
@@ -847,25 +1091,44 @@ class Pipe:
                     input_items.pop()  # or: del input_items[-1]
 
                     # Notify the user in the UI
-                    await self._emit_notification(__event_emitter__,f"Regenerating with verbosity set to {verbosity_value}.",level="info")
+                    await self._emit_notification(
+                        __event_emitter__,
+                        f"Regenerating with verbosity set to {verbosity_value}.",
+                        level="info",
+                    )
 
-                    self.logger.debug("Set text.verbosity=%s based on regenerate directive '%s'",verbosity_value, last_user_text)
+                    self.logger.debug(
+                        "Set text.verbosity=%s based on regenerate directive '%s'",
+                        verbosity_value,
+                        last_user_text,
+                    )
 
         # STEP 10: Log the transformed request body
         self.logger.debug(
             "Transformed ResponsesBody: %s",
-            json.dumps(responses_body.model_dump(exclude_none=True), indent=2, ensure_ascii=False),
+            json.dumps(
+                responses_body.model_dump(exclude_none=True),
+                indent=2,
+                ensure_ascii=False,
+            ),
         )
 
         # STEP 11: Send to OpenAI Responses API
         if responses_body.stream:
             # Return async generator for partial text
-            return await self._run_streaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            return await self._run_streaming_loop(
+                responses_body, valves, __event_emitter__, __metadata__, __tools__
+            )
         else:
             # Return final text (non-streaming)
-            await self._emit_error(__event_emitter__, "Non-streaming is currently not supported with the OpenAI Responses Manifold.  Please enable streaming and try again", level="warning", show_error_message=True)
+            await self._emit_error(
+                __event_emitter__,
+                "Non-streaming is currently not supported with the OpenAI Responses Manifold.  Please enable streaming and try again",
+                level="warning",
+                show_error_message=True,
+            )
             return ""
-            #return await self._run_nonstreaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
+            # return await self._run_nonstreaming_loop(responses_body, valves, __event_emitter__, __metadata__, __tools__)
 
     # 4.3 Core Multi-Turn Handlers
     async def _run_streaming_loop(
@@ -888,18 +1151,27 @@ class Pipe:
 
         thinking_tasks: list[asyncio.Task] = []
         if ModelFamily.supports("reasoning", body.model) and event_emitter:
+
             async def _later(delay: float, msg: str) -> None:
                 await asyncio.sleep(delay)
                 await event_emitter({"type": "status", "data": {"description": msg}})
 
             thinking_tasks = []
-            for delay, msg in [
-                (0, "Thinking…"),
-                (1.5, "Reading the user's question…"),
-                (4.0, "Gathering my thoughts…"),
-                (6.0, "Exploring possible responses…"),
-                (7.0, "Building a plan…"),
-            ]:
+            if "instant" in openwebui_model:
+                messages = [
+                    (0, "Working…"),
+                    (2.0, "Processing…"),
+                ]
+            else:
+                messages = [
+                    (0, "Thinking…"),
+                    (1.5, "Reading the user's question…"),
+                    (4.0, "Gathering my thoughts…"),
+                    (6.0, "Exploring possible responses…"),
+                    (7.0, "Building a plan…"),
+                ]
+
+            for delay, msg in messages:
                 thinking_tasks.append(
                     asyncio.create_task(_later(delay + random.uniform(0, 0.5), msg))
                 )
@@ -944,14 +1216,22 @@ class Pipe:
                         self.logger.debug("Received event: %s", etype)
                         # if doesn't end in .delta, log the full event
                         if not etype.endswith(".delta"):
-                            self.logger.debug("Event data: %s", json.dumps(event, indent=2, ensure_ascii=False))
+                            self.logger.debug(
+                                "Event data: %s",
+                                json.dumps(event, indent=2, ensure_ascii=False),
+                            )
 
                     # ─── Emit partial delta assistant message
                     if etype == "response.output_text.delta":
                         delta = event.get("delta", "")
                         if delta:
                             assistant_message += delta
-                            await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
+                            await event_emitter(
+                                {
+                                    "type": "chat:message",
+                                    "data": {"content": assistant_message},
+                                }
+                            )
                         continue
 
                     # ─── Emit reasoning summary once done ───────────────────────
@@ -959,7 +1239,9 @@ class Pipe:
                         text = (event.get("text") or "").strip()
                         if text:
                             title_match = re.findall(r"\*\*(.+?)\*\*", text)
-                            title = title_match[-1].strip() if title_match else "Thinking…"
+                            title = (
+                                title_match[-1].strip() if title_match else "Thinking…"
+                            )
                             content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
                             if event_emitter:
                                 cancel_thinking()
@@ -990,16 +1272,25 @@ class Pipe:
 
                                 # First time seeing this URL → emit a 'source' event
                                 # Minimal domain extraction (no urlparse)
-                                host = url.split("//", 1)[-1].split("/", 1)[0].lower().lstrip("www.")
+                                host = (
+                                    url.split("//", 1)[-1]
+                                    .split("/", 1)[0]
+                                    .lower()
+                                    .lstrip("www.")
+                                )
                                 citation = {
                                     "source": {"name": host or "source", "url": url},
                                     "document": [title],
-                                    "metadata": [{
-                                        "source": url,
-                                        "date_accessed": datetime.date.today().isoformat(),
-                                    }],
+                                    "metadata": [
+                                        {
+                                            "source": url,
+                                            "date_accessed": datetime.date.today().isoformat(),
+                                        }
+                                    ],
                                 }
-                                await event_emitter({"type": "source", "data": citation})
+                                await event_emitter(
+                                    {"type": "source", "data": citation}
+                                )
                                 emitted_citations.append(citation)
 
                             # TODO: Add support for insert citation markers.
@@ -1007,7 +1298,6 @@ class Pipe:
                             end_idx = ann.get("end_index")
 
                         continue
-
 
                     # ─── Emit status updates for in-progress items ──────────────────────
                     if etype == "response.output_item.added":
@@ -1020,7 +1310,9 @@ class Pipe:
                                 await event_emitter(
                                     {
                                         "type": "status",
-                                        "data": {"description": "Responding to the user…"},
+                                        "data": {
+                                            "description": "Responding to the user…"
+                                        },
                                     }
                                 )
                             continue
@@ -1039,7 +1331,9 @@ class Pipe:
                         should_persist = False
                         if item_type == "reasoning":
                             # Persist reasoning only when explicitly allowed
-                            should_persist = valves.PERSIST_REASONING_TOKENS == "conversation"
+                            should_persist = (
+                                valves.PERSIST_REASONING_TOKENS == "conversation"
+                            )
 
                         elif item_type in ("message", "web_search_call"):
                             # Never persist assistant/user messages or ephemeral search calls
@@ -1057,10 +1351,16 @@ class Pipe:
                                 openwebui_model,
                             )
                             if hidden_uid_marker:
-                                self.logger.debug("Persisted item: %s", hidden_uid_marker)
+                                self.logger.debug(
+                                    "Persisted item: %s", hidden_uid_marker
+                                )
                                 assistant_message += hidden_uid_marker
-                                await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
-
+                                await event_emitter(
+                                    {
+                                        "type": "chat:message",
+                                        "data": {"content": assistant_message},
+                                    }
+                                )
 
                         # Default empty content
                         title = f"Running `{item_name}`"
@@ -1070,8 +1370,12 @@ class Pipe:
                         if item_type == "function_call":
                             title = f"Running the {item_name} tool…"
                             arguments = json.loads(item.get("arguments") or "{}")
-                            args_formatted = ", ".join(f"{k}={json.dumps(v)}" for k, v in arguments.items())
-                            content = wrap_code_block(f"{item_name}({args_formatted})", "python")
+                            args_formatted = ", ".join(
+                                f"{k}={json.dumps(v)}" for k, v in arguments.items()
+                            )
+                            content = wrap_code_block(
+                                f"{item_name}({args_formatted})", "python"
+                            )
 
                         elif item_type == "web_search_call":
                             action = item.get("action", {}) or {}
@@ -1084,36 +1388,40 @@ class Pipe:
                                 if event_emitter:
                                     # Emit 'searching' status update along with the search query if available
                                     if query:
-                                        await event_emitter({
-                                            "type": "status",
-                                            "data": {
-                                                "action": "web_search_queries_generated",
-                                                "description": "Searching",
-                                                "queries": [query],
-                                                "done": False,
-                                            },
-                                        })
+                                        await event_emitter(
+                                            {
+                                                "type": "status",
+                                                "data": {
+                                                    "action": "web_search_queries_generated",
+                                                    "description": "Searching",
+                                                    "queries": [query],
+                                                    "done": False,
+                                                },
+                                            }
+                                        )
 
                                     # If API returned sources (only when include[...] was set), emit the panel now
                                     if urls:
-                                        await event_emitter({
-                                            "type": "status",
-                                            "data": {
-                                                "action": "web_search",
-                                                "description": "Reading through {{count}} sites",
-                                                "query": query,
-                                                "urls": urls,
-                                                "done": False,
-                                            },
-                                        })
+                                        await event_emitter(
+                                            {
+                                                "type": "status",
+                                                "data": {
+                                                    "action": "web_search",
+                                                    "description": "Reading through {{count}} sites",
+                                                    "query": query,
+                                                    "urls": urls,
+                                                    "done": False,
+                                                },
+                                            }
+                                        )
 
                             elif action.get("type") == "open_page":
-                                #TODO: emit status for open_page.  Only emitted by Deep Research models
+                                # TODO: emit status for open_page.  Only emitted by Deep Research models
                                 continue
                             elif action.get("type") == "find_in_page":
-                                #TODO: emit status for find_in_page.  Only emitted by Deep Research models
+                                # TODO: emit status for find_in_page.  Only emitted by Deep Research models
                                 continue
-                                    
+
                             continue
 
                         elif item_type == "file_search_call":
@@ -1125,38 +1433,50 @@ class Pipe:
                         elif item_type == "mcp_call":
                             title = "Let me query the MCP server…"
                         elif item_type == "reasoning":
-                            title = None # Don't emit a title for reasoning items
+                            title = None  # Don't emit a title for reasoning items
 
                         # Emit the status with prepared title and detailed content
                         if title and event_emitter:
                             desc = title if not content else f"{title}\n{content}"
                             if thinking_tasks:
                                 cancel_thinking()
-                            await event_emitter({"type": "status", "data": {"description": desc}})
+                            await event_emitter(
+                                {"type": "status", "data": {"description": desc}}
+                            )
 
                         continue
 
                     # ─── Capture final response (incl. all non-visible items like reasoning tokens for future turns)
                     if etype == "response.completed":
                         final_response = event.get("response", {})
-                        body.input.extend(final_response.get("output", [])) # This includes all non-visible items (e.g. reasoning, web_search_call, tool calls, etc..) and appends to body.input so they are included in future turns (if any)
+                        body.input.extend(
+                            final_response.get("output", [])
+                        )  # This includes all non-visible items (e.g. reasoning, web_search_call, tool calls, etc..) and appends to body.input so they are included in future turns (if any)
                         break
 
                 if final_response is None:
-                    raise ValueError("No final response received from OpenAI Responses API.")
+                    raise ValueError(
+                        "No final response received from OpenAI Responses API."
+                    )
 
                 # Extract usage information from OpenAI response and pass-through to Open WebUI
                 usage = final_response.get("usage", {})
                 if usage:
                     usage["turn_count"] = 1
                     usage["function_call_count"] = sum(
-                        1 for i in final_response["output"] if i["type"] == "function_call"
+                        1
+                        for i in final_response["output"]
+                        if i["type"] == "function_call"
                     )
                     total_usage = merge_usage_stats(total_usage, usage)
-                    await self._emit_completion(event_emitter, content="", usage=total_usage, done=False)
+                    await self._emit_completion(
+                        event_emitter, content="", usage=total_usage, done=False
+                    )
 
                 # Execute tool calls (if any), persist results (if valve enabled), and append to body.input.
-                calls = [i for i in final_response["output"] if i["type"] == "function_call"]
+                calls = [
+                    i for i in final_response["output"] if i["type"] == "function_call"
+                ]
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
@@ -1171,8 +1491,12 @@ class Pipe:
                             assistant_message += hidden_uid_marker
                             if thinking_tasks:
                                 cancel_thinking()
-                            await event_emitter({"type": "chat:message", "data": {"content": assistant_message}})
-
+                            await event_emitter(
+                                {
+                                    "type": "chat:message",
+                                    "data": {"content": assistant_message},
+                                }
+                            )
 
                     for output in function_outputs:
                         result_text = wrap_code_block(output.get("output", ""))
@@ -1182,7 +1506,9 @@ class Pipe:
                             await event_emitter(
                                 {
                                     "type": "status",
-                                    "data": {"description": f"Received tool result\n{result_text}"},
+                                    "data": {
+                                        "description": f"Received tool result\n{result_text}"
+                                    },
                                 }
                             )
                     body.input.extend(function_outputs)
@@ -1192,7 +1518,13 @@ class Pipe:
         # Catch any exceptions during the streaming loop and emit an error
         except Exception as e:  # pragma: no cover - network errors
             error_occurred = True
-            await self._emit_error(event_emitter, f"Error: {str(e)}", show_error_message=True, show_error_log_citation=True, done=True)
+            await self._emit_error(
+                event_emitter,
+                f"Error: {str(e)}",
+                show_error_message=True,
+                show_error_log_citation=True,
+                done=True,
+            )
 
         finally:
             cancel_thinking()
@@ -1205,7 +1537,11 @@ class Pipe:
                     {
                         "type": "status",
                         "data": {
-                            "description": f"Thought for {elapsed:.1f} seconds",
+                            "description": (
+                                f"Completed in {elapsed:.1f} seconds"
+                                if "instant" in openwebui_model
+                                else f"Thought for {elapsed:.1f} seconds"
+                            ),
                             "done": True,
                         },
                     }
@@ -1216,10 +1552,14 @@ class Pipe:
                     session_id = SessionLogger.session_id.get()
                     logs = SessionLogger.logs.get(session_id, [])
                     if logs:
-                        await self._emit_citation(event_emitter, "\n".join(logs), "Logs")
+                        await self._emit_citation(
+                            event_emitter, "\n".join(logs), "Logs"
+                        )
 
             # Emit completion (middleware.py also does this so this just covers if there is a downstream error)
-            await self._emit_completion(event_emitter, content="", usage=total_usage, done=True)  # There must be an empty content to avoid breaking the UI
+            await self._emit_completion(
+                event_emitter, content="", usage=total_usage, done=True
+            )  # There must be an empty content to avoid breaking the UI
 
             # Clear logs
             SessionLogger.logs.pop(SessionLogger.session_id.get(), None)
@@ -1269,9 +1609,7 @@ class Pipe:
 
     # 4.4 Task Model Handling
     async def _run_task_model_request(
-        self,
-        body: Dict[str, Any],
-        valves: Pipe.Valves
+        self, body: Dict[str, Any], valves: Pipe.Valves
     ) -> Dict[str, Any]:
         """Process a task model request via the Responses API.
 
@@ -1305,13 +1643,10 @@ class Pipe:
         message = "".join(text_parts)
 
         return message
-      
+
     # 4.5 LLM HTTP Request Helpers
     async def send_openai_responses_streaming_request(
-        self,
-        request_body: dict[str, Any],
-        api_key: str,
-        base_url: str
+        self, request_body: dict[str, Any], api_key: str, base_url: str
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE events from the Responses endpoint as soon as they arrive.
 
@@ -1341,18 +1676,22 @@ class Pipe:
                     newline_idx = buf.find(b"\n", start_idx)
                     if newline_idx == -1:
                         break
-                    
+
                     line = buf[start_idx:newline_idx].strip()
                     start_idx = newline_idx + 1
 
                     # Skip empty lines, comment lines, or anything not starting with "data:"
-                    if (not line or line.startswith(b":") or not line.startswith(b"data:")):
+                    if (
+                        not line
+                        or line.startswith(b":")
+                        or not line.startswith(b"data:")
+                    ):
                         continue
 
                     data_part = line[5:].strip()
                     if data_part == b"[DONE]":
                         return  # End of SSE stream
-                    
+
                     # Yield JSON-decoded data
                     yield json.loads(data_part.decode("utf-8"))
 
@@ -1379,7 +1718,7 @@ class Pipe:
         async with self.session.post(url, json=request_params, headers=headers) as resp:
             resp.raise_for_status()
             return await resp.json()
-    
+
     async def _get_or_init_http_session(self) -> aiohttp.ClientSession:
         """Return a cached ``aiohttp.ClientSession`` instance.
 
@@ -1415,12 +1754,12 @@ class Pipe:
         )
 
         return session
-    
+
     # 4.6 Tool Execution Logic
     @staticmethod
     async def _execute_function_calls(
-        calls: list[dict],                      # raw call-items from the LLM
-        tools: dict[str, dict[str, Any]],       # name → {callable, …}
+        calls: list[dict],  # raw call-items from the LLM
+        tools: dict[str, dict[str, Any]],  # name → {callable, …}
     ) -> list[dict]:
         """Execute one or more tool calls and return their outputs.
 
@@ -1428,30 +1767,34 @@ class Pipe:
         and executed concurrently.  The returned list contains synthetic
         ``function_call_output`` items suitable for feeding back into the LLM.
         """
+
         def _make_task(call):
             tool_cfg = tools.get(call["name"])
-            if not tool_cfg:                                 # tool missing
+            if not tool_cfg:  # tool missing
                 return asyncio.sleep(0, result="Tool not found")
 
             fn = tool_cfg["callable"]
             args = json.loads(call["arguments"])
 
-            if inspect.iscoroutinefunction(fn):              # async tool
+            if inspect.iscoroutinefunction(fn):  # async tool
                 return fn(**args)
-            else:                                            # sync tool
+            else:  # sync tool
                 return asyncio.to_thread(fn, **args)
 
-        tasks   = [_make_task(call) for call in calls]       # ← fire & forget
-        results = await asyncio.gather(*tasks)               # ← runs in parallel. TODO: asyncio.gather(*tasks) cancels all tasks if one tool raises.
+        tasks = [_make_task(call) for call in calls]  # ← fire & forget
+        results = await asyncio.gather(
+            *tasks
+        )  # ← runs in parallel. TODO: asyncio.gather(*tasks) cancels all tasks if one tool raises.
 
         return [
             {
-                "type":   "function_call_output",
+                "type": "function_call_output",
                 "call_id": call["call_id"],
-                "output":  str(result),
+                "output": str(result),
             }
             for call, result in zip(calls, results)
         ]
+
     # 4.7 Emitters (Front-end communication)
     async def _emit_error(
         self,
@@ -1537,10 +1880,12 @@ class Pipe:
         self,
         event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
         *,
-        content: str | None = "",                       # always included (may be "").  UI will stall if you leave it out.
-        title:   str | None = None,                     # optional title.
-        usage:   dict[str, Any] | None = None,          # optional usage block
-        done:    bool = True,                           # True → final frame
+        content: (
+            str | None
+        ) = "",  # always included (may be "").  UI will stall if you leave it out.
+        title: str | None = None,  # optional title.
+        usage: dict[str, Any] | None = None,  # optional usage block
+        done: bool = True,  # True → final frame
     ) -> None:
         """Emit a ``chat:completion`` event if an emitter is present.
 
@@ -1560,7 +1905,7 @@ class Pipe:
                     "content": content,
                     **({"title": title} if title is not None else {}),
                     **({"usage": usage} if usage is not None else {}),
-                }
+                },
             }
         )
 
@@ -1596,7 +1941,7 @@ class Pipe:
         router_body = {
             "model": "gpt-5-mini",
             "reasoning": {"effort": "minimal"},
-            "instructions": "# Role and Objective\nServe as a **routing helper** for selecting the most appropriate GPT-5 model for user messages, evaluating tool necessity and task complexity.\n\n---\n\n# Instructions\n- If a message may require the use of **any available tool**, select a model with **function calling** capabilities. If **web search** is required, you may only choose **low, medium or high** reasoning, not minimal.\n- When tools are not necessary, favor the **fastest** or **most capable** model according to the complexity of the request.\n\n---\n\n# Available Models and Capabilities\n## Models\n\n- **gpt-5-chat-latest**\n  - Fast, general-purpose, and creative.\n  - Best for writing, drafting, and chat-based interactions.\n  - ⚠️ Does **not** support tool calling—select only when tools are not required.\n\n- **gpt-5-mini**\n  - Lightweight, supports tool usage, and is rapidly responsive.\n  - Suited for **simple tasks that may use tools** but don’t demand extensive reasoning.\n  - ✅ Function calling supported—offers a strong balance between speed and utility.\n\n- **gpt-5**\n  - Strong at reasoning and complex, multi-step analysis.\n  - Designed for **complex or deeply analytical tasks**.\n  - ✅ Supports function calling and advanced operations—choose for tool-reliant or high-complexity reasoning needs.\n\n---\n\n# Routing Checklist\n- Assess whether tool integration could improve the response.\n- Evaluate how much reasoning or problem-solving is required.\n- Match model to requirements:\n  - No tool usage required → use `gpt-5-chat-latest`\n  - Tools required, simple task → use `gpt-5-mini`\n  - Tools required, complex task → use `gpt-5`\n- When in doubt, prioritize a tool-capable model (prefer `gpt-5`).\n- Ask for more information if requirements are ambiguous.\n\n---\n\n# Output Format\nRespond only with a JSON object containing your model selection and a concise explanation. If the requirements are unclear, include an appropriate error message in the JSON response.\n\n---\n\n# Examples\n- **What’s the weather in Vancouver right now?**\n  ```json\n  {\n    \"model\": \"gpt-5-mini\",\n    \"explanation\": \"Quick tool lookup; simple enough for a fast model.\"\n  }\n  ```\n\n- **Compare the newest M3 laptops and cite sources.**\n  ```json\n  {\n    \"model\": \"gpt-5\",\n    \"explanation\": \"Research and synthesis with tools requires reasoning depth.\"\n  }\n  ```\n\n- **Summarize this email draft and make it more formal.**\n  ```json\n  {\n    \"model\": \"gpt-5-chat-latest\",\n    \"explanation\": \"Polishing text only; no tools needed.\"\n  }\n  ```\n\n- **Summarize this uploaded PDF into bullet points.**\n  ```json\n  {\n    \"model\": \"gpt-5\",\n    \"explanation\": \"Document parsing may require tools; complex enough for gpt-5.\"\n  }\n  ```\n\n- **Translate this paragraph into Spanish.**\n  ```json\n  {\n    \"model\": \"gpt-5-chat-latest\",\n    \"explanation\": \"Simple translation; tools not required.\"\n  }\n  ```\n\n- **List my upcoming meetings tomorrow.**\n  ```json\n  {\n    \"model\": \"gpt-5-mini\",\n    \"explanation\": \"Calendar tool lookup is simple; mini is efficient.\"\n  }\n  ```",
+            "instructions": '# Role and Objective\nServe as a **routing helper** for selecting the most appropriate GPT-5 model for user messages, evaluating tool necessity and task complexity.\n\n---\n\n# Instructions\n- If a message may require the use of **any available tool**, select a model with **function calling** capabilities.\n- When tools are not necessary, favor the **fastest** or **most capable** model according to the complexity of the request.\n\n---\n\n# Available Models and Capabilities\n## Models\n\n- **gpt-5-chat-latest**\n  - Fast, general-purpose, and creative.\n  - Best for writing, drafting, and chat-based interactions.\n  - ⚠️ Does **not** support tool calling—select only when tools are not required.\n\n- **gpt-5-mini**\n  - Lightweight, supports tool usage, and is rapidly responsive.\n  - Suited for **simple tasks that may use tools** but don’t demand extensive reasoning.\n  - ✅ Function calling supported—offers a strong balance between speed and utility.\n\n- **gpt-5**\n  - Strong at reasoning and complex, multi-step analysis.\n  - Designed for **complex or deeply analytical tasks**.\n  - ✅ Supports function calling and advanced operations—choose for tool-reliant or high-complexity reasoning needs.\n\n---\n\n# Routing Checklist\n- Assess whether tool integration could improve the response.\n- Evaluate how much reasoning or problem-solving is required.\n- Match model to requirements:\n  - No tool usage required → use `gpt-5-chat-latest`\n  - Tools required, simple task → use `gpt-5-mini`\n  - Tools required, complex task → use `gpt-5`\n- When in doubt, prioritize a tool-capable model (prefer `gpt-5`).\n- Ask for more information if requirements are ambiguous.\n\n---\n\n# Output Format\nRespond only with a JSON object containing your model selection and a concise explanation. If the requirements are unclear, include an appropriate error message in the JSON response.\n\n---\n\n# Examples\n- **What’s the weather in Vancouver right now?**\n  ```json\n  {\n    "model": "gpt-5-mini",\n    "explanation": "Quick tool lookup; simple enough for a fast model."\n  }\n  ```\n\n- **Compare the newest M3 laptops and cite sources.**\n  ```json\n  {\n    "model": "gpt-5",\n    "explanation": "Research and synthesis with tools requires reasoning depth."\n  }\n  ```\n\n- **Summarize this email draft and make it more formal.**\n  ```json\n  {\n    "model": "gpt-5-chat-latest",\n    "explanation": "Polishing text only; no tools needed."\n  }\n  ```\n\n- **Summarize this uploaded PDF into bullet points.**\n  ```json\n  {\n    "model": "gpt-5",\n    "explanation": "Document parsing may require tools; complex enough for gpt-5."\n  }\n  ```\n\n- **Translate this paragraph into Spanish.**\n  ```json\n  {\n    "model": "gpt-5-chat-latest",\n    "explanation": "Simple translation; tools not required."\n  }\n  ```\n\n- **List my upcoming meetings tomorrow.**\n  ```json\n  {\n    "model": "gpt-5-mini",\n    "explanation": "Calendar tool lookup is simple; mini is efficient."\n  }\n  ```',
             "input": responses_body.input,
             "prompt_cache_key": "openai_responses_gpt5-router",
             "text": {
@@ -1610,35 +1955,26 @@ class Pipe:
                             "model": {
                                 "type": "string",
                                 "enum": ["gpt-5-chat-latest", "gpt-5", "gpt-5-mini"],
-                                "description": "The selected GPT-5 model from the available options."
+                                "description": "The selected GPT-5 model from the available options.",
                             },
                             "reasoning_effort": {
                                 "type": "string",
-                                "enum": [
-                                    "minimal",
-                                    "low",
-                                    "medium",
-                                    "high"
-                                ],
-                                "description": "The estimated amount of reasoning effort required for the request."
+                                "enum": ["minimal", "low", "medium", "high"],
+                                "description": "The estimated amount of reasoning effort required for the request.",
                             },
                             "explanation": {
                                 "type": "string",
                                 "description": "Short 3-5 word rationale for why this model was selected.",
                                 "minLength": 3,
-                                "maxLength": 500
+                                "maxLength": 500,
                             },
                         },
-                        "required": [
-                        "model",
-                        "explanation",
-                        "reasoning_effort"
-                        ],
-                        "additionalProperties": False
+                        "required": ["model", "explanation", "reasoning_effort"],
+                        "additionalProperties": False,
                     },
                     "verbosity": "medium",
                 },
-            }
+            },
         }
         # -------------------------------------------------
 
@@ -1654,10 +1990,22 @@ class Pipe:
 
         # Simple shape: output[0].content[0].text
         try:
-            text = next((b["text"] for o in reversed(response["output"]) if o["type"]=="message" for b in o["content"] if b["type"]=="output_text"), "")
+            text = next(
+                (
+                    b["text"]
+                    for o in reversed(response["output"])
+                    if o["type"] == "message"
+                    for b in o["content"]
+                    if b["type"] == "output_text"
+                ),
+                "",
+            )
         except Exception as exc:  # pragma: no cover
-            self.logger.warning("Router response missing expected fields: %s; payload keys=%s",
-                                exc, list(response.keys()))
+            self.logger.warning(
+                "Router response missing expected fields: %s; payload keys=%s",
+                exc,
+                list(response.keys()),
+            )
             return responses_body
 
         # Parse JSON (with a tiny fallback to the first {...} block)
@@ -1665,7 +2013,11 @@ class Pipe:
             router_json: Dict[str, Any] = json.loads(text)
         except Exception:
             start, end = text.find("{"), text.rfind("}")
-            router_json = json.loads(text[start:end+1]) if start != -1 and end != -1 and end > start else {}
+            router_json = (
+                json.loads(text[start : end + 1])
+                if start != -1 and end != -1 and end > start
+                else {}
+            )
 
         if router_json:
             responses_body.model = router_json.get("model")
@@ -1695,6 +2047,7 @@ class Pipe:
         }
         return global_valves.model_copy(update=update)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Utility & Helper Layer (organized, consistent docstrings)
 #    NOTE: Logic is unchanged. Only docstrings/comments/sectioning were improved.
@@ -1702,6 +2055,7 @@ class Pipe:
 
 # 5.1 Logging & Diagnostics
 # -------------------------
+
 
 class SessionLogger:
     """Per-request logger that captures console output and an in-memory log buffer.
@@ -1746,13 +2100,17 @@ class SessionLogger:
 
         # Console handler
         console = logging.StreamHandler(sys.stdout)
-        console.setFormatter(logging.Formatter("[%(levelname)s] [%(session_id)s] %(message)s"))
+        console.setFormatter(
+            logging.Formatter("[%(levelname)s] [%(session_id)s] %(message)s")
+        )
         logger.addHandler(console)
 
         # Memory handler (appends formatted lines into logs[session_id])
         mem = logging.Handler()
         mem.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        mem.emit = lambda r: cls.logs[r.session_id].append(mem.format(r)) if r.session_id else None
+        mem.emit = lambda r: (
+            cls.logs[r.session_id].append(mem.format(r)) if r.session_id else None
+        )
         logger.addHandler(mem)
 
         return logger
@@ -1761,6 +2119,7 @@ class SessionLogger:
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Framework Integration Helpers (Open WebUI DB operations)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def persist_openai_response_items(
     chat_id: str,
@@ -1800,8 +2159,8 @@ def persist_openai_response_items(
     if not chat_model:
         return ""
 
-    pipe_root      = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
-    items_store    = pipe_root.setdefault("items", {})
+    pipe_root = chat_model.chat.setdefault("openai_responses_pipe", {"__v": 3})
+    items_store = pipe_root.setdefault("items", {})
     messages_index = pipe_root.setdefault("messages_index", {})
 
     message_bucket = messages_index.setdefault(
@@ -1815,9 +2174,9 @@ def persist_openai_response_items(
     for payload in items:
         item_id = generate_item_id()
         items_store[item_id] = {
-            "model":      openwebui_model_id,
+            "model": openwebui_model_id,
             "created_at": now,
-            "payload":    payload,
+            "payload": payload,
             "message_id": message_id,
         }
         message_bucket["item_ids"].append(item_id)
@@ -1834,6 +2193,7 @@ def persist_openai_response_items(
 # 7. General-Purpose Utilities (data transforms & patches)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _wrap_event_emitter(
     emitter: Callable[[Dict[str, Any]], Awaitable[None]] | None,
     *,
@@ -1848,6 +2208,7 @@ def _wrap_event_emitter(
     events through.
     """
     if emitter is None:
+
         async def _noop(_event: Dict[str, Any]) -> None:
             return
 
@@ -1862,6 +2223,7 @@ def _wrap_event_emitter(
         await emitter(event)
 
     return _wrapped
+
 
 def merge_usage_stats(total, new):
     """Recursively merge nested usage statistics.
@@ -1937,7 +2299,7 @@ def generate_item_id() -> str:
     Returns:
         str: A random uppercase identifier of length `ULID_LENGTH`.
     """
-    return ''.join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))
+    return "".join(secrets.choice(CROCKFORD_ALPHABET) for _ in range(ULID_LENGTH))
 
 
 def create_marker(
@@ -2052,7 +2414,7 @@ def split_text_by_markers(text: str) -> list[dict]:
     last = 0
     for m in _RE.finditer(text):
         if m.start() > last:
-            segments.append({"type": "text", "text": text[last:m.start()]})
+            segments.append({"type": "text", "text": text[last : m.start()]})
         raw = f"openai_responses:v2:{m.group('kind')}:{m.group('ulid')}"
         if m.group("query"):
             raw += f"?{m.group('query')}"
@@ -2157,9 +2519,15 @@ def build_tools(
         }
         if valves.WEB_SEARCH_USER_LOCATION:
             try:
-                web_search_tool["user_location"] = json.loads(valves.WEB_SEARCH_USER_LOCATION)
-            except Exception as exc:  # don't fail the request if user_location is malformed
-                logger.warning("WEB_SEARCH_USER_LOCATION is not valid JSON; ignoring: %s", exc)
+                web_search_tool["user_location"] = json.loads(
+                    valves.WEB_SEARCH_USER_LOCATION
+                )
+            except (
+                Exception
+            ) as exc:  # don't fail the request if user_location is malformed
+                logger.warning(
+                    "WEB_SEARCH_USER_LOCATION is not valid JSON; ignoring: %s", exc
+                )
         tools.append(web_search_tool)
 
     # 4) Optional MCP servers
@@ -2197,7 +2565,11 @@ def _strictify_schema(schema):
 
     # Ensure root is an object; if not, wrap under {"value": ...}
     root_t = s.get("type")
-    if not (root_t == "object" or (isinstance(root_t, list) and "object" in root_t) or "properties" in s):
+    if not (
+        root_t == "object"
+        or (isinstance(root_t, list) and "object" in root_t)
+        or "properties" in s
+    ):
         s = {
             "type": "object",
             "properties": {"value": s},
@@ -2213,7 +2585,11 @@ def _strictify_schema(schema):
 
         # Treat as object if it declares object type or has properties
         t = node.get("type")
-        is_object = ("properties" in node) or (t == "object") or (isinstance(t, list) and "object" in t)
+        is_object = (
+            ("properties" in node)
+            or (t == "object")
+            or (isinstance(t, list) and "object" in t)
+        )
         if is_object:
             props = node.get("properties")
             if not isinstance(props, dict):
@@ -2286,5 +2662,3 @@ def _dedupe_tools(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]
         if key[0]:
             canonical[key] = t
     return list(canonical.values())
-
-    # fmt: on
