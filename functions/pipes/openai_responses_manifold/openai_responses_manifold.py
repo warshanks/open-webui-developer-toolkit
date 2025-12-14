@@ -1158,10 +1158,7 @@ class Pipe:
 
             thinking_tasks = []
             if "instant" in openwebui_model:
-                messages = [
-                    (0, "Working…"),
-                    (2.0, "Processing…"),
-                ]
+                messages = [(0, "Working…")]
             else:
                 messages = [
                     (0, "Thinking…"),
