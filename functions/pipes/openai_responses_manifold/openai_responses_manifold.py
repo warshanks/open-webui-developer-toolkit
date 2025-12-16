@@ -1530,14 +1530,19 @@ class Pipe:
                     await t
             if not error_occurred and event_emitter:
                 elapsed = perf_counter() - start_time
+                if elapsed >= 60:
+                    duration = f"{elapsed / 60:.1f} minutes"
+                else:
+                    duration = f"{elapsed:.1f} seconds"
+
                 await event_emitter(
                     {
                         "type": "status",
                         "data": {
                             "description": (
-                                f"Completed in {elapsed:.1f} seconds"
+                                f"Completed in {duration}"
                                 if "instant" in openwebui_model
-                                else f"Thought for {elapsed:.1f} seconds"
+                                else f"Thought for {duration}"
                             ),
                             "done": True,
                         },
