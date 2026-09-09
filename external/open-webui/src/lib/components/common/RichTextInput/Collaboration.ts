@@ -8,7 +8,6 @@ import {
 	prosemirrorJSONToYDoc
 } from 'y-prosemirror';
 import type { Socket } from 'socket.io-client';
-import type { Awareness } from 'y-protocols/awareness';
 import type { SessionUser } from '$lib/stores';
 import { Editor, Extension } from '@tiptap/core';
 import { keymap } from 'prosemirror-keymap';
@@ -33,7 +32,7 @@ const generateUserColor = () => {
 export type EditorContentGetter = () => {
 	md: string;
 	html: string;
-	json: string;
+	json: unknown;
 };
 
 // Custom Yjs Socket.IO provider
@@ -49,7 +48,7 @@ export class SocketIOCollaborationProvider {
 		private readonly documentId: string,
 		private readonly socket: Socket,
 		private readonly user: SessionUser,
-		private readonly initialContent: string | null = null
+		private readonly initialContent: unknown = null
 	) {
 		this.setupEventListeners();
 	}
@@ -72,7 +71,8 @@ export class SocketIOCollaborationProvider {
 					})
 				];
 
-				plugins.push(yCursorPlugin(this.awareness as unknown as Awareness));
+				// @ts-ignore
+				plugins.push(yCursorPlugin(this.awareness));
 
 				return plugins;
 			}
@@ -82,9 +82,30 @@ export class SocketIOCollaborationProvider {
 	public setEditor(editor: Editor, editorContentGetter: EditorContentGetter) {
 		this.editor = editor;
 		this.editorContentGetter = editorContentGetter;
+
+		if (this.socket.connected && !this.isConnected) {
+			this.isConnected = true;
+		}
+		if (this.isConnected) {
+			this.joinDocument();
+		}
+	}
+
+	private applyInitialContent() {
+		if (!this.editor || !this.initialContent) return;
+
+		if (typeof this.initialContent === 'string') {
+			this.editor.commands.setContent(this.initialContent);
+			return;
+		}
+
+		const doc = prosemirrorJSONToYDoc(this.editor.schema, this.initialContent);
+		Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(doc));
 	}
 
 	private joinDocument() {
+		if (!this.editor) return;
+
 		const userColor = generateUserColor();
 		this.socket.emit('ydoc:document:join', {
 			document_id: this.documentId,
@@ -124,17 +145,16 @@ export class SocketIOCollaborationProvider {
 						const state = new Uint8Array(data.state);
 
 						if (state.length === 2 && state[0] === 0 && state[1] === 0) {
-							// Empty state, check if we have content to initialize
-							// check if editor empty as well
-							// const editor = await getEditorInstance();
-
-							const isEmptyEditor = !this.editor?.getText().trim();
-							if (isEmptyEditor && this.editor) {
-								if (this.initialContent && (data?.sessions ?? ['']).length === 1) {
-									const editorYdoc = prosemirrorJSONToYDoc(this.editor.schema, this.initialContent);
-									if (editorYdoc) {
-										Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(editorYdoc));
-									}
+							if (
+								this.editor &&
+								!this.editor.getText().trim() &&
+								this.doc.getXmlFragment('prosemirror').length === 0
+							) {
+								if (
+									this.initialContent &&
+									[...(data.sessions ?? [])].sort()[0] === this.socket.id
+								) {
+									this.applyInitialContent();
 								}
 							} else {
 								// If the editor already has content, we don't need to send an empty state
@@ -143,7 +163,7 @@ export class SocketIOCollaborationProvider {
 										document_id: this.documentId,
 										user_id: this.user?.id,
 										socket_id: this.socket.id,
-										update: Y.encodeStateAsUpdate(this.doc)
+										update: Array.from(Y.encodeStateAsUpdate(this.doc))
 									});
 								} else {
 									console.warn('Yjs document is empty, not sending state.');
@@ -222,7 +242,6 @@ export class SocketIOCollaborationProvider {
 
 		if (this.socket.connected) {
 			this.isConnected = true;
-			this.joinDocument();
 		}
 	}
 

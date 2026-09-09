@@ -1,5 +1,14 @@
+<script context="module" lang="ts">
+	// contentWindows of embeds rendered here; Chat.svelte trusts prompt messages from these
+	const embedWindows = new Set<Window>();
+
+	export const isEmbedWindow = (source: unknown): boolean => embedWindows.has(source as Window);
+</script>
+
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
+	import { config } from '$lib/stores';
+	import { injectCsp } from '$lib/utils/csp';
 
 	// Props
 	export let src: string | null = null; // URL or raw HTML (auto-detected)
@@ -21,9 +30,12 @@
 		'strict-origin-when-cross-origin';
 	export let allowFullscreen = true;
 
+	export let payload = null; // payload to send into the iframe on request
+
 	let iframe: HTMLIFrameElement | null = null;
 	let iframeSrc: string | null = null;
 	let iframeDoc: string | null = null;
+	let registeredWindow: Window | null = null;
 
 	// Derived: build sandbox attribute from flags
 	$: sandbox =
@@ -142,18 +154,42 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		}
 	}
 
-	// Handle height messages from the iframe (we also verify the sender)
 	function onMessage(e: MessageEvent) {
 		if (!iframe || e.source !== iframe.contentWindow) return;
-		const data = e.data as { type?: string; height?: number };
+
+		const data = e.data || {};
 		if (data?.type === 'iframe:height' && typeof data.height === 'number') {
 			iframe.style.height = Math.max(0, data.height) + 'px';
+		}
+
+		// Pong message for testing connectivity
+		if (data?.type === 'pong') {
+			console.log('Received pong from iframe:', data);
+
+			// Optional: reply back
+			iframe.contentWindow?.postMessage({ type: 'pong:ack' }, '*');
+		}
+
+		// Send payload data if requested
+		if (data?.type === 'payload') {
+			iframe.contentWindow?.postMessage(
+				{ type: 'payload', requestId: data?.requestId ?? null, payload: payload },
+				'*'
+			);
 		}
 	}
 
 	// When the iframe loads, try same-origin resize (cross-origin will noop)
 	const onLoad = async () => {
 		requestAnimationFrame(resizeSameOrigin);
+
+		if (iframe?.contentWindow && iframe.contentWindow !== registeredWindow) {
+			if (registeredWindow) {
+				embedWindows.delete(registeredWindow);
+			}
+			registeredWindow = iframe.contentWindow;
+			embedWindows.add(registeredWindow);
+		}
 
 		// if arguments are provided, inject them into the iframe window
 		if (args && iframe?.contentWindow) {
@@ -168,13 +204,16 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 
 	onDestroy(() => {
 		window.removeEventListener('message', onMessage);
+		if (registeredWindow) {
+			embedWindows.delete(registeredWindow);
+		}
 	});
 </script>
 
 {#if iframeDoc}
 	<iframe
 		bind:this={iframe}
-		srcdoc={iframeDoc}
+		srcdoc={injectCsp(iframeDoc, $config?.ui?.iframe_csp ?? '')}
 		{title}
 		class={iframeClassName}
 		style={`${initialHeight ? `height:${initialHeight}px;` : ''}`}

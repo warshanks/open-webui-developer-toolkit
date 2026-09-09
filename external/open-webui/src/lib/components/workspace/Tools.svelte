@@ -1,12 +1,23 @@
 <script lang="ts">
+	import dayjs from 'dayjs';
+	import relativeTime from 'dayjs/plugin/relativeTime';
 	import { toast } from 'svelte-sonner';
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { onMount, getContext, tick } from 'svelte';
+	dayjs.extend(relativeTime);
+
+	import { onMount, getContext, tick, onDestroy } from 'svelte';
 	const i18n = getContext('i18n');
 
-	import { WEBUI_NAME, config, prompts, tools as _tools, user } from '$lib/stores';
+	import {
+		WEBUI_NAME,
+		config,
+		tools as _tools,
+		user,
+		workspaceActions,
+		workspaceCounts
+	} from '$lib/stores';
 
 	import { goto } from '$app/navigation';
 	import {
@@ -30,13 +41,14 @@
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import GarbageBin from '../icons/GarbageBin.svelte';
 	import Search from '../icons/Search.svelte';
-	import Plus from '../icons/Plus.svelte';
-	import ChevronRight from '../icons/ChevronRight.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import XMark from '../icons/XMark.svelte';
-	import AddToolMenu from './Tools/AddToolMenu.svelte';
 	import ImportModal from '../ImportModal.svelte';
 	import ViewSelector from './common/ViewSelector.svelte';
+	import CommunityDiscover from './common/CommunityDiscover.svelte';
+	import Badge from '$lib/components/common/Badge.svelte';
+	import ChevronDown from '../icons/ChevronDown.svelte';
+	import ChevronUp from '../icons/ChevronUp.svelte';
 
 	let shiftKey = false;
 	let loaded = false;
@@ -46,6 +58,7 @@
 
 	let showConfirm = false;
 	let query = '';
+	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 
 	let showManifestModal = false;
 	let showValvesModal = false;
@@ -58,15 +71,72 @@
 
 	let tagsContainerElement: HTMLDivElement;
 	let viewOption = '';
+	let sortKey = 'updated_at';
+	let sortDirection = 'desc';
+	let openToolMenuId: string | null = null;
 
 	let showImportModal = false;
 
-	$: if (tools && query !== undefined && viewOption !== undefined) {
+	$: if (loaded) {
+		workspaceActions.set([
+			{
+				id: 'tools-new',
+				label: $i18n.t('Create'),
+				href: '/workspace/tools/create'
+			},
+			{
+				id: 'tools-import-link',
+				label: $i18n.t('Import From Link'),
+				onClick: () => {
+					showImportModal = true;
+				},
+				visible: $user?.role === 'admin'
+			},
+			{
+				id: 'tools-import',
+				label: $i18n.t('Import JSON'),
+				onClick: () => toolsImportInputElement?.click(),
+				visible: $user?.role === 'admin' || $user?.permissions?.workspace?.tools_import
+			},
+			{
+				id: 'tools-export',
+				label: $i18n.t('Export JSON'),
+				onClick: async () => {
+					const _tools = await exportTools(localStorage.token).catch((error) => {
+						toast.error(`${error}`);
+						return null;
+					});
+
+					if (_tools) {
+						let blob = new Blob([JSON.stringify(_tools)], {
+							type: 'application/json'
+						});
+						saveAs(blob, `tools-export-${Date.now()}.json`);
+					}
+				},
+				visible: $user?.role === 'admin' || $user?.permissions?.workspace?.tools_export
+			}
+		]);
+	}
+
+	const handleSearchInput = () => {
+		clearTimeout(searchDebounceTimer);
+		searchDebounceTimer = setTimeout(() => {
+			setFilteredItems();
+		}, 300);
+	};
+
+	$: if (
+		tools &&
+		viewOption !== undefined &&
+		sortKey !== undefined &&
+		sortDirection !== undefined
+	) {
 		setFilteredItems();
 	}
 
 	const setFilteredItems = () => {
-		filteredItems = tools.filter((t) => {
+		const filtered = tools.filter((t) => {
 			if (query === '' && viewOption === '') return true;
 			const lowerQuery = query.toLowerCase();
 			return (
@@ -79,6 +149,35 @@
 					(viewOption === 'shared' && t.user_id !== $user?.id))
 			);
 		});
+
+		filteredItems = [...filtered].sort((a, b) => {
+			const direction = sortDirection === 'asc' ? 1 : -1;
+
+			if (sortKey === 'name') {
+				return direction * (a.name ?? '').localeCompare(b.name ?? '');
+			}
+
+			return direction * ((a.updated_at ?? 0) - (b.updated_at ?? 0));
+		});
+
+		workspaceCounts.update((counts) => ({ ...counts, tools: filteredItems.length }));
+	};
+
+	const setSortKey = (key: string) => {
+		if (sortKey === key) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortKey = key;
+			sortDirection = key === 'updated_at' ? 'desc' : 'asc';
+		}
+	};
+
+	const openTool = (tool) => {
+		goto(`/workspace/tools/edit?id=${encodeURIComponent(tool.id)}`);
+	};
+
+	const shouldIgnoreRowClick = (target: EventTarget | null) => {
+		return target instanceof Element && !!target.closest('button, a, input, [role="menu"]');
 	};
 
 	const shareHandler = async (tool) => {
@@ -87,6 +186,9 @@
 			return null;
 		});
 
+		// LICENSE covers this Open WebUI Community wordmark.
+		// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+		// https://docs.openwebui.com/license.
 		toast.success($i18n.t('Redirecting you to Open WebUI Community'));
 
 		const url = 'https://openwebui.com';
@@ -175,19 +277,27 @@
 
 		window.addEventListener('keydown', onKeyDown);
 		window.addEventListener('keyup', onKeyUp);
-		window.addEventListener('blur-sm', onBlur);
+		window.addEventListener('blur', onBlur);
 
 		return () => {
+			clearTimeout(searchDebounceTimer);
 			window.removeEventListener('keydown', onKeyDown);
 			window.removeEventListener('keyup', onKeyUp);
-			window.removeEventListener('blur-sm', onBlur);
+			window.removeEventListener('blur', onBlur);
 		};
+	});
+
+	onDestroy(() => {
+		clearTimeout(searchDebounceTimer);
 	});
 </script>
 
 <svelte:head>
+	<!-- LICENSE covers this Open WebUI browser-title identifier.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
 	<title>
-		{$i18n.t('Tools')} • {$WEBUI_NAME}
+		{$i18n.t('Tools')} / {$WEBUI_NAME}
 	</title>
 </svelte:head>
 
@@ -206,119 +316,40 @@
 />
 
 {#if loaded}
-	<div class="flex flex-col gap-1 px-1 mt-1.5 mb-3">
-		<input
-			id="documents-import-input"
-			bind:this={toolsImportInputElement}
-			bind:files={importFiles}
-			type="file"
-			accept=".json"
-			hidden
-			on:change={() => {
-				console.log(importFiles);
-				showConfirm = true;
-			}}
-		/>
+	<input
+		id="documents-import-input"
+		bind:this={toolsImportInputElement}
+		bind:files={importFiles}
+		type="file"
+		accept=".json"
+		hidden
+		on:change={() => {
+			console.log(importFiles);
+			showConfirm = true;
+		}}
+	/>
 
-		<div class="flex justify-between items-center">
-			<div class="flex items-center md:self-center text-xl font-medium px-0.5 gap-2 shrink-0">
-				<div>
-					{$i18n.t('Tools')}
-				</div>
-
-				<div class="text-lg font-medium text-gray-500 dark:text-gray-500">
-					{filteredItems.length}
-				</div>
-			</div>
-
-			<div class="flex w-full justify-end gap-1.5">
-				{#if $user?.role === 'admin' || $user?.permissions?.workspace?.tools_import}
-					<button
-						class="flex text-xs items-center space-x-1 px-3 py-1.5 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-gray-200 transition"
-						on:click={() => {
-							toolsImportInputElement.click();
-						}}
-					>
-						<div class=" self-center font-medium line-clamp-1">
-							{$i18n.t('Import')}
-						</div>
-					</button>
-				{/if}
-
-				{#if tools.length && ($user?.role === 'admin' || $user?.permissions?.workspace?.tools_export)}
-					<button
-						class="flex text-xs items-center space-x-1 px-3 py-1.5 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-gray-200 transition"
-						on:click={async () => {
-							const _tools = await exportTools(localStorage.token).catch((error) => {
-								toast.error(`${error}`);
-								return null;
-							});
-
-							if (_tools) {
-								let blob = new Blob([JSON.stringify(_tools)], {
-									type: 'application/json'
-								});
-								saveAs(blob, `tools-export-${Date.now()}.json`);
-							}
-						}}
-					>
-						<div class=" self-center font-medium line-clamp-1">
-							{$i18n.t('Export')}
-						</div>
-					</button>
-				{/if}
-
-				{#if $user?.role === 'admin'}
-					<AddToolMenu
-						createHandler={() => {
-							goto('/workspace/tools/create');
-						}}
-						importFromLinkHandler={() => {
-							showImportModal = true;
-						}}
-					>
-						<div
-							class=" px-2 py-1.5 rounded-xl bg-black text-white dark:bg-white dark:text-black transition font-medium text-sm flex items-center"
-						>
-							<Plus className="size-3" strokeWidth="2.5" />
-
-							<div class=" hidden md:block md:ml-1 text-xs">{$i18n.t('New Tool')}</div>
-						</div>
-					</AddToolMenu>
-				{:else}
-					<a
-						class=" px-2 py-1.5 rounded-xl bg-black text-white dark:bg-white dark:text-black transition font-medium text-sm flex items-center"
-						href="/workspace/tools/create"
-					>
-						<Plus className="size-3" strokeWidth="2.5" />
-
-						<div class=" hidden md:block md:ml-1 text-xs">{$i18n.t('New Tool')}</div></a
-					>
-				{/if}
-			</div>
-		</div>
-	</div>
-
-	<div
-		class="py-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30"
-	>
-		<!-- The iron remembers its forge. -->
-		<div class=" flex w-full space-x-2 py-0.5 px-3.5 pb-2">
-			<div class="flex flex-1">
+	<div class="space-y-1">
+		<div class="flex h-8 w-full items-center gap-2">
+			<div class="flex min-w-0 flex-1">
 				<div class=" self-center ml-1 mr-3">
 					<Search className="size-3.5" />
 				</div>
 				<input
 					class=" w-full text-sm pr-4 py-1 rounded-r-xl outline-hidden bg-transparent"
 					bind:value={query}
+					on:input={handleSearchInput}
+					aria-label={$i18n.t('Search Tools')}
 					placeholder={$i18n.t('Search Tools')}
 				/>
 				{#if query}
 					<div class="self-center pl-1.5 translate-y-[0.5px] rounded-l-xl bg-transparent">
 						<button
 							class="p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+							aria-label={$i18n.t('Clear search')}
 							on:click={() => {
 								query = '';
+								handleSearchInput();
 							}}
 						>
 							<XMark className="size-3" strokeWidth="2" />
@@ -326,174 +357,274 @@
 					</div>
 				{/if}
 			</div>
-		</div>
 
-		<div
-			class="px-3 flex w-full bg-transparent overflow-x-auto scrollbar-none -mx-1"
-			on:wheel={(e) => {
-				if (e.deltaY !== 0) {
-					e.preventDefault();
-					e.currentTarget.scrollLeft += e.deltaY;
-				}
-			}}
-		>
 			<div
-				class="flex gap-0.5 w-fit text-center text-sm rounded-full bg-transparent px-1.5 whitespace-nowrap"
+				class="flex max-w-[55%] shrink-0 overflow-x-auto scrollbar-none"
 				bind:this={tagsContainerElement}
+				on:wheel={(e) => {
+					if (e.deltaY !== 0) {
+						e.preventDefault();
+						e.currentTarget.scrollLeft += e.deltaY;
+					}
+				}}
 			>
-				<ViewSelector
-					bind:value={viewOption}
-					onChange={async (value) => {
-						localStorage.workspaceViewOption = value;
+				<div
+					class="flex w-fit gap-0.5 text-center text-sm rounded-full bg-transparent whitespace-nowrap"
+				>
+					<ViewSelector
+						bind:value={viewOption}
+						align="end"
+						onChange={async (value) => {
+							localStorage.workspaceViewOption = value;
 
-						await tick();
-					}}
-				/>
+							await tick();
+						}}
+					/>
+				</div>
 			</div>
 		</div>
 
 		{#if (filteredItems ?? []).length !== 0}
-			<div class=" my-2 gap-2 grid px-3 lg:grid-cols-2">
-				{#each filteredItems as tool}
-					<Tooltip content={tool?.meta?.description ?? tool?.id}>
+			<div class="my-1">
+				<div
+					class="flex w-full items-center gap-2 px-1.5 pb-0.5 text-xs text-gray-400 dark:text-gray-600"
+				>
+					<button
+						class="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left"
+						type="button"
+						on:click={() => setSortKey('name')}
+					>
+						{$i18n.t('Title')}
+						{#if sortKey === 'name'}
+							{#if sortDirection === 'asc'}
+								<ChevronUp className="size-2" />
+							{:else}
+								<ChevronDown className="size-2" />
+							{/if}
+						{/if}
+					</button>
+
+					<div class="hidden w-44 shrink-0 md:block"></div>
+
+					<button
+						class="flex w-36 shrink-0 items-center justify-end gap-1 py-0.5 text-right"
+						type="button"
+						on:click={() => setSortKey('updated_at')}
+					>
+						{$i18n.t('Updated at')}
+						{#if sortKey === 'updated_at'}
+							{#if sortDirection === 'asc'}
+								<ChevronUp className="size-2" />
+							{:else}
+								<ChevronDown className="size-2" />
+							{/if}
+						{/if}
+					</button>
+				</div>
+
+				<div class="grid gap-y-0.5">
+					{#each filteredItems as tool}
 						<div
-							class=" flex space-x-4 cursor-pointer text-left w-full px-3 py-2.5 dark:hover:bg-gray-850/50 hover:bg-gray-50 transition rounded-2xl"
+							class="group flex min-h-8 w-full items-center gap-2 overflow-hidden rounded-xl px-2 py-1 text-left {tool.write_access
+								? 'cursor-pointer'
+								: 'cursor-not-allowed opacity-60'}"
+							role="button"
+							tabindex={tool.write_access ? 0 : -1}
+							on:click={(e) => {
+								if (!tool.write_access || shouldIgnoreRowClick(e.target)) return;
+								openTool(tool);
+							}}
+							on:keydown={(e) => {
+								if (!tool.write_access || e.currentTarget !== e.target) return;
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									openTool(tool);
+								}
+							}}
 						>
-							<a
-								class=" flex flex-1 space-x-3.5 cursor-pointer w-full"
-								href={`/workspace/tools/edit?id=${encodeURIComponent(tool.id)}`}
-							>
-								<div class="flex items-center text-left">
-									<div class=" flex-1 self-center">
-										<Tooltip content={tool.id} placement="top-start">
-											<div class="flex items-center gap-2">
-												<div class="line-clamp-1 text-sm">
+							<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+								<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+									<div class="flex min-w-0 items-center gap-2 overflow-hidden">
+										<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+											<Tooltip content={tool.id} className="min-w-0" placement="top-start">
+												<div
+													class="truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
+												>
 													{tool.name}
 												</div>
-												{#if tool?.meta?.manifest?.version}
-													<div class=" text-gray-500 text-xs font-medium shrink-0">
-														v{tool?.meta?.manifest?.version ?? ''}
-													</div>
-												{/if}
-											</div>
-										</Tooltip>
+											</Tooltip>
 
-										<div class="px-0.5">
-											<div class="text-xs text-gray-500 shrink-0">
-												<Tooltip
-													content={tool?.user?.email ?? $i18n.t('Deleted User')}
-													className="flex shrink-0"
-													placement="top-start"
+											{#if tool?.meta?.manifest?.version}
+												<div
+													class="min-w-0 max-w-[40%] shrink-0 truncate text-[0.6875rem] leading-5 text-gray-500"
 												>
-													{$i18n.t('By {{name}}', {
-														name: capitalizeFirstLetter(
-															tool?.user?.name ?? tool?.user?.email ?? $i18n.t('Deleted User')
-														)
-													})}
-												</Tooltip>
-											</div>
+													v{tool?.meta?.manifest?.version ?? ''}
+												</div>
+											{/if}
+
+											<Tooltip content={dayjs(tool.updated_at * 1000).format('LLLL')}>
+												<div
+													class="shrink-0 truncate text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600"
+												>
+													{dayjs(tool.updated_at * 1000).fromNow()}
+												</div>
+											</Tooltip>
+
+											{#if !tool.write_access}
+												<Badge type="muted" content={$i18n.t('Read Only')} />
+											{/if}
 										</div>
 									</div>
-								</div>
-							</a>
-							<div class="flex flex-row gap-0.5 self-center">
-								{#if shiftKey}
-									<Tooltip content={$i18n.t('Delete')}>
-										<button
-											class="self-center w-fit text-sm px-2 py-2 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
-											type="button"
-											on:click={() => {
-												deleteHandler(tool);
-											}}
+
+									{#if tool?.meta?.description}
+										<Tooltip
+											content={tool?.meta?.description}
+											className="min-w-0"
+											placement="top-start"
 										>
-											<GarbageBin />
-										</button>
-									</Tooltip>
-								{:else}
-									{#if tool?.meta?.manifest?.funding_url ?? false}
-										<Tooltip content="Support">
-											<button
-												class="self-center w-fit text-sm px-2 py-2 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
-												type="button"
-												on:click={() => {
-													selectedTool = tool;
-													showManifestModal = true;
-												}}
+											<div
+												class="mt-0.5 truncate text-[0.6875rem] leading-4 text-gray-400 dark:text-gray-600"
 											>
-												<Heart />
-											</button>
+												{tool?.meta?.description}
+											</div>
 										</Tooltip>
 									{/if}
+								</div>
+							</div>
 
-									<Tooltip content={$i18n.t('Valves')}>
-										<button
-											class="self-center w-fit text-sm px-2 py-2 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
-											type="button"
-											on:click={() => {
+							<div
+								class="hidden max-w-44 shrink-0 self-center truncate text-right text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-500 md:block"
+							>
+								<Tooltip
+									content={tool?.user?.email ?? $i18n.t('Deleted User')}
+									className="min-w-0"
+									placement="top-start"
+								>
+									<div class="truncate">
+										{capitalizeFirstLetter(
+											tool?.user?.name ?? tool?.user?.email ?? $i18n.t('Deleted User')
+										)}
+									</div>
+								</Tooltip>
+							</div>
+
+							{#if tool.write_access}
+								<div class="ml-2 flex shrink-0 flex-row items-center gap-1.5 self-center">
+									{#if shiftKey}
+										<Tooltip content={$i18n.t('Delete')}>
+											<button
+												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+												type="button"
+												aria-label={$i18n.t('Delete')}
+												on:click={(e) => {
+													e.preventDefault();
+													e.stopPropagation();
+													deleteHandler(tool);
+												}}
+											>
+												<GarbageBin className="size-4" />
+											</button>
+										</Tooltip>
+									{:else}
+										{#if tool?.meta?.manifest?.funding_url ?? false}
+											<Tooltip content="Support">
+												<button
+													class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+													type="button"
+													aria-label={$i18n.t('Support')}
+													on:click={(e) => {
+														e.preventDefault();
+														e.stopPropagation();
+														selectedTool = tool;
+														showManifestModal = true;
+													}}
+												>
+													<Heart className="size-4" />
+												</button>
+											</Tooltip>
+										{/if}
+
+										<Tooltip content={$i18n.t('Valves')}>
+											<button
+												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+												type="button"
+												aria-label={$i18n.t('Valves')}
+												on:click={(e) => {
+													e.preventDefault();
+													e.stopPropagation();
+													selectedTool = tool;
+													showValvesModal = true;
+												}}
+											>
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke-width="1.5"
+													stroke="currentColor"
+													class="size-4"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
+													/>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+													/>
+												</svg>
+											</button>
+										</Tooltip>
+
+										<ToolMenu
+											show={openToolMenuId === tool.id}
+											editHandler={() => {
+												goto(`/workspace/tools/edit?id=${encodeURIComponent(tool.id)}`);
+											}}
+											shareHandler={() => {
+												shareHandler(tool);
+											}}
+											cloneHandler={() => {
+												cloneHandler(tool);
+											}}
+											exportHandler={() => {
+												exportHandler(tool);
+											}}
+											deleteHandler={async () => {
 												selectedTool = tool;
-												showValvesModal = true;
+												showDeleteConfirm = true;
+											}}
+											onClose={() => {
+												openToolMenuId = null;
 											}}
 										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke-width="1.5"
-												stroke="currentColor"
-												class="size-4"
+											<button
+												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+												type="button"
+												aria-label={$i18n.t('Tool Menu')}
+												on:click={(e) => {
+													e.preventDefault();
+													e.stopPropagation();
+													openToolMenuId = openToolMenuId === tool.id ? null : tool.id;
+												}}
 											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
-												/>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-												/>
-											</svg>
-										</button>
-									</Tooltip>
-
-									<ToolMenu
-										editHandler={() => {
-											goto(`/workspace/tools/edit?id=${encodeURIComponent(tool.id)}`);
-										}}
-										shareHandler={() => {
-											shareHandler(tool);
-										}}
-										cloneHandler={() => {
-											cloneHandler(tool);
-										}}
-										exportHandler={() => {
-											exportHandler(tool);
-										}}
-										deleteHandler={async () => {
-											selectedTool = tool;
-											showDeleteConfirm = true;
-										}}
-										onClose={() => {}}
-									>
-										<button
-											class="self-center w-fit text-sm p-1.5 dark:text-gray-300 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 rounded-xl"
-											type="button"
-										>
-											<EllipsisHorizontal className="size-5" />
-										</button>
-									</ToolMenu>
-								{/if}
-							</div>
+												<EllipsisHorizontal className="size-4" />
+											</button>
+										</ToolMenu>
+									{/if}
+								</div>
+							{/if}
 						</div>
-					</Tooltip>
-				{/each}
+					{/each}
+				</div>
 			</div>
 		{:else}
-			<div class=" w-full h-full flex flex-col justify-center items-center my-16 mb-24">
-				<div class="max-w-md text-center">
-					<div class=" text-3xl mb-3">😕</div>
-					<div class=" text-lg font-medium mb-1">{$i18n.t('No tools found')}</div>
-					<div class=" text-gray-500 text-center text-xs">
+			<div class="flex w-full flex-col items-center justify-center py-16 pb-24">
+				<div class="max-w-sm text-center text-gray-900 dark:text-gray-100">
+					<div class="mb-1.5 text-sm">{$i18n.t('No tools found')}</div>
+					<div class="text-center text-xs leading-5 text-gray-500">
 						{$i18n.t('Try adjusting your search or filter to find what you are looking for.')}
 					</div>
 				</div>
@@ -502,30 +633,11 @@
 	</div>
 
 	{#if $config?.features.enable_community_sharing}
-		<div class=" my-16">
-			<div class=" text-xl font-medium mb-1 line-clamp-1">
-				{$i18n.t('Made by Open WebUI Community')}
-			</div>
-
-			<a
-				class=" flex cursor-pointer items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-850 w-full mb-2 px-3.5 py-1.5 rounded-xl transition"
-				href="https://openwebui.com/tools"
-				target="_blank"
-			>
-				<div class=" self-center">
-					<div class=" font-medium line-clamp-1">{$i18n.t('Discover a tool')}</div>
-					<div class=" text-sm line-clamp-1">
-						{$i18n.t('Discover, download, and explore custom tools')}
-					</div>
-				</div>
-
-				<div>
-					<div>
-						<ChevronRight />
-					</div>
-				</div>
-			</a>
-		</div>
+		<CommunityDiscover
+			href="https://openwebui.com/tools"
+			title={$i18n.t('Discover a tool')}
+			description={$i18n.t('Discover, download, and explore custom tools')}
+		/>
 	{/if}
 
 	<DeleteConfirmDialog
@@ -536,7 +648,7 @@
 		}}
 	>
 		<div class=" text-sm text-gray-500 truncate">
-			{$i18n.t('This will delete')} <span class="  font-medium">{selectedTool.name}</span>.
+			{$i18n.t('This will delete')} <span class="  font-normal">{selectedTool.name}</span>.
 		</div>
 	</DeleteConfirmDialog>
 
@@ -559,7 +671,9 @@
 				}
 
 				toast.success($i18n.t('Tool imported successfully'));
-				tools.set(await getTools(localStorage.token));
+				await init();
+				importFiles = null;
+				toolsImportInputElement.value = '';
 			};
 
 			reader.readAsText(importFiles[0]);

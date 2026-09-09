@@ -2,12 +2,18 @@
 	import { getContext, onMount, tick } from 'svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
+	import { settings, config } from '$lib/stores';
+	import { injectCsp } from '$lib/utils/csp';
 
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 
 	const i18n = getContext('i18n');
+
+	const CONTENT_PREVIEW_LIMIT = 10000;
+	let expandedDocs: Set<number> = new Set();
 
 	export let show = false;
 	export let citation;
@@ -34,7 +40,8 @@
 	}
 
 	$: if (citation) {
-		mergedDocuments = citation.document?.map((c, i) => {
+		expandedDocs = new Set();
+		mergedDocuments = (citation.document ?? []).map((c, i) => {
 			return {
 				source: citation.source,
 				document: c,
@@ -52,16 +59,46 @@
 	const decodeString = (str: string) => {
 		try {
 			return decodeURIComponent(str);
-		} catch (e) {
+		} catch {
 			return str;
 		}
+	};
+
+	const getTextFragmentUrl = (doc: any): string | null => {
+		const { metadata, source, document: content } = doc ?? {};
+		const { file_id, page } = metadata ?? {};
+		const sourceUrl = source?.url;
+
+		const baseUrl = file_id
+			? `${WEBUI_API_BASE_URL}/files/${file_id}/content${page !== undefined ? `#page=${page + 1}` : ''}`
+			: sourceUrl?.includes('http')
+				? sourceUrl
+				: null;
+
+		if (!baseUrl || !content) return baseUrl;
+
+		// Extract first and last words for text fragment, filtering out URLs and emojis
+		const words = content
+			.trim()
+			.replace(/\s+/g, ' ')
+			.split(' ')
+			.filter((w: string) => w.length > 0 && !/https?:\/\/|[\u{1F300}-\u{1F9FF}]/u.test(w));
+
+		if (words.length === 0) return baseUrl;
+
+		const clean = (w: string) => w.replace(/[^\w]/g, '');
+		const first = clean(words[0]);
+		const last = clean(words.at(-1));
+		const fragment = words.length === 1 ? first : `${first},${last}`;
+
+		return fragment ? `${baseUrl}#:~:text=${fragment}` : baseUrl;
 	};
 </script>
 
 <Modal size="lg" bind:show>
 	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-4.5 pt-3 pb-2">
-			<div class=" text-lg font-medium self-center flex items-center">
+			<div class=" text-sm font-medium self-center flex items-center">
 				{#if citation?.source?.name}
 					{@const document = mergedDocuments?.[0]}
 					{#if document?.metadata?.file_id || document.source?.url?.includes('http')}
@@ -93,12 +130,13 @@
 				{/if}
 			</div>
 			<button
-				class="self-center"
+				class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+				aria-label={$i18n.t('Close citation modal')}
 				on:click={() => {
 					show = false;
 				}}
 			>
-				<XMark className={'size-5'} />
+				<XMark className={'size-4'} />
 			</button>
 		</div>
 
@@ -110,7 +148,7 @@
 					<div class="flex flex-col w-full gap-2">
 						{#if document.metadata?.parameters}
 							<div>
-								<div class="text-sm font-medium dark:text-gray-300 mb-1">
+								<div class="text-sm font-normal dark:text-gray-300 mb-1">
 									{$i18n.t('Parameters')}
 								</div>
 
@@ -121,9 +159,23 @@
 
 						<div>
 							<div
-								class=" text-sm font-medium dark:text-gray-300 flex items-center gap-2 w-fit mb-1"
+								class=" text-sm font-normal dark:text-gray-300 flex items-center gap-2 w-fit mb-1"
 							>
-								{$i18n.t('Content')}
+								{#if document.source?.url?.includes('http')}
+									{@const snippetUrl = getTextFragmentUrl(document)}
+									{#if snippetUrl}
+										<a
+											href={snippetUrl}
+											target="_blank"
+											class="underline hover:text-gray-500 dark:hover:text-gray-100"
+											>{$i18n.t('Content')}</a
+										>
+									{:else}
+										{$i18n.t('Content')}
+									{/if}
+								{:else}
+									{$i18n.t('Content')}
+								{/if}
 
 								{#if showRelevance && document.distance !== undefined}
 									<Tooltip
@@ -138,7 +190,7 @@
 
 												{#if typeof percentage === 'number'}
 													<span
-														class={`px-1 rounded-sm font-medium ${getRelevanceColor(percentage)}`}
+														class={`px-1 rounded-sm font-normal ${getRelevanceColor(percentage)}`}
 													>
 														{percentage.toFixed(2)}%
 													</span>
@@ -163,14 +215,51 @@
 							{#if document.metadata?.html}
 								<iframe
 									class="w-full border-0 h-auto rounded-none"
-									sandbox="allow-scripts allow-forms allow-same-origin"
-									srcdoc={document.document}
+									sandbox="{($settings?.iframeSandboxAllowScripts ?? true)
+										? 'allow-scripts'
+										: ''}{($settings?.iframeSandboxAllowForms ?? true)
+										? ' allow-forms'
+										: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
+										? ' allow-downloads'
+										: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false)
+										? ' allow-same-origin'
+										: ''}"
+									srcdoc={injectCsp(document.document, $config?.ui?.iframe_csp ?? '')}
 									title={$i18n.t('Content')}
 								></iframe>
 							{:else}
-								<pre class="text-sm dark:text-gray-400 whitespace-pre-line">{document.document
-										.trim()
-										.replace(/\n\n+/g, '\n\n')}</pre>
+								{@const rawContent = (document.document ?? '').trim().replace(/\n\n+/g, '\n\n')}
+								{@const isTruncated =
+									($settings?.renderMarkdownInPreviews ?? true) &&
+									rawContent.length > CONTENT_PREVIEW_LIMIT &&
+									!expandedDocs.has(documentIdx)}
+								{#if $settings?.renderMarkdownInPreviews ?? true}
+									<div
+										class="text-sm prose dark:prose-invert markdown-prose-sm min-w-full max-w-full"
+									>
+										<Markdown
+											content={isTruncated
+												? rawContent.slice(0, CONTENT_PREVIEW_LIMIT)
+												: rawContent}
+											id="citation-{documentIdx}"
+										/>
+									</div>
+									{#if isTruncated}
+										<button
+											class="mt-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition"
+											on:click={() => {
+												expandedDocs.add(documentIdx);
+												expandedDocs = expandedDocs;
+											}}
+										>
+											{$i18n.t('Show all ({{COUNT}} characters)', {
+												COUNT: rawContent.length.toLocaleString()
+											})}
+										</button>
+									{/if}
+								{:else}
+									<pre class="text-sm dark:text-gray-400 whitespace-pre-line">{rawContent}</pre>
+								{/if}
 							{/if}
 						</div>
 					</div>

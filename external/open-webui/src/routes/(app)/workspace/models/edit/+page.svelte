@@ -25,6 +25,11 @@
 			if (!model) {
 				goto('/workspace/models');
 			}
+
+			if (!model?.write_access) {
+				toast.error($i18n.t('You do not have permission to edit this model'));
+				goto('/workspace/models');
+			}
 		} else {
 			goto('/workspace/models');
 		}
@@ -47,5 +52,12 @@
 </script>
 
 {#if model}
-	<ModelEditor edit={true} {model} {onSubmit} />
+	<ModelEditor
+		edit={true}
+		{model}
+		{onSubmit}
+		onBack={async () => {
+			await goto('/workspace/models');
+		}}
+	/>
 {/if}
