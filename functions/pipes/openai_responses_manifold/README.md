@@ -2,7 +2,7 @@
 
 Enables advanced OpenAI features (function calling, web search, visible reasoning summaries, and more) directly in [Open WebUI](https://github.com/open-webui/open-webui).
 
-**Now supports OpenAI’s GPT-5 family in the API — [Learn more](#gpt-5-model-support).**
+**Now supports OpenAI’s GPT-6 family in the API — [Learn more](#gpt-6-model-support).**
 
 This project started as an internal tool (200+ hours of optimization and testing) and is now open-sourced as a way to give back to the Open WebUI community.
 
@@ -18,6 +18,7 @@ This project started as an internal tool (200+ hours of optimization and testing
 * [Advanced Features](#advanced-features)
 * [Tested Models](#tested-models)
 * [GPT‑5 Model Support](#gpt5-model-support)
+* [GPT‑6 Model Support](#gpt-6-model-support)
 * [How It Works (Design Notes)](#how-it-works-design-notes)
 * [Troubleshooting / FAQ](#troubleshooting--faq)
 
@@ -52,11 +53,11 @@ This project started as an internal tool (200+ hours of optimization and testing
 
 | Feature                            | Status          | Last updated | Notes                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------- | --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Native function calling**        | ✅ GA            | 2025-06-04   | Sends full JSON tool specs directly to OpenAI models that support function calling. This API-enforced method ensures reliable, validated tool calls and allows **multiple tool calls in a single response**. Much more robust than Open WebUI’s default single-call router.                                  |
-| **Visible reasoning summaries**    | ✅ GA            | 2025-08-07   | Enables OpenAI’s *reasoning summaries*, which explain how the model arrives at its answers. Displayed in collapsible `<details>` blocks for transparency, trust, and easier debugging.                                                                                                                       |
+| **Native function calling**        | ✅ GA            | 2026-09-09   | Sends full JSON tool specs directly to OpenAI models that support function calling. This API-enforced method ensures reliable, validated tool calls and allows **multiple tool calls in a single response**. Much more robust than Open WebUI’s default single-call router.                                  |
+| **Visible reasoning summaries**    | ✅ GA            | 2026-09-09   | Enables OpenAI’s *reasoning summaries*, which explain how the model arrives at its answers. Displayed in collapsible `<details>` blocks for transparency, trust, and easier debugging.                                                                                                                       |
 | **Encrypted reasoning tokens**     | ✅ GA            | 2025-08-07   | Saves reasoning tokens across tool-calling “turns” (and optionally whole conversations). Prevents the model from having to **re-reason from scratch** after each tool call, making responses faster, cheaper, and more cache-friendly.                                                                       |
 | **Optimized token caching**        | ✅ GA            | 2025-06-03   | Ensures all tokens—including hidden ones like tool calls and reasoning—are re-sent in the same order. This unlocks OpenAI’s token caching, cutting **input costs by 50–75%** and lowering latency.                                                                                                           |
-| **Web search tool**                | ✅ GA            | 2025-06-03   | Injects OpenAI’s `web_search` tool into supported models. With the valve enabled, the model can **self-decide when to search**. Alternatively, filters can toggle it on/off (mirroring ChatGPT’s behavior).                                                                                                  |
+| **Web search tool**                | ✅ GA            | 2026-09-09   | Injects OpenAI’s `web_search` tool into supported models. With the valve enabled, the model can **self-decide when to search**. Alternatively, filters can toggle it on/off (mirroring ChatGPT’s behavior).                                                                                                  |
 | **Task model support**             | ✅ GA            | 2025-08-07   | Detects when a request is for an **External Task Model** and routes it separately. Makes manifold models usable for lightweight routing or background tasks (e.g., with `gpt-4.1-nano`).                                                                                                                     |
 | **Streaming responses (SSE)**      | ✅ GA            | 2025-06-04   | Supports **real-time streaming**, so users can watch responses appear live as the model generates them.                                                                                                                                                                                                      |
 | **Usage pass-through**             | ✅ GA            | 2025-06-04   | Forwards API usage stats (tokens, caching data, etc.) into Open WebUI, visible in the frontend (hover the ℹ️ icon). Gives users **transparent cost and performance insights**.                                                                                                                               |
@@ -66,7 +67,7 @@ This project started as an internal tool (200+ hours of optimization and testing
 | **Inline citation events**         | ✅ GA (basic)    | 2025-07-28   | Adds inline citations (e.g., `[1]`) for **web search results**. Basic implementation works but still being refined. Style is adjustable with the `CITATION_STYLE` valve.                                                                                                                                     |
 | **Truncation control**             | ✅ GA            | 2025-06-10   | Defaults to `auto`, meaning if token limits are exceeded, older context is trimmed instead of failing. You can also set `max_tokens` via custom parameters. See OpenAI’s [Responses API docs on truncation](https://community.openai.com/t/introducing-the-responses-api/1140929/12?utm_source=chatgpt.com). |
 | **Custom param pass-through**      | ✅ GA            | 2025-06-14   | Supports Open WebUI’s **Custom Parameters**. Any params set in the GUI are passed through to OpenAI (e.g., `max_tokens` → `max_output_tokens`). Lets users fine-tune behavior without editing code.                                                                                                          |
-| **Regenerate → `text.verbosity`**  | ✅ GA            | 2025-08-11   | Open WebUI v0.6.19 added regenerate buttons for “More Concise” / “Add Details.” The manifold maps these to the `text.verbosity` parameter for GPT-5 models. Falls back to prompt injection if not supported.                                                                                                 |
+| **Regenerate → `text.verbosity`**  | ✅ GA            | 2026-09-09   | Open WebUI v0.6.19 added regenerate buttons for “More Concise” / “Add Details.” The manifold maps these to the `text.verbosity` parameter for GPT-5 models. Falls back to prompt injection if not supported, which is the path GPT-6 takes.                                                                                                 |
 | **Filter-injected tools**          | ✅ GA            | 2025-08-28   | Lets developers build **companion filters** that add tools under `body.extra_tools`. The manifold merges these into `body.tools` before sending to OpenAI, removing duplicates. Enables features like **web search toggles** without breaking native function calling.                                       |
 | **Image input (vision)**           | 🔄 In progress  | 2025-06-03   | Supports basic image input (Open WebUI converts uploads to base64 and forwards them). Works but inefficient for large images. A future version will switch to OpenAI’s **file upload API** for better performance.                                                                                           |
 | **Image generation tool**          | 🕒 Backlog      | 2025-06-03   | Planned support for **creating and editing images** with OpenAI. Will include **multi-turn editing**, but depends on efficient image handling via file uploads first.                                                                                                                                        |
@@ -140,6 +141,7 @@ Below are the official model IDs that have been tested and confirmed.
 
 | Family            | Model ID              | Type / Modality                  | Status | Notes |
 |-------------------|-----------------------|----------------------------------|:------:|-------|
+| **GPT-6**         | `gpt-6-astra`         | Reasoning (text + image → text)  | 🔄 | Flagship GPT-6 model. Support is implemented and unit tested, but not yet confirmed against the live API. Effort levels `low`–`max`; rejects `temperature`, `top_p` and effort `none`/`minimal`, which the manifold strips or remaps for you. |
 | **GPT-5**         | `gpt-5`               | Reasoning                        | ✅ | Standard GPT-5 reasoning model. |
 |                   | `gpt-5-mini`          | Reasoning                        | ✅ | Smaller, faster, lower cost than `gpt-5`. |
 |                   | `gpt-5-nano`          | Reasoning                        | ✅ | Ultra-lightweight reasoning; lowest cost. |
@@ -164,6 +166,12 @@ Useful for **routing, shorthand, or quick quality/cost tuning**. *(Subject to ch
 
 | Alias                          | Resolves To   | Preset(s)                    | Suggested Use |
 |--------------------------------|---------------|------------------------------|---------------|
+| `gpt-6`                        | `gpt-6-astra` | —                            | Shorthand for the flagship GPT-6 model. |
+| `gpt-6-astra-low`              | `gpt-6-astra` | `reasoning_effort="low"`     | Fastest/cheapest GPT-6 tier; the migration target for GPT-5 `minimal`. |
+| `gpt-6-astra-medium`           | `gpt-6-astra` | `reasoning_effort="medium"`  | Balanced default. |
+| `gpt-6-astra-high`             | `gpt-6-astra` | `reasoning_effort="high"`    | Hard problems; strong quality. |
+| `gpt-6-astra-xhigh`            | `gpt-6-astra` | `reasoning_effort="xhigh"`   | Deeper reasoning; noticeably more reasoning tokens. |
+| `gpt-6-astra-max`              | `gpt-6-astra` | `reasoning_effort="max"`     | Maximum compute. Slowest and most expensive. |
 | `gpt-5-auto`                   | Dynamic GPT-5 | —                            | Automatically routes between GPT-5 chat/mini/nano. |
 | `gpt-5-thinking`               | `gpt-5`       | Medium reasoning             | General high-quality tasks. ([OpenAI][8]) |
 | `gpt-5-thinking-minimal`       | `gpt-5`       | `reasoning_effort="minimal"` | Faster/cheaper reasoning. ([OpenAI][8]) |
@@ -235,6 +243,44 @@ To bridge this gap, the manifold includes an experimental **`gpt-5-auto`** model
 
 [1]: https://openai.com/index/introducing-gpt-5-for-developers/ "Introducing GPT-5 for developers | OpenAI"  
 [2]: https://cdn.openai.com/pdf/8124a3ce-ab78-4f06-96eb-49ea29ffb52f/gpt5-system-card-aug7.pdf "GPT-5 System Card (Aug 7, 2025)"
+
+
+## GPT-6 Model Support
+
+`gpt-6-astra` is the only GPT-6 model ID OpenAI exposes in the API. Everything else
+in the family is a reasoning effort setting rather than a separate model, so the
+manifold ships convenience aliases that pin one effort each:
+
+- `gpt-6` *(shorthand for `gpt-6-astra`, no preset effort)*
+- `gpt-6-astra-low`
+- `gpt-6-astra-medium`
+- `gpt-6-astra-high`
+- `gpt-6-astra-xhigh`
+- `gpt-6-astra-max`
+
+Add whichever you want to the `MODEL_ID` valve and each becomes its own model entry
+in Open WebUI. Reasoning, reasoning summaries, native function calling, the built-in
+web search tool and the built-in image generation tool are all enabled for GPT-6.
+
+### Differences from GPT-5
+
+GPT-6 rejects several parameters that GPT-5 accepted, and it returns HTTP 400 rather
+than ignoring them. The manifold normalises the request before it goes out, so a chat
+configured for GPT-5 keeps working when you switch it to GPT-6:
+
+| Parameter | GPT-5 | GPT-6 | What the manifold does |
+|-----------|-------|-------|------------------------|
+| `reasoning.effort` | `minimal` … `high` | `low`, `medium`, `high`, `xhigh`, `max` | Remaps `none` and `minimal` to `low` |
+| `temperature` | Accepted | Rejected | Dropped |
+| `top_p` | Accepted | Rejected | Dropped |
+| `text.verbosity` | Supported | Steer via the prompt instead | Not sent; the regenerate stub falls back to prompt injection |
+
+Two things worth knowing before you switch a busy workspace over:
+
+1. **Cost.** Reasoning tokens bill as output. `xhigh` and `max` produce a lot more of
+   them, so start at `low` or `medium` and raise the effort only where it earns its keep.
+2. **Task models.** GPT-6 is a poor fit for title and tag generation. Keep a small
+   model such as `gpt-4.1-nano` configured as the External Task Model.
 
 
 ## How It Works (Design Notes)

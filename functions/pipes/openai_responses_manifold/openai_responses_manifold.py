@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.8.28
+version: 0.9.0
 license: MIT
 """
 
@@ -48,16 +48,34 @@ from open_webui.models.models import ModelForm, Models
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature flags and other module level constants
 FEATURE_SUPPORT = {
-    "web_search_tool": {"gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o3-pro", "o4-mini", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's built-in web search tool.
-    "image_gen_tool": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
-    "function_calling": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
-    "reasoning": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
-    "reasoning_summary": {"gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
-    "verbosity": {"gpt-5", "gpt-5-mini", "gpt-5-nano"}, # Supports OpenAI's verbosity parameter.
+    "web_search_tool": {"gpt-6-astra", "gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o3-pro", "o4-mini", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's built-in web search tool.
+    "image_gen_tool": {"gpt-6-astra", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
+    "function_calling": {"gpt-6-astra", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
+    "reasoning": {"gpt-6-astra", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
+    "reasoning_summary": {"gpt-6-astra", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "verbosity": {"gpt-5", "gpt-5-mini", "gpt-5-nano"}, # Supports OpenAI's verbosity parameter.  GPT-6 Astra steers prose style via the prompt instead, so it is deliberately excluded.
 
     # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {"o3-deep-research", "o4-mini-deep-research"}, # OpenAI's deep research models.
 }
+
+# Reasoning effort levels each family accepts.  Families absent from this map are
+# left untouched and whatever the caller sent is forwarded as-is.
+# GPT-6 Astra dropped "none"/"minimal" — sending either returns HTTP 400 rather
+# than being ignored, so the pipe remaps it before the request goes out.
+REASONING_EFFORT_SUPPORT = {
+    "gpt-6-astra": {"low", "medium", "high", "xhigh", "max"},
+}
+
+# Substitute used when the requested effort is not in REASONING_EFFORT_SUPPORT.
+# OpenAI's GPT-6 migration guidance is to start from "low" and re-evaluate.
+REASONING_EFFORT_FALLBACK = {"none": "low", "minimal": "low"}
+
+# Families that reject the classic sampling knobs outright (HTTP 400).
+# OpenAI's GPT-6 migration guidance is to remove temperature, top_p and
+# top_logprobs; top_logprobs is already dropped for every model in
+# ``ResponsesBody.from_completions``.
+NO_SAMPLING_PARAMS = {"gpt-6-astra"}
 
 DETAILS_RE = re.compile(
     r"<details\b[^>]*>.*?</details>|!\[.*?]\(.*?\)",
@@ -93,6 +111,16 @@ class CompletionsBody(BaseModel):
 
         # Alias mapping: pseudo ID -> (real model, reasoning effort)
         aliases = {
+            # GPT-6 family.  "gpt-6-astra" is the only official GPT-6 ID; the
+            # variants below are pseudo IDs that pin a reasoning effort so each
+            # one can be surfaced as its own model entry in Open WebUI.
+            "gpt-6": ("gpt-6-astra", None),
+            "gpt-6-astra-low": ("gpt-6-astra", "low"),
+            "gpt-6-astra-medium": ("gpt-6-astra", "medium"),
+            "gpt-6-astra-high": ("gpt-6-astra", "high"),
+            "gpt-6-astra-xhigh": ("gpt-6-astra", "xhigh"),
+            "gpt-6-astra-max": ("gpt-6-astra", "max"),
+
             # GPT-5 Thinking family
             "gpt-5-thinking": ("gpt-5", None),
             "gpt-5-thinking-minimal": ("gpt-5", "minimal"),
@@ -485,10 +513,16 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-6-astra, gpt-6-astra-high, gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
             "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
             "Supports all official OpenAI model IDs and pseudo IDs: "
+            "gpt-6 (alias of gpt-6-astra), "
+            "gpt-6-astra-low, "
+            "gpt-6-astra-medium, "
+            "gpt-6-astra-high, "
+            "gpt-6-astra-xhigh, "
+            "gpt-6-astra-max, "
             "gpt-5-auto, "
             "gpt-5-thinking, "
             "gpt-5-thinking-minimal, "
@@ -504,7 +538,7 @@ class Pipe:
         # 3) Reasoning & summaries
         REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
             default="disabled",
-            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-6-astra, gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
         PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = Field(
             default="disabled",
@@ -538,7 +572,7 @@ class Pipe:
         # 6) Web search
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-6-astra, gpt-5, gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -686,6 +720,10 @@ class Pipe:
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
+
+        # Drop or remap parameters the target model rejects outright (e.g. GPT-6
+        # Astra returns HTTP 400 for temperature/top_p and for effort=minimal).
+        self._apply_model_param_constraints(responses_body, model_family)
 
         # Resolve __tools__ coroutine returned by newer Open WebUI versions.
         if inspect.isawaitable(__tools__):
@@ -1627,6 +1665,55 @@ class Pipe:
         await event_emitter(
             {"type": "notification", "data": {"type": level, "content": content}}
         )
+
+    def _apply_model_param_constraints(
+        self, responses_body: ResponsesBody, model_family: str
+    ) -> None:
+        """Strip or remap request params the target model family rejects.
+
+        Most OpenAI models silently ignore parameters they do not implement, but
+        GPT-6 Astra returns HTTP 400 for the classic sampling knobs and for the
+        ``none``/``minimal`` reasoning efforts that GPT-5 accepted.  Normalising
+        here keeps a chat configured for GPT-5 working when it is pointed at a
+        GPT-6 model.
+        """
+        if model_family in NO_SAMPLING_PARAMS:
+            for field in ("temperature", "top_p"):
+                if getattr(responses_body, field, None) is not None:
+                    self.logger.warning(
+                        "Dropping unsupported parameter '%s' for model '%s'.", field, model_family
+                    )
+                    setattr(responses_body, field, None)
+
+        allowed_efforts = REASONING_EFFORT_SUPPORT.get(model_family)
+        if not allowed_efforts:
+            return
+
+        effort = (responses_body.reasoning or {}).get("effort")
+        if not effort:
+            return
+
+        # The API is case sensitive, so a supported value still gets normalised.
+        normalized = str(effort).lower()
+        reasoning_params = dict(responses_body.reasoning or {})
+        if normalized in allowed_efforts:
+            reasoning_params["effort"] = normalized
+            responses_body.reasoning = reasoning_params
+            return
+
+        replacement = REASONING_EFFORT_FALLBACK.get(normalized)
+        if replacement in allowed_efforts:
+            reasoning_params["effort"] = replacement
+            self.logger.warning(
+                "Reasoning effort '%s' is not supported by '%s'; using '%s' instead.",
+                effort, model_family, replacement,
+            )
+        else:
+            reasoning_params.pop("effort", None)
+            self.logger.warning(
+                "Dropping unsupported reasoning effort '%s' for model '%s'.", effort, model_family
+            )
+        responses_body.reasoning = reasoning_params or None
 
     async def _route_gpt5_auto(
         self,

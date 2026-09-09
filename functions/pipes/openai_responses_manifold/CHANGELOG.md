@@ -5,6 +5,21 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-09
+- Added support for OpenAI's GPT-6 family (`gpt-6-astra`).
+- Registered `gpt-6-astra` for reasoning, reasoning summaries, native function
+  calling, the built-in web search tool and the built-in image generation tool.
+- Added pseudo model IDs `gpt-6`, `gpt-6-astra-low`, `gpt-6-astra-medium`,
+  `gpt-6-astra-high`, `gpt-6-astra-xhigh` and `gpt-6-astra-max` so each
+  reasoning effort can be exposed as its own Open WebUI model entry.
+- Remapped the `none` and `minimal` reasoning efforts to `low` on GPT-6, which
+  rejects both with HTTP 400 instead of ignoring them.
+- Stripped `temperature` and `top_p` on GPT-6, which also rejects them.
+- Added `gpt-6-astra` and `gpt-6-astra-high` to the default `MODEL_ID` valve.
+  Existing installs keep their saved value; add the IDs manually to pick them up.
+- Left GPT-6 out of the `verbosity` feature set. OpenAI's guidance is to steer
+  prose style through the prompt on that family.
+
 ## [0.8.28] - 2025-08-21
 - Resolved compatibility with Open WebUI v0.6.23 by awaiting `__tools__` when
   it is provided as a coroutine.

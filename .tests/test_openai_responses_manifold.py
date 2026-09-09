@@ -240,3 +240,90 @@ def test_transform_tools_dedup_and_unknown():
 )
 def test_build_mcp_tools_invalid(payload):
     assert mod.ResponsesBody._build_mcp_tools(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_model", "expected_effort"),
+    [
+        ("gpt-6", "gpt-6-astra", None),
+        ("gpt-6-astra", "gpt-6-astra", None),
+        ("openai_responses.gpt-6-astra-low", "gpt-6-astra", "low"),
+        ("openai_responses.gpt-6-astra-high", "gpt-6-astra", "high"),
+        ("GPT-6-Astra-XHigh", "gpt-6-astra", "xhigh"),
+        ("gpt-6-astra-max", "gpt-6-astra", "max"),
+    ],
+)
+def test_gpt6_model_aliases(model_id, expected_model, expected_effort):
+    """GPT-6 pseudo IDs resolve to gpt-6-astra with the effort pinned."""
+    body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
+    assert body.model == expected_model
+
+    responses_body = mod.ResponsesBody.from_completions(body)
+    assert responses_body.model == expected_model
+    assert (responses_body.reasoning or {}).get("effort") == expected_effort
+
+
+def test_gpt6_supports_expected_features():
+    """GPT-6 is registered for the features OpenAI documents for it."""
+    for feature in ("reasoning", "reasoning_summary", "function_calling",
+                    "web_search_tool", "image_gen_tool"):
+        assert "gpt-6-astra" in mod.FEATURE_SUPPORT[feature]
+
+    # OpenAI steers GPT-6 prose style via the prompt, not text.verbosity.
+    assert "gpt-6-astra" not in mod.FEATURE_SUPPORT["verbosity"]
+
+
+@pytest.mark.parametrize("effort", ["none", "minimal", "MINIMAL"])
+def test_gpt6_remaps_unsupported_reasoning_effort(effort):
+    """GPT-6 rejects none/minimal with HTTP 400, so they become 'low'."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model="gpt-6-astra", input=[], reasoning={"effort": effort, "summary": "auto"}
+    )
+    pipe._apply_model_param_constraints(body, "gpt-6-astra")
+    assert body.reasoning == {"effort": "low", "summary": "auto"}
+
+
+def test_gpt6_keeps_supported_reasoning_effort():
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model="gpt-6-astra", input=[], reasoning={"effort": "xhigh"})
+    pipe._apply_model_param_constraints(body, "gpt-6-astra")
+    assert body.reasoning == {"effort": "xhigh"}
+
+
+def test_gpt6_strips_sampling_params():
+    """GPT-6 rejects temperature/top_p, so the pipe drops them."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model="gpt-6-astra", input=[], temperature=0.7, top_p=0.9)
+    pipe._apply_model_param_constraints(body, "gpt-6-astra")
+    assert body.temperature is None
+    assert body.top_p is None
+
+
+def test_other_models_keep_their_params():
+    """Constraints are GPT-6 specific and leave other families untouched."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model="gpt-5", input=[], temperature=0.7, top_p=0.9, reasoning={"effort": "minimal"}
+    )
+    pipe._apply_model_param_constraints(body, "gpt-5")
+    assert body.temperature == 0.7
+    assert body.top_p == 0.9
+    assert body.reasoning == {"effort": "minimal"}
+
+
+async def test_gpt6_registered_as_webui_model():
+    pipe = mod.Pipe()
+    pipe.valves.MODEL_ID = "gpt-6-astra, gpt-6-astra-high"
+    assert await pipe.pipes() == [
+        {"id": "gpt-6-astra", "name": "OpenAI: gpt-6-astra"},
+        {"id": "gpt-6-astra-high", "name": "OpenAI: gpt-6-astra-high"},
+    ]
+
+
+def test_gpt6_normalizes_reasoning_effort_case():
+    """The API is case sensitive, so a supported value is lowercased."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model="gpt-6-astra", input=[], reasoning={"effort": "XHigh"})
+    pipe._apply_model_param_constraints(body, "gpt-6-astra")
+    assert body.reasoning == {"effort": "xhigh"}
