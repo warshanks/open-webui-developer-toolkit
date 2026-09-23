@@ -327,3 +327,73 @@ def test_gpt6_normalizes_reasoning_effort_case():
     body = mod.ResponsesBody(model="gpt-6-astra", input=[], reasoning={"effort": "XHigh"})
     pipe._apply_model_param_constraints(body, "gpt-6-astra")
     assert body.reasoning == {"effort": "xhigh"}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_model", "expected_effort"),
+    [
+        ("gpt-6-sol", "gpt-6-sol", None),
+        ("gpt-6-luna", "gpt-6-luna", None),
+        ("openai_responses.gpt-6-sol-none", "gpt-6-sol", "none"),
+        ("gpt-6-sol-high", "gpt-6-sol", "high"),
+        ("GPT-6-Sol-Max", "gpt-6-sol", "max"),
+        ("gpt-6-luna-none", "gpt-6-luna", "none"),
+        ("openai_responses.gpt-6-luna-xhigh", "gpt-6-luna", "xhigh"),
+    ],
+)
+def test_gpt6_sol_luna_model_aliases(model_id, expected_model, expected_effort):
+    """Sol/Luna pseudo IDs resolve to the real model with the effort pinned."""
+    body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
+    responses_body = mod.ResponsesBody.from_completions(body)
+    assert responses_body.model == expected_model
+    assert (responses_body.reasoning or {}).get("effort") == expected_effort
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_gpt6_sol_luna_supports_expected_features(model):
+    for feature in ("reasoning", "reasoning_summary", "function_calling",
+                    "web_search_tool", "image_gen_tool"):
+        assert model in mod.FEATURE_SUPPORT[feature]
+    assert model not in mod.FEATURE_SUPPORT["verbosity"]
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_gpt6_sol_luna_keep_none_effort(model):
+    """Unlike Astra, Sol and Luna accept reasoning effort 'none'."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model=model, input=[], reasoning={"effort": "None"})
+    pipe._apply_model_param_constraints(body, model)
+    assert body.reasoning == {"effort": "none"}
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_gpt6_sol_luna_remap_minimal(model):
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model=model, input=[], reasoning={"effort": "minimal"})
+    pipe._apply_model_param_constraints(body, model)
+    assert body.reasoning == {"effort": "low"}
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_gpt6_sol_luna_allow_sampling_without_reasoning(model):
+    """temperature/top_p are accepted when reasoning effort is 'none'."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model=model, input=[], temperature=0.7, top_p=0.9, reasoning={"effort": "none"}
+    )
+    pipe._apply_model_param_constraints(body, model)
+    assert body.temperature == 0.7
+    assert body.top_p == 0.9
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("reasoning", [None, {"effort": "medium"}, {"effort": "minimal"}])
+def test_gpt6_sol_luna_strip_sampling_while_reasoning(model, reasoning):
+    """Any effort other than 'none' (including the API default) rejects sampling params."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model=model, input=[], temperature=0.7, top_p=0.9, reasoning=reasoning
+    )
+    pipe._apply_model_param_constraints(body, model)
+    assert body.temperature is None
+    assert body.top_p is None

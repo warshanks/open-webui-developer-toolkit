@@ -142,6 +142,8 @@ Below are the official model IDs that have been tested and confirmed.
 | Family            | Model ID              | Type / Modality                  | Status | Notes |
 |-------------------|-----------------------|----------------------------------|:------:|-------|
 | **GPT-6**         | `gpt-6-astra`         | Reasoning (text + image → text)  | 🔄 | Flagship GPT-6 model. Support is implemented and unit tested, but not yet confirmed against the live API. Effort levels `low`–`max`; rejects `temperature`, `top_p` and effort `none`/`minimal`, which the manifold strips or remaps for you. |
+|                   | `gpt-6-sol`           | Reasoning (text + image → text)  | 🔄 | Balanced GPT-6 model for coding and agentic work; about half the price of GPT-5.6 Sol. Effort levels `none`–`max` (default `medium`). Not yet confirmed against the live API. |
+|                   | `gpt-6-luna`          | Reasoning (text + image → text)  | 🔄 | Lowest-cost GPT-6 model for high-volume, focused tasks. Same effort levels and parameter rules as `gpt-6-sol`. Not yet confirmed against the live API. |
 | **GPT-5**         | `gpt-5`               | Reasoning                        | ✅ | Standard GPT-5 reasoning model. |
 |                   | `gpt-5-mini`          | Reasoning                        | ✅ | Smaller, faster, lower cost than `gpt-5`. |
 |                   | `gpt-5-nano`          | Reasoning                        | ✅ | Ultra-lightweight reasoning; lowest cost. |
@@ -172,6 +174,8 @@ Useful for **routing, shorthand, or quick quality/cost tuning**. *(Subject to ch
 | `gpt-6-astra-high`             | `gpt-6-astra` | `reasoning_effort="high"`    | Hard problems; strong quality. |
 | `gpt-6-astra-xhigh`            | `gpt-6-astra` | `reasoning_effort="xhigh"`   | Deeper reasoning; noticeably more reasoning tokens. |
 | `gpt-6-astra-max`              | `gpt-6-astra` | `reasoning_effort="max"`     | Maximum compute. Slowest and most expensive. |
+| `gpt-6-sol-{effort}`           | `gpt-6-sol`   | `reasoning_effort={effort}`  | `none`, `low`, `medium`, `high`, `xhigh` or `max`. `none` is the only tier that accepts `temperature`/`top_p`. |
+| `gpt-6-luna-{effort}`          | `gpt-6-luna`  | `reasoning_effort={effort}`  | Same tiers as Sol; cheapest GPT-6 option. |
 | `gpt-5-auto`                   | Dynamic GPT-5 | —                            | Automatically routes between GPT-5 chat/mini/nano. |
 | `gpt-5-thinking`               | `gpt-5`       | Medium reasoning             | General high-quality tasks. ([OpenAI][8]) |
 | `gpt-5-thinking-minimal`       | `gpt-5`       | `reasoning_effort="minimal"` | Faster/cheaper reasoning. ([OpenAI][8]) |
@@ -247,16 +251,20 @@ To bridge this gap, the manifold includes an experimental **`gpt-5-auto`** model
 
 ## GPT-6 Model Support
 
-`gpt-6-astra` is the only GPT-6 model ID OpenAI exposes in the API. Everything else
-in the family is a reasoning effort setting rather than a separate model, so the
-manifold ships convenience aliases that pin one effort each:
+OpenAI exposes three GPT-6 model IDs in the API:
+
+| Model ID | Use it for | Effort levels |
+|----------|------------|---------------|
+| `gpt-6-astra` | Flagship; hardest problems | `low`, `medium`, `high`, `xhigh`, `max` |
+| `gpt-6-sol` | Coding and agentic work at roughly half the price of GPT-5.6 Sol | `none`, `low`, `medium` (default), `high`, `xhigh`, `max` |
+| `gpt-6-luna` | High-volume, focused tasks; lowest cost | `none`, `low`, `medium` (default), `high`, `xhigh`, `max` |
+
+The manifold also ships convenience aliases that pin one effort each:
 
 - `gpt-6` *(shorthand for `gpt-6-astra`, no preset effort)*
-- `gpt-6-astra-low`
-- `gpt-6-astra-medium`
-- `gpt-6-astra-high`
-- `gpt-6-astra-xhigh`
-- `gpt-6-astra-max`
+- `gpt-6-astra-low`, `-medium`, `-high`, `-xhigh`, `-max`
+- `gpt-6-sol-none`, `-low`, `-medium`, `-high`, `-xhigh`, `-max`
+- `gpt-6-luna-none`, `-low`, `-medium`, `-high`, `-xhigh`, `-max`
 
 Add whichever you want to the `MODEL_ID` valve and each becomes its own model entry
 in Open WebUI. Reasoning, reasoning summaries, native function calling, the built-in
@@ -270,17 +278,21 @@ configured for GPT-5 keeps working when you switch it to GPT-6:
 
 | Parameter | GPT-5 | GPT-6 | What the manifold does |
 |-----------|-------|-------|------------------------|
-| `reasoning.effort` | `minimal` … `high` | `low`, `medium`, `high`, `xhigh`, `max` | Remaps `none` and `minimal` to `low` |
-| `temperature` | Accepted | Rejected | Dropped |
-| `top_p` | Accepted | Rejected | Dropped |
+| `reasoning.effort` | `minimal` … `high` | Astra: `low` … `max`; Sol/Luna: `none` … `max` | Remaps `minimal` (and `none` on Astra) to `low` |
+| `temperature` | Accepted | Astra: rejected; Sol/Luna: only with effort `none` | Dropped whenever the model would reject it |
+| `top_p` | Accepted | Astra: rejected; Sol/Luna: only with effort `none` | Dropped whenever the model would reject it |
 | `text.verbosity` | Supported | Steer via the prompt instead | Not sent; the regenerate stub falls back to prompt injection |
+
+On Sol and Luna, sending no effort means the API default of `medium`, so
+`temperature` and `top_p` are dropped unless you pick effort `none` explicitly
+(for example with the `gpt-6-sol-none` alias).
 
 Two things worth knowing before you switch a busy workspace over:
 
 1. **Cost.** Reasoning tokens bill as output. `xhigh` and `max` produce a lot more of
    them, so start at `low` or `medium` and raise the effort only where it earns its keep.
-2. **Task models.** GPT-6 is a poor fit for title and tag generation. Keep a small
-   model such as `gpt-4.1-nano` configured as the External Task Model.
+2. **Task models.** Astra and Sol are a poor fit for title and tag generation. Use
+   `gpt-6-luna-none` or a small model such as `gpt-4.1-nano` as the External Task Model.
 
 
 ## How It Works (Design Notes)

@@ -5,6 +5,21 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-22
+- Added support for OpenAI's `gpt-6-sol` and `gpt-6-luna`, released today.
+- Registered both for reasoning, reasoning summaries, native function calling,
+  the built-in web search tool and the built-in image generation tool. Like
+  Astra, they are left out of the `verbosity` feature set.
+- Added pseudo model IDs `gpt-6-sol-{none,low,medium,high,xhigh,max}` and
+  `gpt-6-luna-{none,low,medium,high,xhigh,max}`.
+- Sol and Luna accept reasoning effort `none`, so it is forwarded as-is;
+  `minimal` is still remapped to `low`.
+- On Sol and Luna, `temperature` and `top_p` are kept when reasoning effort is
+  `none` and dropped otherwise (including when no effort is sent, since the API
+  defaults to `medium`), per OpenAI's GPT-6 migration guidance.
+- Added `gpt-6-sol` and `gpt-6-luna` to the default `MODEL_ID` valve. Existing
+  installs keep their saved value; add the IDs manually to pick them up.
+
 ## [0.9.0] - 2026-09-09
 - Added support for OpenAI's GPT-6 family (`gpt-6-astra`).
 - Registered `gpt-6-astra` for reasoning, reasoning summaries, native function
