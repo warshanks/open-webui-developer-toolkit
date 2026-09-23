@@ -6,27 +6,43 @@ import pytest
 from functions.pipes.openai_responses_manifold import openai_responses_manifold as mod
 
 
-@pytest.fixture()
-def dummy_chats(monkeypatch):
-    """Simple in-memory Chats stub."""
+@pytest.fixture(params=["sync", "async"])
+def dummy_chats(request, monkeypatch):
+    """Simple in-memory Chats stub.
+
+    Parametrised over a sync and an async flavour, since older Open WebUI
+    releases expose a synchronous ``Chats`` API and newer ones an async one.
+    """
     storage: dict[str, dict] = {}
 
     @dataclass
     class DummyChatModel:
         chat: dict
 
-    class DummyChats:
-        @staticmethod
-        def get_chat_by_id(cid):
-            chat = storage.get(cid)
-            if chat is None:
-                return None
-            return DummyChatModel(chat)
+    def get_chat(cid):
+        chat = storage.get(cid)
+        if chat is None:
+            return None
+        return DummyChatModel(chat)
 
-        @staticmethod
-        def update_chat_by_id(cid, chat):
-            storage[cid] = chat
-            return DummyChatModel(chat)
+    def update_chat(cid, chat):
+        storage[cid] = chat
+        return DummyChatModel(chat)
+
+    if request.param == "async":
+        async def aget(cid):
+            return get_chat(cid)
+
+        async def aupdate(cid, chat):
+            return update_chat(cid, chat)
+
+        class DummyChats:
+            get_chat_by_id = staticmethod(aget)
+            update_chat_by_id = staticmethod(aupdate)
+    else:
+        class DummyChats:
+            get_chat_by_id = staticmethod(get_chat)
+            update_chat_by_id = staticmethod(update_chat)
 
     monkeypatch.setattr(mod, "Chats", DummyChats)
     return storage
@@ -49,15 +65,15 @@ def test_marker_roundtrip():
     assert segments[-1]["text"].strip().endswith("post")
 
 
-def test_persistence_fetch_and_input(dummy_chats):
+async def test_persistence_fetch_and_input(dummy_chats):
     dummy_chats["c1"] = {"history": {"messages": {}}}
-    marker1 = mod.persist_openai_response_items(
+    marker1 = await mod.persist_openai_response_items(
         "c1",
         "m1",
         [{"type": "function_call", "name": "calc", "arguments": "{}"}],
         "openai_responses.gpt-4o",
     )
-    marker2 = mod.persist_openai_response_items(
+    marker2 = await mod.persist_openai_response_items(
         "c1",
         "m2",
         [{"type": "function_call", "name": "other", "arguments": "{}"}],
@@ -67,13 +83,13 @@ def test_persistence_fetch_and_input(dummy_chats):
     uid1 = mod.extract_markers(marker1, parsed=True)[0]["ulid"]
     uid2 = mod.extract_markers(marker2, parsed=True)[0]["ulid"]
 
-    fetched = mod.fetch_openai_response_items(
+    fetched = await mod.fetch_openai_response_items(
         "c1", [uid1, uid2], openwebui_model_id="openai_responses.gpt-4o"
     )
     assert list(fetched) == [uid1]
 
     messages = [{"role": "assistant", "content": marker1 + "ok"}]
-    output = mod.ResponsesBody.transform_messages_to_input(
+    output = await mod.ResponsesBody.transform_messages_to_input(
         messages,
         chat_id="c1",
         openwebui_model_id="openai_responses.gpt-4o",
@@ -130,27 +146,27 @@ def test_parse_marker_invalid_version():
         mod.parse_marker("openai_responses:v1:bad")
 
 
-def test_persist_missing_and_empty(dummy_chats):
+async def test_persist_missing_and_empty(dummy_chats):
     assert (
-        mod.persist_openai_response_items(
+        await mod.persist_openai_response_items(
             "x", "m", [{"type": "t"}], "model"
         )
         == ""
     )
     dummy_chats["c1"] = {"history": {"messages": {}}}
-    assert mod.persist_openai_response_items("c1", "m", [], "model") == ""
+    assert await mod.persist_openai_response_items("c1", "m", [], "model") == ""
 
 
-def test_fetch_nonexistent(dummy_chats):
+async def test_fetch_nonexistent(dummy_chats):
     dummy_chats["c1"] = {"history": {"messages": {}}}
-    assert mod.fetch_openai_response_items("c1", ["bad"]) == {}
+    assert await mod.fetch_openai_response_items("c1", ["bad"]) == {}
 
 
-def test_duplicate_persistence(dummy_chats, monkeypatch):
+async def test_duplicate_persistence(dummy_chats, monkeypatch):
     dummy_chats["c1"] = {"history": {"messages": {}}}
     monkeypatch.setattr(mod, "generate_item_id", lambda: "A" * 16)
-    mod.persist_openai_response_items("c1", "m1", [{"type": "ab"}], "model")
-    mod.persist_openai_response_items("c1", "m1", [{"type": "bb"}], "model")
+    await mod.persist_openai_response_items("c1", "m1", [{"type": "ab"}], "model")
+    await mod.persist_openai_response_items("c1", "m1", [{"type": "bb"}], "model")
     store = dummy_chats["c1"]["openai_responses_pipe"]["items"]
     assert list(store) == ["A" * 16]
     assert store["A" * 16]["payload"]["type"] == "bb"
@@ -160,8 +176,11 @@ def test_duplicate_persistence(dummy_chats, monkeypatch):
     assert ids == ["A" * 16, "A" * 16]
 
 
-def test_transform_messages_various(monkeypatch):
-    monkeypatch.setattr(mod, "fetch_openai_response_items", lambda *a, **k: {})
+async def test_transform_messages_various(monkeypatch):
+    async def no_items(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr(mod, "fetch_openai_response_items", no_items)
     msgs = [
         {"role": "system", "content": "skip"},
         {"role": "user", "content": "hi"},
@@ -177,7 +196,7 @@ def test_transform_messages_various(monkeypatch):
         {"role": "assistant", "content": "ok"},
         {"content": "ignored"},
     ]
-    out = mod.ResponsesBody.transform_messages_to_input(msgs)
+    out = await mod.ResponsesBody.transform_messages_to_input(msgs)
     assert [o["role"] for o in out] == [
         "user",
         "user",
@@ -188,20 +207,23 @@ def test_transform_messages_various(monkeypatch):
     assert out[1]["content"][1]["image_url"] == "u"
     assert out[1]["content"][2] == {"type": "unknown", "value": 1}
     # chat_id without model_id should still transform without raising
-    out2 = mod.ResponsesBody.transform_messages_to_input(msgs, chat_id="c1")
+    out2 = await mod.ResponsesBody.transform_messages_to_input(msgs, chat_id="c1")
     assert len(out2) == len(out)
     # model_id without chat_id should also transform without raising
-    out3 = mod.ResponsesBody.transform_messages_to_input(
+    out3 = await mod.ResponsesBody.transform_messages_to_input(
         msgs, openwebui_model_id="model"
     )
     assert len(out3) == len(out)
 
 
-def test_transform_messages_missing_item(monkeypatch, dummy_chats):
+async def test_transform_messages_missing_item(monkeypatch, dummy_chats):
     dummy_chats["c1"] = {"history": {"messages": {}}}
     marker = mod.wrap_marker(mod.create_marker("fc", ulid="B" * 16))
-    monkeypatch.setattr(mod, "fetch_openai_response_items", lambda *a, **k: {})
-    out = mod.ResponsesBody.transform_messages_to_input(
+    async def no_items(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr(mod, "fetch_openai_response_items", no_items)
+    out = await mod.ResponsesBody.transform_messages_to_input(
         [{"role": "assistant", "content": marker}],
         chat_id="c1",
         openwebui_model_id="model",
@@ -253,12 +275,12 @@ def test_build_mcp_tools_invalid(payload):
         ("gpt-6-astra-max", "gpt-6-astra", "max"),
     ],
 )
-def test_gpt6_model_aliases(model_id, expected_model, expected_effort):
+async def test_gpt6_model_aliases(model_id, expected_model, expected_effort):
     """GPT-6 pseudo IDs resolve to gpt-6-astra with the effort pinned."""
     body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
     assert body.model == expected_model
 
-    responses_body = mod.ResponsesBody.from_completions(body)
+    responses_body = await mod.ResponsesBody.from_completions(body)
     assert responses_body.model == expected_model
     assert (responses_body.reasoning or {}).get("effort") == expected_effort
 
@@ -341,10 +363,10 @@ def test_gpt6_normalizes_reasoning_effort_case():
         ("openai_responses.gpt-6-luna-xhigh", "gpt-6-luna", "xhigh"),
     ],
 )
-def test_gpt6_sol_luna_model_aliases(model_id, expected_model, expected_effort):
+async def test_gpt6_sol_luna_model_aliases(model_id, expected_model, expected_effort):
     """Sol/Luna pseudo IDs resolve to the real model with the effort pinned."""
     body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
-    responses_body = mod.ResponsesBody.from_completions(body)
+    responses_body = await mod.ResponsesBody.from_completions(body)
     assert responses_body.model == expected_model
     assert (responses_body.reasoning or {}).get("effort") == expected_effort
 
@@ -397,3 +419,76 @@ def test_gpt6_sol_luna_strip_sampling_while_reasoning(model, reasoning):
     pipe._apply_model_param_constraints(body, model)
     assert body.temperature is None
     assert body.top_p is None
+
+
+async def test_maybe_await_handles_sync_and_async_db_calls():
+    """Newer Open WebUI returns coroutines from Chats/Models; older returns values."""
+    async def coro():
+        return "async"
+
+    assert await mod._maybe_await("sync") == "sync"
+    assert await mod._maybe_await(coro()) == "async"
+
+
+async def test_http_errors_include_openai_message():
+    """A 400 surfaces OpenAI's error message, not just 'Bad Request'."""
+    class FakeResp:
+        status = 400
+        reason = "Bad Request"
+        request_info = None
+        history = ()
+        headers = {}
+
+        async def text(self):
+            return json.dumps({"error": {"message": "Unsupported parameter: 'x'."}})
+
+    with pytest.raises(mod.aiohttp.ClientResponseError) as exc:
+        await mod.Pipe._raise_for_status_with_body(FakeResp())
+    assert exc.value.status == 400
+    assert "Unsupported parameter: 'x'." in exc.value.message
+
+
+def test_strict_mode_hardens_nested_objects():
+    """Objects inside arrays/anyOf also need additionalProperties=false (OpenAI 400 otherwise)."""
+    params = {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                        "options": {"type": "array", "items": {"type": "string"}},
+                        "kind": {"type": "string", "enum": ["single", "multi"]},
+                    },
+                    "required": ["question"],
+                },
+            },
+            "extra": {"anyOf": [{"type": "object", "properties": {"a": {"type": "integer"}}}]},
+        },
+        "required": ["questions"],
+    }
+    spec = {"name": "ask_user", "parameters": params}
+    out = mod.ResponsesBody.transform_tools([{"spec": spec}], strict=True)
+    p = out[0]["parameters"]
+
+    assert p["additionalProperties"] is False
+    assert p["required"] == ["questions", "extra"]
+    # Originally required → unchanged; optional → nullable.
+    assert p["properties"]["questions"]["type"] == "array"
+    assert {"type": "null"} in p["properties"]["extra"]["anyOf"]
+
+    item = p["properties"]["questions"]["items"]
+    assert item["additionalProperties"] is False
+    assert item["required"] == ["question", "options", "kind"]
+    assert item["properties"]["question"]["type"] == "string"
+    assert item["properties"]["options"]["type"] == ["array", "null"]
+    assert item["properties"]["kind"]["enum"] == ["single", "multi", None]
+
+    branch = p["properties"]["extra"]["anyOf"][0]
+    assert branch["additionalProperties"] is False
+    assert branch["required"] == ["a"]
+
+    # The caller's tool spec is not mutated.
+    assert "additionalProperties" not in params

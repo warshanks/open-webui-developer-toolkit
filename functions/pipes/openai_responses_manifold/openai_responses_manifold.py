@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.10.0
+version: 0.10.1
 license: MIT
 """
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 import textwrap
 from typing import Tuple
 import asyncio
+import copy
 import datetime
 import inspect
 import json
@@ -84,6 +85,16 @@ NO_SAMPLING_PARAMS = {"gpt-6-astra"}
 # Any other effort (including the "medium" default when none is sent) gets
 # HTTP 400, matching OpenAI's GPT-6 Sol/Luna migration guidance.
 SAMPLING_PARAMS_REQUIRE_NO_REASONING = {"gpt-6-sol", "gpt-6-luna"}
+
+async def _maybe_await(value: Any) -> Any:
+    """Await ``value`` if needed.
+
+    Open WebUI moved its DB layer (``Chats``, ``Models``) to async methods; older
+    releases are synchronous.  Wrapping every DB call keeps both working.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 DETAILS_RE = re.compile(
     r"<details\b[^>]*>.*?</details>|!\[.*?]\(.*?\)",
@@ -234,7 +245,7 @@ class ResponsesBody(BaseModel):
                         "type":        "function",
                         "name":        spec.get("name", ""),
                         "description": spec.get("description", ""),
-                        "parameters":  spec.get("parameters", {}),
+                        "parameters":  copy.deepcopy(spec.get("parameters", {})),
                     })
                 continue
 
@@ -246,7 +257,7 @@ class ResponsesBody(BaseModel):
                         "type":        "function",
                         "name":        fn.get("name", ""),
                         "description": fn.get("description", ""),
-                        "parameters":  fn.get("parameters", {}),
+                        "parameters":  copy.deepcopy(fn.get("parameters", {})),
                     })
                 continue
 
@@ -257,14 +268,9 @@ class ResponsesBody(BaseModel):
         if strict:
             for tool in converted:
                 params = tool.setdefault("parameters", {})
-                props  = params.setdefault("properties", {})
-                params["required"] = list(props)
-                params["additionalProperties"] = False
-                for schema in props.values():
-                    t = schema.get("type")
-                    schema["type"] = [t, "null"] if isinstance(t, str) else (
-                        t + ["null"] if isinstance(t, list) and "null" not in t else t
-                    )
+                params.setdefault("type", "object")
+                params.setdefault("properties", {})
+                ResponsesBody._strictify_schema(params)
                 tool["strict"] = True
 
         # 3. deduplicate ---------------------------------------------------
@@ -274,6 +280,56 @@ class ResponsesBody(BaseModel):
             canonical[key] = t
 
         return list(canonical.values())
+
+    @staticmethod
+    def _strictify_schema(schema: Any, nullable: bool = False) -> None:
+        """Rewrite a JSON schema in place to satisfy OpenAI strict mode.
+
+        Strict mode requires every object, at any depth (array items, anyOf
+        branches, $defs, …), to set ``additionalProperties: false`` and list all
+        of its properties as ``required``.  Properties that were optional are
+        made nullable instead, so the model can still omit them by sending null.
+        """
+        if not isinstance(schema, dict):
+            return
+
+        if nullable:
+            t = schema.get("type")
+            if isinstance(t, str) and t != "null":
+                schema["type"] = [t, "null"]
+            elif isinstance(t, list) and "null" not in t:
+                schema["type"] = t + ["null"]
+            elif t is None and isinstance(schema.get("anyOf"), list):
+                if not any(isinstance(b, dict) and b.get("type") == "null" for b in schema["anyOf"]):
+                    schema["anyOf"].append({"type": "null"})
+            if isinstance(schema.get("enum"), list) and None not in schema["enum"]:
+                schema["enum"].append(None)
+
+        t = schema.get("type")
+        types = t if isinstance(t, list) else [t]
+        props = schema.get("properties")
+        if "object" in types or isinstance(props, dict):
+            props = props if isinstance(props, dict) else {}
+            originally_required = set(schema.get("required") or [])
+            schema["properties"] = props
+            schema["required"] = list(props)
+            schema["additionalProperties"] = False
+            for name, sub in props.items():
+                ResponsesBody._strictify_schema(sub, nullable=name not in originally_required)
+
+        items = schema.get("items")
+        if isinstance(items, list):
+            for sub in items:
+                ResponsesBody._strictify_schema(sub)
+        else:
+            ResponsesBody._strictify_schema(items)
+
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            for sub in schema.get(key) or []:
+                ResponsesBody._strictify_schema(sub)
+        for key in ("$defs", "definitions"):
+            for sub in (schema.get(key) or {}).values():
+                ResponsesBody._strictify_schema(sub)
 
     # -----------------------------------------------------------------------
     # Helper: turn the JSON string into valid MCP tool dicts
@@ -332,7 +388,7 @@ class ResponsesBody(BaseModel):
         return valid_tools
     
     @staticmethod
-    def transform_messages_to_input(
+    async def transform_messages_to_input(
         messages: List[Dict[str, Any]],
         chat_id: Optional[str] = None,
         openwebui_model_id: Optional[str] = None,
@@ -367,7 +423,7 @@ class ResponsesBody(BaseModel):
         # Fetch persisted items if both IDs are provided and there are encoded item IDs
         items_lookup: dict[str, dict] = {}
         if chat_id and openwebui_model_id and required_item_ids:
-            items_lookup = fetch_openai_response_items(
+            items_lookup = await fetch_openai_response_items(
                 chat_id,
                 list(required_item_ids),
                 openwebui_model_id=openwebui_model_id,
@@ -447,7 +503,7 @@ class ResponsesBody(BaseModel):
         return openai_input
 
     @classmethod
-    def from_completions(
+    async def from_completions(
         ResponsesBody, completions_body: "CompletionsBody", chat_id: Optional[str] = None, openwebui_model_id: Optional[str] = None, **extra_params
     ) -> "ResponsesBody":
         """
@@ -503,7 +559,7 @@ class ResponsesBody(BaseModel):
         # Transform input messages to OpenAI Responses API format
         if "messages" in completions_dict:
             sanitized_params.pop("messages", None)
-            sanitized_params["input"] = ResponsesBody.transform_messages_to_input(
+            sanitized_params["input"] = await ResponsesBody.transform_messages_to_input(
                 completions_dict.get("messages", []),
                 chat_id=chat_id,
                 openwebui_model_id=openwebui_model_id
@@ -595,7 +651,7 @@ class Pipe:
         # 6) Web search
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search_preview' tool when supported (gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5, gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5, gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -709,7 +765,7 @@ class Pipe:
 
         # Transform request body (Completions API -> Responses API).
         completions_body = CompletionsBody.model_validate(body)
-        responses_body = ResponsesBody.from_completions(
+        responses_body = await ResponsesBody.from_completions(
             completions_body=completions_body,
 
             # If chat_id and openwebui_model_id are provided, from_completions() uses them to fetch previously persisted items (function_calls, reasoning, etc.) from DB and reconstruct the input array in the correct order.
@@ -768,8 +824,10 @@ class Pipe:
             and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
         ):
             responses_body.tools = responses_body.tools or []
+            # "web_search" is the GA tool; newer models (e.g. GPT-6) reject the
+            # legacy "web_search_preview" with HTTP 400.
             responses_body.tools.append({
-                "type": "web_search_preview",
+                "type": "web_search",
                 "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
                 **({"user_location": json.loads(valves.WEB_SEARCH_USER_LOCATION)} if valves.WEB_SEARCH_USER_LOCATION else {}),
             })
@@ -783,7 +841,7 @@ class Pipe:
         # Check if tools are enabled but native function calling is disabled
         # If so, update the OpenWebUI model parameter to enable native function calling for future requests.
         if __tools__:
-            model = Models.get_model_by_id(openwebui_model_id)
+            model = await _maybe_await(Models.get_model_by_id(openwebui_model_id))
             if model:
                 params = dict(model.params or {})
                 if params.get("function_calling") != "native":
@@ -800,7 +858,7 @@ class Pipe:
                         form_data["params"] = params
                         form_data["params"]["function_calling"] = "native"
                         form = ModelForm(**form_data)
-                        Models.update_model_by_id(openwebui_model_id, form)
+                        await _maybe_await(Models.update_model_by_id(openwebui_model_id, form))
 
             
         # Enable reasoning summary if enabled and supported
@@ -1017,7 +1075,7 @@ class Pipe:
                             should_persist = valves.PERSIST_TOOL_RESULTS # Persist all other non-message items (tool calls, web_search_call, etc.)
 
                         if should_persist:
-                            hidden_uid_marker = persist_openai_response_items(
+                            hidden_uid_marker = await persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
@@ -1104,7 +1162,7 @@ class Pipe:
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        hidden_uid_marker = persist_openai_response_items(
+                        hidden_uid_marker = await persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             function_outputs,
@@ -1153,9 +1211,9 @@ class Pipe:
             chat_id = metadata.get("chat_id")
             message_id = metadata.get("message_id")
             if chat_id and message_id and emitted_citations:
-                Chats.upsert_message_to_chat_by_id_and_message_id(
+                await _maybe_await(Chats.upsert_message_to_chat_by_id_and_message_id(
                     chat_id, message_id, {"sources": emitted_citations}
-                )
+                ))
 
             # Return the final output to ensure persistence.
             return assistant_message
@@ -1242,7 +1300,7 @@ class Pipe:
 
                     else:
                         if valves.PERSIST_TOOL_RESULTS:
-                            hidden_uid_marker = persist_openai_response_items(
+                            hidden_uid_marker = await persist_openai_response_items(
                                 metadata.get("chat_id"),
                                 metadata.get("message_id"),
                                 [item],
@@ -1309,7 +1367,7 @@ class Pipe:
                 if calls:
                     function_outputs = await self._execute_function_calls(calls, tools)
                     if valves.PERSIST_TOOL_RESULTS:
-                        hidden_uid_marker = persist_openai_response_items(
+                        hidden_uid_marker = await persist_openai_response_items(
                             metadata.get("chat_id"),
                             metadata.get("message_id"),
                             function_outputs,
@@ -1414,7 +1472,7 @@ class Pipe:
 
         buf = bytearray()
         async with self.session.post(url, json=request_body, headers=headers) as resp:
-            resp.raise_for_status()
+            await self._raise_for_status_with_body(resp)
 
             async for chunk in resp.content.iter_chunked(4096):
                 buf.extend(chunk)
@@ -1460,8 +1518,30 @@ class Pipe:
         url = base_url.rstrip("/") + "/responses"
 
         async with self.session.post(url, json=request_params, headers=headers) as resp:
-            resp.raise_for_status()
+            await self._raise_for_status_with_body(resp)
             return await resp.json()
+
+    @staticmethod
+    async def _raise_for_status_with_body(resp: aiohttp.ClientResponse) -> None:
+        """Raise on HTTP errors, including OpenAI's error message.
+
+        ``raise_for_status()`` only reports "400, Bad Request"; the useful detail
+        (which parameter or tool was rejected) lives in the JSON body.
+        """
+        if resp.status < 400:
+            return
+        body = await resp.text()
+        try:
+            detail = json.loads(body).get("error", {}).get("message") or body
+        except (ValueError, AttributeError):
+            detail = body
+        raise aiohttp.ClientResponseError(
+            resp.request_info,
+            resp.history,
+            status=resp.status,
+            message=f"{resp.reason}: {detail}",
+            headers=resp.headers,
+        )
     
     async def _get_or_init_http_session(self) -> aiohttp.ClientSession:
         """Return a cached ``aiohttp.ClientSession`` instance.
@@ -2018,7 +2098,7 @@ class ExpandableStatusIndicator:
 # 6. Framework Integration Helpers (Open WebUI DB operations)
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility functions that interface with Open WebUI's data models
-def persist_openai_response_items(
+async def persist_openai_response_items(
     chat_id: str,
     message_id: str,
     items: List[Dict[str, Any]],
@@ -2036,7 +2116,7 @@ def persist_openai_response_items(
     if not items:
         return ""
 
-    chat_model = Chats.get_chat_by_id(chat_id)
+    chat_model = await _maybe_await(Chats.get_chat_by_id(chat_id))
     if not chat_model:
         return ""
 
@@ -2066,7 +2146,7 @@ def persist_openai_response_items(
         )
         hidden_uid_markers.append(hidden_uid_marker)
 
-    Chats.update_chat_by_id(chat_id, chat_model.chat)
+    await _maybe_await(Chats.update_chat_by_id(chat_id, chat_model.chat))
     return "".join(hidden_uid_markers)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2195,7 +2275,7 @@ def split_text_by_markers(text: str) -> list[dict]:
         segments.append({"type": "text", "text": text[last:]})
     return segments
 
-def fetch_openai_response_items(
+async def fetch_openai_response_items(
     chat_id: str,
     item_ids: List[str],
     *,
@@ -2209,7 +2289,7 @@ def fetch_openai_response_items(
     :return: Mapping of ULID to the stored item payload.
     """
 
-    chat_model = Chats.get_chat_by_id(chat_id)
+    chat_model = await _maybe_await(Chats.get_chat_by_id(chat_id))
     if not chat_model:
         return {}
 

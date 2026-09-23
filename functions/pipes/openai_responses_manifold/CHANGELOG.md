@@ -5,6 +5,26 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-09-22
+- Fixed `'coroutine' object has no attribute 'params'` on newer Open WebUI
+  releases, whose `Chats` and `Models` DB methods are now async. Every DB call
+  is awaited when it returns a coroutine, so older synchronous releases keep
+  working. This also fixes item persistence and reloading (tool calls,
+  encrypted reasoning) and citation saving, which failed the same way.
+- Switched the built-in web search tool from the legacy `web_search_preview`
+  to the GA `web_search`, which newer models require.
+- Fixed strict-mode tool schemas: nested objects (inside array `items`,
+  `anyOf`/`oneOf`/`allOf` branches and `$defs`) now get
+  `additionalProperties: false` and a full `required` list, which OpenAI
+  enforces with HTTP 400. Optional properties become nullable at every depth,
+  while originally required ones keep their type. Tool specs are copied
+  instead of mutated in place.
+- HTTP errors from OpenAI now include the API's error message instead of just
+  `400, message='Bad Request'`.
+- `ResponsesBody.from_completions`, `ResponsesBody.transform_messages_to_input`,
+  `persist_openai_response_items` and `fetch_openai_response_items` are now
+  coroutines.
+
 ## [0.10.0] - 2026-09-22
 - Added support for OpenAI's `gpt-6-sol` and `gpt-6-luna`, released today.
 - Registered both for reasoning, reasoning summaries, native function calling,
