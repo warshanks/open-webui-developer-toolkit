@@ -5,6 +5,20 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-29
+- Added support for OpenAI's `gpt-6.1-sol`, released today. It succeeds
+  `gpt-6-sol` as the mid-tier GPT-6 model, at the same price.
+- Registered it for reasoning, reasoning summaries, native function calling,
+  the built-in web search tool and the built-in image generation tool. Like the
+  rest of GPT-6, it is left out of the `verbosity` feature set.
+- Added pseudo model IDs `gpt-6.1-sol-{low,medium,high,xhigh,max}`.
+- Unlike `gpt-6-sol`, GPT-6.1 Sol rejects reasoning effort `none`, the same as
+  Astra. Both `none` and `minimal` are remapped to `low`, and `temperature` and
+  `top_p` are always dropped, since the API only accepts them at effort `none`.
+- Replaced `gpt-6-sol` with `gpt-6.1-sol` in the default `MODEL_ID` valve.
+  `gpt-6-sol` is still supported. Existing installs keep their saved value, so
+  add `gpt-6.1-sol` manually to pick it up.
+
 ## [0.10.1] - 2026-09-22
 - Fixed `'coroutine' object has no attribute 'params'` on newer Open WebUI
   releases, whose `Chats` and `Models` DB methods are now async. Every DB call

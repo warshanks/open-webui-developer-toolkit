@@ -421,6 +421,53 @@ def test_gpt6_sol_luna_strip_sampling_while_reasoning(model, reasoning):
     assert body.top_p is None
 
 
+@pytest.mark.parametrize(
+    ("model_id", "expected_model", "expected_effort"),
+    [
+        ("gpt-6.1-sol", "gpt-6.1-sol", None),
+        ("openai_responses.gpt-6.1-sol-low", "gpt-6.1-sol", "low"),
+        ("gpt-6.1-sol-medium", "gpt-6.1-sol", "medium"),
+        ("GPT-6.1-Sol-High", "gpt-6.1-sol", "high"),
+        ("gpt-6.1-sol-xhigh", "gpt-6.1-sol", "xhigh"),
+        ("openai_responses.gpt-6.1-sol-max", "gpt-6.1-sol", "max"),
+    ],
+)
+async def test_gpt61_sol_model_aliases(model_id, expected_model, expected_effort):
+    """GPT-6.1 Sol pseudo IDs resolve to gpt-6.1-sol with the effort pinned."""
+    body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
+    responses_body = await mod.ResponsesBody.from_completions(body)
+    assert responses_body.model == expected_model
+    assert (responses_body.reasoning or {}).get("effort") == expected_effort
+
+
+def test_gpt61_sol_supports_expected_features():
+    for feature in ("reasoning", "reasoning_summary", "function_calling",
+                    "web_search_tool", "image_gen_tool"):
+        assert "gpt-6.1-sol" in mod.FEATURE_SUPPORT[feature]
+    assert "gpt-6.1-sol" not in mod.FEATURE_SUPPORT["verbosity"]
+
+
+@pytest.mark.parametrize("effort", ["none", "minimal", "None"])
+def test_gpt61_sol_remaps_unsupported_reasoning_effort(effort):
+    """Unlike GPT-6 Sol, GPT-6.1 Sol rejects 'none' as well as 'minimal'."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model="gpt-6.1-sol", input=[], reasoning={"effort": effort})
+    pipe._apply_model_param_constraints(body, "gpt-6.1-sol")
+    assert body.reasoning == {"effort": "low"}
+
+
+@pytest.mark.parametrize("reasoning", [None, {"effort": "none"}, {"effort": "high"}])
+def test_gpt61_sol_strips_sampling_params(reasoning):
+    """With no 'none' effort to fall back on, sampling params are always dropped."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model="gpt-6.1-sol", input=[], temperature=0.7, top_p=0.9, reasoning=reasoning
+    )
+    pipe._apply_model_param_constraints(body, "gpt-6.1-sol")
+    assert body.temperature is None
+    assert body.top_p is None
+
+
 async def test_maybe_await_handles_sync_and_async_db_calls():
     """Newer Open WebUI returns coroutines from Chats/Models; older returns values."""
     async def coro():
