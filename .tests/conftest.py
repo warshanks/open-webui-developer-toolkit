@@ -92,6 +92,25 @@ internal_db_mod.Base = Base
 internal_db_mod.JSONField = JSONField
 internal_db_mod.get_db = get_db
 
+files_mod = types.ModuleType("open_webui.models.files")
+
+class Files:
+    @staticmethod
+    def get_file_by_id(file_id):
+        return None
+
+files_mod.Files = Files
+
+storage_mod = types.ModuleType("open_webui.storage")
+storage_provider_mod = types.ModuleType("open_webui.storage.provider")
+
+class Storage:
+    @staticmethod
+    def get_file(file_path):
+        return file_path
+
+storage_provider_mod.Storage = Storage
+
 sys.modules.setdefault("open_webui", open_webui)
 sys.modules.setdefault("open_webui.models", models_mod)
 sys.modules.setdefault("open_webui.models.chats", chats_mod)
@@ -100,3 +119,6 @@ sys.modules.setdefault("open_webui.utils", utils_mod)
 sys.modules.setdefault("open_webui.utils.misc", misc_mod)
 sys.modules.setdefault("open_webui.tasks", tasks_mod)
 sys.modules.setdefault("open_webui.internal.db", internal_db_mod)
+sys.modules.setdefault("open_webui.models.files", files_mod)
+sys.modules.setdefault("open_webui.storage", storage_mod)
+sys.modules.setdefault("open_webui.storage.provider", storage_provider_mod)
