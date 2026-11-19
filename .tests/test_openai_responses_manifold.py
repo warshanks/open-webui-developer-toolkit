@@ -468,6 +468,70 @@ def test_gpt61_sol_strips_sampling_params(reasoning):
     assert body.top_p is None
 
 
+@pytest.mark.parametrize(
+    ("model_id", "expected_model", "expected_effort"),
+    [
+        ("gpt-6.1-terra", "gpt-6.1-terra", None),
+        ("openai_responses.gpt-6.1-terra-none", "gpt-6.1-terra", "none"),
+        ("gpt-6.1-terra-low", "gpt-6.1-terra", "low"),
+        ("gpt-6.1-terra-medium", "gpt-6.1-terra", "medium"),
+        ("GPT-6.1-Terra-High", "gpt-6.1-terra", "high"),
+        ("gpt-6.1-terra-xhigh", "gpt-6.1-terra", "xhigh"),
+        ("openai_responses.gpt-6.1-terra-max", "gpt-6.1-terra", "max"),
+    ],
+)
+async def test_gpt61_terra_model_aliases(model_id, expected_model, expected_effort):
+    """GPT-6.1 Terra pseudo IDs resolve to gpt-6.1-terra with the effort pinned."""
+    body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
+    responses_body = await mod.ResponsesBody.from_completions(body)
+    assert responses_body.model == expected_model
+    assert (responses_body.reasoning or {}).get("effort") == expected_effort
+
+
+def test_gpt61_terra_supports_expected_features():
+    for feature in ("reasoning", "reasoning_summary", "function_calling",
+                    "web_search_tool", "image_gen_tool"):
+        assert "gpt-6.1-terra" in mod.FEATURE_SUPPORT[feature]
+    assert "gpt-6.1-terra" not in mod.FEATURE_SUPPORT["verbosity"]
+
+
+def test_gpt61_terra_keeps_none_effort():
+    """Unlike GPT-6.1 Sol, GPT-6.1 Terra accepts reasoning effort 'none'."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model="gpt-6.1-terra", input=[], reasoning={"effort": "None"})
+    pipe._apply_model_param_constraints(body, "gpt-6.1-terra")
+    assert body.reasoning == {"effort": "none"}
+
+
+def test_gpt61_terra_remaps_minimal():
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model="gpt-6.1-terra", input=[], reasoning={"effort": "minimal"})
+    pipe._apply_model_param_constraints(body, "gpt-6.1-terra")
+    assert body.reasoning == {"effort": "low"}
+
+
+def test_gpt61_terra_allows_sampling_without_reasoning():
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model="gpt-6.1-terra", input=[], temperature=0.7, top_p=0.9, reasoning={"effort": "none"}
+    )
+    pipe._apply_model_param_constraints(body, "gpt-6.1-terra")
+    assert body.temperature == 0.7
+    assert body.top_p == 0.9
+
+
+@pytest.mark.parametrize("reasoning", [None, {"effort": "medium"}, {"effort": "minimal"}])
+def test_gpt61_terra_strips_sampling_while_reasoning(reasoning):
+    """Any effort other than 'none' (including the API default) rejects sampling params."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model="gpt-6.1-terra", input=[], temperature=0.7, top_p=0.9, reasoning=reasoning
+    )
+    pipe._apply_model_param_constraints(body, "gpt-6.1-terra")
+    assert body.temperature is None
+    assert body.top_p is None
+
+
 async def test_maybe_await_handles_sync_and_async_db_calls():
     """Newer Open WebUI returns coroutines from Chats/Models; older returns values."""
     async def coro():

@@ -144,6 +144,7 @@ Below are the official model IDs that have been tested and confirmed.
 | **GPT-6**         | `gpt-6-astra`         | Reasoning (text + image → text)  | 🔄 | Flagship GPT-6 model. Support is implemented and unit tested, but not yet confirmed against the live API. Effort levels `low`–`max`; rejects `temperature`, `top_p` and effort `none`/`minimal`, which the manifold strips or remaps for you. |
 |                   | `gpt-6.1-sol`         | Reasoning (text + image → text)  | 🔄 | Successor to `gpt-6-sol` at the same price, with near-Astra results on coding, computer use and professional work. Effort levels `low`–`max` (default `medium`); same parameter rules as Astra. Not yet confirmed against the live API. |
 |                   | `gpt-6-sol`           | Reasoning (text + image → text)  | 🔄 | Previous balanced GPT-6 model for coding and agentic work; about half the price of GPT-5.6 Sol. Effort levels `none`–`max` (default `medium`). Not yet confirmed against the live API. |
+|                   | `gpt-6.1-terra`       | Reasoning (text + image → text)  | 🔄 | Fast tier for visual reasoning, computer use and natural writing; matches Astra at a tenth of the price per token and half the price of `gpt-6.1-sol`. Same effort levels and parameter rules as `gpt-6-sol`. Not yet confirmed against the live API. |
 |                   | `gpt-6-luna`          | Reasoning (text + image → text)  | 🔄 | Lowest-cost GPT-6 model for high-volume, focused tasks. Same effort levels and parameter rules as `gpt-6-sol`. Not yet confirmed against the live API. |
 | **GPT-5**         | `gpt-5`               | Reasoning                        | ✅ | Standard GPT-5 reasoning model. |
 |                   | `gpt-5-mini`          | Reasoning                        | ✅ | Smaller, faster, lower cost than `gpt-5`. |
@@ -177,6 +178,7 @@ Useful for **routing, shorthand, or quick quality/cost tuning**. *(Subject to ch
 | `gpt-6-astra-max`              | `gpt-6-astra` | `reasoning_effort="max"`     | Maximum compute. Slowest and most expensive. |
 | `gpt-6.1-sol-{effort}`         | `gpt-6.1-sol` | `reasoning_effort={effort}`  | `low`, `medium`, `high`, `xhigh` or `max`. Near-Astra quality at a fifth of the price. |
 | `gpt-6-sol-{effort}`           | `gpt-6-sol`   | `reasoning_effort={effort}`  | `none`, `low`, `medium`, `high`, `xhigh` or `max`. `none` is the only tier that accepts `temperature`/`top_p`. |
+| `gpt-6.1-terra-{effort}`       | `gpt-6.1-terra` | `reasoning_effort={effort}` | Same tiers as Sol. Over 3× faster than Astra and 6.1 Sol on average. |
 | `gpt-6-luna-{effort}`          | `gpt-6-luna`  | `reasoning_effort={effort}`  | Same tiers as Sol; cheapest GPT-6 option. |
 | `gpt-5-auto`                   | Dynamic GPT-5 | —                            | Automatically routes between GPT-5 chat/mini/nano. |
 | `gpt-5-thinking`               | `gpt-5`       | Medium reasoning             | General high-quality tasks. ([OpenAI][8]) |
@@ -253,13 +255,14 @@ To bridge this gap, the manifold includes an experimental **`gpt-5-auto`** model
 
 ## GPT-6 Model Support
 
-OpenAI exposes four GPT-6 model IDs in the API:
+OpenAI exposes five GPT-6 model IDs in the API:
 
 | Model ID | Use it for | Effort levels |
 |----------|------------|---------------|
 | `gpt-6-astra` | Flagship; hardest problems | `low`, `medium`, `high`, `xhigh`, `max` |
 | `gpt-6.1-sol` | Near-Astra coding, computer use and professional work at a fifth of Astra's price | `low`, `medium` (default), `high`, `xhigh`, `max` |
 | `gpt-6-sol` | Previous Sol release; coding and agentic work at roughly half the price of GPT-5.6 Sol | `none`, `low`, `medium` (default), `high`, `xhigh`, `max` |
+| `gpt-6.1-terra` | Visual reasoning, precise computer use and clear, natural writing at half the price of 6.1 Sol | `none`, `low`, `medium` (default), `high`, `xhigh`, `max` |
 | `gpt-6-luna` | High-volume, focused tasks; lowest cost | `none`, `low`, `medium` (default), `high`, `xhigh`, `max` |
 
 The manifold also ships convenience aliases that pin one effort each:
@@ -268,6 +271,7 @@ The manifold also ships convenience aliases that pin one effort each:
 - `gpt-6-astra-low`, `-medium`, `-high`, `-xhigh`, `-max`
 - `gpt-6.1-sol-low`, `-medium`, `-high`, `-xhigh`, `-max`
 - `gpt-6-sol-none`, `-low`, `-medium`, `-high`, `-xhigh`, `-max`
+- `gpt-6.1-terra-none`, `-low`, `-medium`, `-high`, `-xhigh`, `-max`
 - `gpt-6-luna-none`, `-low`, `-medium`, `-high`, `-xhigh`, `-max`
 
 Add whichever you want to the `MODEL_ID` valve and each becomes its own model entry
@@ -282,14 +286,15 @@ configured for GPT-5 keeps working when you switch it to GPT-6:
 
 | Parameter | GPT-5 | GPT-6 | What the manifold does |
 |-----------|-------|-------|------------------------|
-| `reasoning.effort` | `minimal` … `high` | Astra/6.1 Sol: `low` … `max`; Sol/Luna: `none` … `max` | Remaps `minimal` (and `none` on Astra/6.1 Sol) to `low` |
-| `temperature` | Accepted | Astra/6.1 Sol: rejected; Sol/Luna: only with effort `none` | Dropped whenever the model would reject it |
-| `top_p` | Accepted | Astra/6.1 Sol: rejected; Sol/Luna: only with effort `none` | Dropped whenever the model would reject it |
+| `reasoning.effort` | `minimal` … `high` | Astra/6.1 Sol: `low` … `max`; Sol/6.1 Terra/Luna: `none` … `max` | Remaps `minimal` (and `none` on Astra/6.1 Sol) to `low` |
+| `temperature` | Accepted | Astra/6.1 Sol: rejected; Sol/6.1 Terra/Luna: only with effort `none` | Dropped whenever the model would reject it |
+| `top_p` | Accepted | Astra/6.1 Sol: rejected; Sol/6.1 Terra/Luna: only with effort `none` | Dropped whenever the model would reject it |
 | `text.verbosity` | Supported | Steer via the prompt instead | Not sent; the regenerate stub falls back to prompt injection |
 
-On GPT-6 Sol and Luna, sending no effort means the API default of `medium`, so
-`temperature` and `top_p` are dropped unless you pick effort `none` explicitly
-(for example with the `gpt-6-sol-none` alias). GPT-6.1 Sol has no `none` effort,
+On GPT-6 Sol, GPT-6.1 Terra and GPT-6 Luna, sending no effort means the API
+default of `medium`, so `temperature` and `top_p` are dropped unless you pick
+effort `none` explicitly (for example with the `gpt-6-sol-none` or
+`gpt-6.1-terra-none` alias). GPT-6.1 Sol has no `none` effort,
 so moving from `gpt-6-sol-none` to GPT-6.1 Sol means losing `temperature` and `top_p`.
 
 Two things worth knowing before you switch a busy workspace over:

@@ -5,6 +5,21 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-26
+- Added support for OpenAI's `gpt-6.1-terra`, released today. It is a new,
+  faster GPT-6 tier aimed at visual reasoning, computer use and writing, priced
+  at half of `gpt-6.1-sol`.
+- Registered it for reasoning, reasoning summaries, native function calling,
+  the built-in web search tool and the built-in image generation tool. Like the
+  rest of GPT-6, it is left out of the `verbosity` feature set.
+- Added pseudo model IDs `gpt-6.1-terra-{none,low,medium,high,xhigh,max}`.
+- GPT-6.1 Terra follows the GPT-6 Sol/Luna parameter rules: effort `none` is
+  forwarded as-is, `minimal` is remapped to `low`, and `temperature` and
+  `top_p` are kept only at effort `none` (dropped otherwise, including when no
+  effort is sent, since the API defaults to `medium`).
+- Added `gpt-6.1-terra` to the default `MODEL_ID` valve. Existing installs keep
+  their saved value, so add it manually to pick it up.
+
 ## [0.11.0] - 2026-09-29
 - Added support for OpenAI's `gpt-6.1-sol`, released today. It succeeds
   `gpt-6-sol` as the mid-tier GPT-6 model, at the same price.
