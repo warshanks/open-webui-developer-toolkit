@@ -5,6 +5,28 @@ All notable changes to the OpenAI Responses Manifold pipeline are documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-11-18
+- Added support for OpenAI's `gpt-6.2-astra` and `gpt-6.2-sol`, released
+  2026-11-17. 6.2 Astra succeeds `gpt-6-astra` at a lower price ($8/$40 per 1M
+  tokens, down from $10/$50); 6.2 Sol succeeds `gpt-6.1-sol` at the same price.
+- Registered both for reasoning, reasoning summaries, native function calling,
+  the built-in web search tool and the built-in image generation tool. Like the
+  rest of GPT-6, they are left out of the `verbosity` feature set.
+- Added pseudo model IDs `gpt-6.2-astra-{low,medium,high,xhigh,max}` and
+  `gpt-6.2-sol-{low,medium,high,xhigh,max}`.
+- Both follow the GPT-6 Astra / GPT-6.1 Sol parameter rules: efforts `none`
+  and `minimal` return HTTP 400 ("Reasoning is mandatory for this endpoint and
+  cannot be disabled"), so the pipe remaps them to `low`, and `temperature` and
+  `top_p` are always dropped.
+- The bare `gpt-6` alias still points at `gpt-6-astra`, so chats that use it
+  keep the model they started with.
+- Replaced `gpt-6-astra`, `gpt-6-astra-high` and `gpt-6.1-sol` with their 6.2
+  successors in the default `MODEL_ID` valve. Existing installs keep their saved
+  value, so add the new IDs manually to pick them up.
+- Note: starting with GPT-6.2, OpenAI appends top-level `instructions` after
+  `input`. The pipe still sends the system prompt as `instructions`, which only
+  affects prompt caching of long system prompts.
+
 ## [0.12.0] - 2026-10-26
 - Added support for OpenAI's `gpt-6.1-terra`, released today. It is a new,
   faster GPT-6 tier aimed at visual reasoning, computer use and writing, priced

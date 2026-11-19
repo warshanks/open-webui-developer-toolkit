@@ -471,6 +471,73 @@ def test_gpt61_sol_strips_sampling_params(reasoning):
 @pytest.mark.parametrize(
     ("model_id", "expected_model", "expected_effort"),
     [
+        ("gpt-6.2-astra", "gpt-6.2-astra", None),
+        ("openai_responses.gpt-6.2-astra-low", "gpt-6.2-astra", "low"),
+        ("gpt-6.2-astra-medium", "gpt-6.2-astra", "medium"),
+        ("GPT-6.2-Astra-High", "gpt-6.2-astra", "high"),
+        ("gpt-6.2-astra-xhigh", "gpt-6.2-astra", "xhigh"),
+        ("openai_responses.gpt-6.2-astra-max", "gpt-6.2-astra", "max"),
+        ("gpt-6.2-sol", "gpt-6.2-sol", None),
+        ("openai_responses.gpt-6.2-sol-low", "gpt-6.2-sol", "low"),
+        ("gpt-6.2-sol-medium", "gpt-6.2-sol", "medium"),
+        ("GPT-6.2-Sol-High", "gpt-6.2-sol", "high"),
+        ("gpt-6.2-sol-xhigh", "gpt-6.2-sol", "xhigh"),
+        ("openai_responses.gpt-6.2-sol-max", "gpt-6.2-sol", "max"),
+        # The bare "gpt-6" alias stays on the original Astra.
+        ("gpt-6", "gpt-6-astra", None),
+    ],
+)
+async def test_gpt62_model_aliases(model_id, expected_model, expected_effort):
+    """GPT-6.2 pseudo IDs resolve to the real model with the effort pinned."""
+    body = mod.CompletionsBody.model_validate({"model": model_id, "messages": []})
+    responses_body = await mod.ResponsesBody.from_completions(body)
+    assert responses_body.model == expected_model
+    assert (responses_body.reasoning or {}).get("effort") == expected_effort
+
+
+@pytest.mark.parametrize("model", ["gpt-6.2-astra", "gpt-6.2-sol"])
+def test_gpt62_supports_expected_features(model):
+    for feature in ("reasoning", "reasoning_summary", "function_calling",
+                    "web_search_tool", "image_gen_tool"):
+        assert model in mod.FEATURE_SUPPORT[feature]
+    assert model not in mod.FEATURE_SUPPORT["verbosity"]
+
+
+@pytest.mark.parametrize("model", ["gpt-6.2-astra", "gpt-6.2-sol"])
+@pytest.mark.parametrize("effort", ["none", "minimal", "None"])
+def test_gpt62_remaps_unsupported_reasoning_effort(model, effort):
+    """GPT-6.2 returns HTTP 400 for 'none' and 'minimal', so both become 'low'."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model=model, input=[], reasoning={"effort": effort})
+    pipe._apply_model_param_constraints(body, model)
+    assert body.reasoning == {"effort": "low"}
+
+
+@pytest.mark.parametrize("model", ["gpt-6.2-astra", "gpt-6.2-sol"])
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "MAX"])
+def test_gpt62_keeps_supported_reasoning_effort(model, effort):
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(model=model, input=[], reasoning={"effort": effort})
+    pipe._apply_model_param_constraints(body, model)
+    assert body.reasoning == {"effort": effort.lower()}
+
+
+@pytest.mark.parametrize("model", ["gpt-6.2-astra", "gpt-6.2-sol"])
+@pytest.mark.parametrize("reasoning", [None, {"effort": "none"}, {"effort": "high"}])
+def test_gpt62_strips_sampling_params(model, reasoning):
+    """GPT-6.2 rejects temperature and top_p at every effort."""
+    pipe = mod.Pipe()
+    body = mod.ResponsesBody(
+        model=model, input=[], temperature=0.7, top_p=0.9, reasoning=reasoning
+    )
+    pipe._apply_model_param_constraints(body, model)
+    assert body.temperature is None
+    assert body.top_p is None
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_model", "expected_effort"),
+    [
         ("gpt-6.1-terra", "gpt-6.1-terra", None),
         ("openai_responses.gpt-6.1-terra-none", "gpt-6.1-terra", "none"),
         ("gpt-6.1-terra-low", "gpt-6.1-terra", "low"),

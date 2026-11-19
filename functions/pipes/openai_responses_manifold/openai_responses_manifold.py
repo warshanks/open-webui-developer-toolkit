@@ -6,7 +6,7 @@ author_url: https://github.com/jrkropp
 git_url: https://github.com/jrkropp/open-webui-developer-toolkit/blob/main/functions/pipes/openai_responses_manifold/openai_responses_manifold.py
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 0.12.0
+version: 0.13.0
 license: MIT
 """
 
@@ -49,11 +49,11 @@ from open_webui.models.models import ModelForm, Models
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature flags and other module level constants
 FEATURE_SUPPORT = {
-    "web_search_tool": {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o3-pro", "o4-mini", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's built-in web search tool.
-    "image_gen_tool": {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
-    "function_calling": {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
-    "reasoning": {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
-    "reasoning_summary": {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
+    "web_search_tool": {"gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o3-pro", "o4-mini", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's built-in web search tool.
+    "image_gen_tool": {"gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3"}, # OpenAI's built-in image generation tool.
+    "function_calling": {"gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-nano", "o3", "o4-mini", "o3-mini", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's native function calling support.
+    "reasoning": {"gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o3-mini","o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning models.
+    "reasoning_summary": {"gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini", "o4-mini-high", "o3-mini", "o3-mini-high", "o3-pro", "o3-deep-research", "o4-mini-deep-research"}, # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
     "verbosity": {"gpt-5", "gpt-5-mini", "gpt-5-nano"}, # Supports OpenAI's verbosity parameter.  The GPT-6 family steers prose style via the prompt instead, so it is deliberately excluded.
 
     # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
@@ -62,11 +62,14 @@ FEATURE_SUPPORT = {
 
 # Reasoning effort levels each family accepts.  Families absent from this map are
 # left untouched and whatever the caller sent is forwarded as-is.
-# GPT-6 Astra and GPT-6.1 Sol dropped "none"/"minimal" and GPT-6 Sol, GPT-6.1
-# Terra and GPT-6 Luna dropped "minimal" — sending either returns HTTP 400 rather
-# than being ignored, so the pipe remaps it before the request goes out.
+# GPT-6 Astra, GPT-6.1 Sol and both GPT-6.2 models dropped "none"/"minimal" and
+# GPT-6 Sol, GPT-6.1 Terra and GPT-6 Luna dropped "minimal" — sending either
+# returns HTTP 400 rather than being ignored, so the pipe remaps it before the
+# request goes out.
 REASONING_EFFORT_SUPPORT = {
+    "gpt-6.2-astra": {"low", "medium", "high", "xhigh", "max"},
     "gpt-6-astra": {"low", "medium", "high", "xhigh", "max"},
+    "gpt-6.2-sol": {"low", "medium", "high", "xhigh", "max"},
     "gpt-6.1-sol": {"low", "medium", "high", "xhigh", "max"},
     "gpt-6-sol": {"none", "low", "medium", "high", "xhigh", "max"},
     "gpt-6.1-terra": {"none", "low", "medium", "high", "xhigh", "max"},
@@ -82,7 +85,8 @@ REASONING_EFFORT_FALLBACK = {"none": "low", "minimal": "low"}
 # top_logprobs; top_logprobs is already dropped for every model in
 # ``ResponsesBody.from_completions``.  GPT-6.1 Sol only accepts sampling params
 # at effort "none", which it does not support, so it rejects them outright too.
-NO_SAMPLING_PARAMS = {"gpt-6-astra", "gpt-6.1-sol"}
+# GPT-6.2 Astra and Sol follow the same rules.
+NO_SAMPLING_PARAMS = {"gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.1-sol"}
 
 # Families that only accept temperature/top_p when reasoning effort is "none".
 # Any other effort (including the "medium" default when none is sent) gets
@@ -133,16 +137,28 @@ class CompletionsBody(BaseModel):
 
         # Alias mapping: pseudo ID -> (real model, reasoning effort)
         aliases = {
-            # GPT-6 family.  "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol",
-            # "gpt-6.1-terra" and "gpt-6-luna" are the official GPT-6 IDs; the
-            # variants below are pseudo IDs that pin a reasoning effort so each
-            # one can be surfaced as its own model entry in Open WebUI.
+            # GPT-6 family.  "gpt-6.2-astra", "gpt-6-astra", "gpt-6.2-sol",
+            # "gpt-6.1-sol", "gpt-6-sol", "gpt-6.1-terra" and "gpt-6-luna" are
+            # the official GPT-6 IDs; the variants below are pseudo IDs that pin
+            # a reasoning effort so each one can be surfaced as its own model
+            # entry in Open WebUI.  "gpt-6" stays on gpt-6-astra so existing
+            # chats keep the model they started with.
             "gpt-6": ("gpt-6-astra", None),
+            "gpt-6.2-astra-low": ("gpt-6.2-astra", "low"),
+            "gpt-6.2-astra-medium": ("gpt-6.2-astra", "medium"),
+            "gpt-6.2-astra-high": ("gpt-6.2-astra", "high"),
+            "gpt-6.2-astra-xhigh": ("gpt-6.2-astra", "xhigh"),
+            "gpt-6.2-astra-max": ("gpt-6.2-astra", "max"),
             "gpt-6-astra-low": ("gpt-6-astra", "low"),
             "gpt-6-astra-medium": ("gpt-6-astra", "medium"),
             "gpt-6-astra-high": ("gpt-6-astra", "high"),
             "gpt-6-astra-xhigh": ("gpt-6-astra", "xhigh"),
             "gpt-6-astra-max": ("gpt-6-astra", "max"),
+            "gpt-6.2-sol-low": ("gpt-6.2-sol", "low"),
+            "gpt-6.2-sol-medium": ("gpt-6.2-sol", "medium"),
+            "gpt-6.2-sol-high": ("gpt-6.2-sol", "high"),
+            "gpt-6.2-sol-xhigh": ("gpt-6.2-sol", "xhigh"),
+            "gpt-6.2-sol-max": ("gpt-6.2-sol", "max"),
             "gpt-6.1-sol-low": ("gpt-6.1-sol", "low"),
             "gpt-6.1-sol-medium": ("gpt-6.1-sol", "medium"),
             "gpt-6.1-sol-high": ("gpt-6.1-sol", "high"),
@@ -604,7 +620,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-6-astra, gpt-6-astra-high, gpt-6.1-sol, gpt-6.1-terra, gpt-6-luna, gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-6.2-astra, gpt-6.2-astra-high, gpt-6.2-sol, gpt-6.1-terra, gpt-6-luna, gpt-5-auto, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
             "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
             "Supports all official OpenAI model IDs and pseudo IDs: "
@@ -614,6 +630,8 @@ class Pipe:
             "gpt-6-astra-high, "
             "gpt-6-astra-xhigh, "
             "gpt-6-astra-max, "
+            "gpt-6.2-astra-low, gpt-6.2-astra-medium, gpt-6.2-astra-high, gpt-6.2-astra-xhigh, gpt-6.2-astra-max, "
+            "gpt-6.2-sol-low, gpt-6.2-sol-medium, gpt-6.2-sol-high, gpt-6.2-sol-xhigh, gpt-6.2-sol-max, "
             "gpt-6.1-sol-low, gpt-6.1-sol-medium, gpt-6.1-sol-high, gpt-6.1-sol-xhigh, gpt-6.1-sol-max, "
             "gpt-6-sol-none, gpt-6-sol-low, gpt-6-sol-medium, gpt-6-sol-high, gpt-6-sol-xhigh, gpt-6-sol-max, "
             "gpt-6.1-terra-none, gpt-6.1-terra-low, gpt-6.1-terra-medium, gpt-6.1-terra-high, gpt-6.1-terra-xhigh, gpt-6.1-terra-max, "
@@ -633,7 +651,7 @@ class Pipe:
         # 3) Reasoning & summaries
         REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
             default="disabled",
-            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6.1-terra, gpt-6-luna, gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-6.2-astra, gpt-6-astra, gpt-6.2-sol, gpt-6.1-sol, gpt-6-sol, gpt-6.1-terra, gpt-6-luna, gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
         PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = Field(
             default="disabled",
@@ -667,7 +685,7 @@ class Pipe:
         # 6) Web search
         ENABLE_WEB_SEARCH_TOOL: bool = Field(
             default=False,
-            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6.1-terra, gpt-6-luna, gpt-5, gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
+            description="Enable OpenAI's built-in 'web_search' tool when supported (gpt-6.2-astra, gpt-6-astra, gpt-6.2-sol, gpt-6.1-sol, gpt-6-sol, gpt-6.1-terra, gpt-6-luna, gpt-5, gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini, o3, o4-mini, o4-mini-high).  NOTE: This appears to disable parallel tool calling. Read more: https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses",
         )
         WEB_SEARCH_CONTEXT_SIZE: Literal["low", "medium", "high", None] = Field(
             default="medium",
@@ -1792,9 +1810,9 @@ class Pipe:
 
         Most OpenAI models silently ignore parameters they do not implement, but
         the GPT-6 family returns HTTP 400 for reasoning efforts it dropped
-        (``minimal`` everywhere, ``none`` on Astra and 6.1 Sol) and for the
-        classic sampling knobs (always on Astra and 6.1 Sol, whenever reasoning
-        is active on Sol, 6.1 Terra and Luna).
+        (``minimal`` everywhere, ``none`` on Astra, 6.1 Sol and 6.2) and for the
+        classic sampling knobs (always on Astra, 6.1 Sol and 6.2, whenever
+        reasoning is active on Sol, 6.1 Terra and Luna).
         Normalising here keeps a chat configured for GPT-5 working when it is
         pointed at a GPT-6 model.
         """
